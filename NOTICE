@@ -1,0 +1,10 @@
+okf-catalog
+Copyright 2026 the okf-catalog authors
+
+Licensed under the Apache License, Version 2.0; see LICENSE.
+
+The fixture bundle under test/fixtures/bundles/spec-example is a verbatim
+copy of the example bundle bundles/acme_retail from the Open Knowledge Format
+repository, https://github.com/GoogleCloudPlatform/open-knowledge-format, at
+commit 25461dbcdd5b2f3fc9aef99c19fb7d8a94ef6149, which is licensed under the
+Apache License, Version 2.0. test/fixtures/README.md records what was copied.

@@ -1,6 +1,6 @@
 # okf-catalog: version 0 implementation plan
 
-Status: draft 2, 2026-10-06, after independent adversarial review round 1 (verdict on draft 1: not ready; the review is saved verbatim in [reviews/version-0-review-1-grok.md](reviews/version-0-review-1-grok.md) and every finding's disposition is in section 8). Not approved. Nothing built. The design it implements is [../intent.md](../intent.md); the decisions behind that design are in [../decisions/0001-founding-decisions.md](../decisions/0001-founding-decisions.md); the library and tooling facts it rests on, read from source on 2026-10-06, are in [../research/sdk-surfaces.md](../research/sdk-surfaces.md).
+Status: draft 3, 2026-10-06, after independent adversarial review round 1 and the bite 1 plan review (two text corrections, recorded in the execution record) (verdict on draft 1: not ready; the review is saved verbatim in [reviews/version-0-review-1-grok.md](reviews/version-0-review-1-grok.md) and every finding's disposition is in section 8). Not approved. Nothing built. The design it implements is [../intent.md](../intent.md); the decisions behind that design are in [../decisions/0001-founding-decisions.md](../decisions/0001-founding-decisions.md); the library and tooling facts it rests on, read from source on 2026-10-06, are in [../research/sdk-surfaces.md](../research/sdk-surfaces.md).
 
 ## 0. The goal, stated the way the work will be run
 
@@ -15,7 +15,7 @@ Status: draft 2, 2026-10-06, after independent adversarial review round 1 (verdi
 3. stdout is the protocol channel; every log line goes to stderr; nothing in the start-up path may print to stdout.
 4. One company is one process, one cache folder, one database. Nothing is shared across companies.
 5. Spec §11 holds: a bundle is never refused for missing optional fields, unknown types, broken links or missing index files; those degrade and are reported. Reserved files (`index.md`, `log.md`) and non-Markdown files are never treated as pages and never refused for not being pages.
-6. No global installs. Dependencies land in the project's `node_modules` only. The models for full mode download only with the maintainer's approval at the time, and lexical installs set the flag that stops qmd's native dependency from downloading or compiling at install.
+6. No global installs. Dependencies land in the project's `node_modules` only. The models for full mode download only with the maintainer's approval at the time. Lexical installs set `NODE_LLAMA_CPP_SKIP_DOWNLOAD=1`, which stops qmd's native dependency from downloading or compiling in its postinstall; its prebuilt platform binaries are ordinary optional dependencies that npm installs regardless (13 MB on macOS arm64, measured in bite 1).
 7. Page bodies are data. The skill says so, the acceptance test checks it, and no server code interprets body text as instructions.
 8. The repository holds no company names, company content or session details. Fixtures are built from the specification's own examples and from pages written for the tests.
 
@@ -50,7 +50,7 @@ cli ─▶ commands ─▶ config, source, fs, report ─▶ core: bundle, catal
 | Composition | `src/commands` | Everything | |
 | Entry | `src/cli.ts` | `src/commands` | Anything else |
 
-The rule is checked by dependency-cruiser in CI, configured from `tsconfig.json` so that NodeNext `.js` specifiers resolve to their `.ts` sources; bite 1 proves it with two deliberate violations. The core emits a structured derived document; only the qmd adapter knows what text qmd wants. That is what makes the port real: the OKF layer can be read and tested without qmd or MCP in the picture, and either library can be swapped behind its adapter.
+The rule is checked by dependency-cruiser in CI. Its resolver maps a NodeNext `.js` specifier to the `.ts` source on its own, provided the target file exists; `tsconfig.json` is read only for compiler options. Bite 1 proved it with planted violations against an existing target (see the execution record). The core emits a structured derived document; only the qmd adapter knows what text qmd wants. That is what makes the port real: the OKF layer can be read and tested without qmd or MCP in the picture, and either library can be swapped behind its adapter.
 
 ### 2.2 Directory tree
 

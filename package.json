@@ -1,0 +1,46 @@
+{
+  "name": "okf-catalog",
+  "version": "0.0.0",
+  "description": "A small-company hosted knowledge catalog for AI agents: an MCP server that serves an OKF bundle, built on qmd.",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "bin": {
+    "okf-catalog": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "NOTICE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome ci .",
+    "format": "biome check --write .",
+    "depcruise": "depcruise src --config .dependency-cruiser.cjs",
+    "check": "npm run lint && npm run typecheck && npm run depcruise",
+    "pretest": "npm run build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.3.1",
+    "@tobilu/qmd": "2.8.3",
+    "mdast-util-from-markdown": "2.1.0",
+    "mdast-util-to-string": "4.0.0",
+    "yaml": "2.9.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@modelcontextprotocol/client": "2.3.1",
+    "@types/mdast": "4.0.4",
+    "@types/node": "22.20.5",
+    "dependency-cruiser": "18.5.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.3",
+    "vitest": "5.0.3"
+  }
+}

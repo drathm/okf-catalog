@@ -1,0 +1,38 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
+  "files": {
+    "includes": ["src/**", "test/**", "bench/**", "*.ts", "*.cjs", "*.json", "!!test/fixtures"]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended"
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["src/bundle/**", "src/catalog/**", "src/derive/**", "src/search/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "process": "The core is pure: take the clock and the environment as parameters.",
+                  "fetch": "The core is pure: no network."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

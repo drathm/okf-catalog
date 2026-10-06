@@ -1,0 +1,2 @@
+# Fixture bundles are hashed byte for byte; never let line-ending conversion touch them.
+test/fixtures/** -text

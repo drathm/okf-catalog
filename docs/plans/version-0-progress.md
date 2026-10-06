@@ -23,3 +23,30 @@ Tasks, in order, each with its check:
 11. Commit on the `version-0` branch: `chore: scaffold, fixtures and CI (bite 1)`.
 
 Done when: `npm run check`, `npm test` and `npm run build` pass locally on Node 24 (CI's matrix runs on the maintainer's first push); the dependency rule failed both violations and passes without them; the measurements are recorded; the fixtures exist with a README.
+
+### Plan review
+
+Reviewer: an independent Opus agent, read-only, with web access; 85 tool calls, about 27 minutes. Verdict: ready with changes. Dispositions:
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 | `dist/` in `.gitignore` matched at any depth, so the `dist` fixture folder would never be committed | Applied: entries anchored with a leading slash |
+| 2 | The `.js`-specifier proof needed an existing target; the config should carry `exportsFields`, `conditionNames` and the unresolvable, non-package and dev-dependency rules | Applied: the planted import targets the existing `src/cli.ts`; the three rules and the resolver options are in the config; the plan's claim that `tsConfig` provides the `.js` mapping is corrected in draft 3 of the plan |
+| 3 | The core rule was a denylist (missing bare `fs`, `node:module`, `node:vm`, `getBuiltinModule`); the CLI rule forbade `node:util`; the single-importer property was not enforced; `log.ts` had no layer; globals were invisible | Applied: allowlists for Node built-ins and npm packages in the core, qmd only in the engine, the SDK only in the MCP adapter, the CLI rule limited to our own files, `log.ts` in the edge layer, `detectProcessBuiltinModuleCalls`, and a Biome override denying `process` and `fetch` in the core |
+| 4 | CI ran tests before the build; the smoke test spawns the built CLI | Applied: `pretest` builds; CI builds before testing |
+| 5 | Fixture bytes unprotected: Biome and TypeScript would touch them; no `.gitattributes`; no manifest re-verification; `behaviours` had no manifest | Applied: fixtures excluded from both tools, `.gitattributes` marks them binary, `test/unit/fixtures.test.ts` re-verifies every committed manifest, `behaviours` has one |
+| 6 | Fixture dates expire; spawned tests cannot inject the clock | Applied: test pages use 2000 and 2999, `NOW` is fixed in the helpers, and the CLI will read `OKF_CATALOG_NOW` (bite 4) |
+| 7 | Coverage gaps in the behaviour pages; the specification repository ships complete example bundles; licence attribution should name the repository and commit, not a company | Applied: the missing pages added (tags, generated with and without a date, markup, bare verified mapping, deprecated without replacement, unparseable and offset-less recheck dates, unknown status, root `okf_version`, a refused bundle, the page that gives orders); `spec-example` is a verbatim copy of `bundles/acme_retail` at `25461db`; NOTICE and the fixtures README attribute the repository and commit. Flagged for bite 2: the specification's own deprecated page opens with a heading and puts the replacement link in the next paragraph, so the replacement rule becomes "the first link in the body that resolves inside the bundle" |
+| 8 | The skip flag does not control install size: platform binaries are optional dependencies npm installs regardless | Applied: measured as such (13 MB on macOS arm64); the Linux figure is left to CI; invariant 6's wording is corrected in draft 3 of the plan |
+| 9 | Smaller corrections: `skipLibCheck`, version through `createRequire`, shebang, `license` field, `files` with NOTICE, no declarations for a CLI, Vite pinned at 8.3.3, `biome check --write` for the format script, spaces and width 100, pinned action SHAs with `permissions`, `persist-credentials: false` and `fail-fast: false`, measurements as CI steps, licence to confirm before the first push | Applied in full. Not done: a local run on Node 22.12, because installing another Node version is a toolchain change for the maintainer to see; CI covers Node 22 on the first push |
+| 10 | Scaffold pieces later bites need: test helpers, `@types/mdast`, `.npmrc` with `save-exact`, no path aliases | Applied |
+
+### Build
+
+- Red: `test/unit/cli.test.ts` written first (version on stdout, nothing on stderr; unknown command exits 2 with usage on stderr); watched both fail against an empty entry file (exit 0, empty stdout). Green: `src/cli.ts` with `parseArgs` and `createRequire`; both pass. Then `biome check --write` formatted two files; `tsc --noEmit` clean; dependency-cruiser clean on the scaffold.
+- Dependency rule proof: see `docs/research/facts.md` and the output recorded below.
+- Fixtures: `spec-example` (verbatim copy, 19 files, manifest added), `behaviours` (26 files, manifest), `refused` (5 files, no manifest), `make-manifest.mjs`, README, integrity test.
+
+### Measurements
+
+Recorded in `docs/research/facts.md` under "Bite 1 measurements": install time and footprint, the one compile (fsevents, a macOS development dependency), the skip flag's effect, duplicate packages, qmd's import time and stdout silence, lexical search without optional dependencies, and the three git options confirmed, with the consequence that bite 5's tests need `file` in an injectable protocol allowlist.

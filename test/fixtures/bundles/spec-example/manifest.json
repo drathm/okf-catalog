@@ -1,0 +1,83 @@
+{
+  "okf_catalog": 1,
+  "commit": "0000000000000000000000000000000000000000",
+  "published_at": "2026-10-06T00:00:00Z",
+  "files": {
+    "attesters/index.md": {
+      "sha256": "f0cfe692f3026cad2b123a4240eb762109ed205edd13d937ffa4446ca700af5e",
+      "bytes": 136
+    },
+    "attesters/sql_equality.py": {
+      "sha256": "ef41f8497de5ea3a4415bebc9222424576bfb56e114b2eacab53256aa86c1955",
+      "bytes": 4496
+    },
+    "computations/gross-margin-period.md": {
+      "sha256": "aae5573bf8b02f82e6de6a059a53d54845692cc090c5cab2f004740b509d031e",
+      "bytes": 3267
+    },
+    "computations/index.md": {
+      "sha256": "35a5fd6695d62d793d0f1ec430f11b82f6845e04e950a4df29e98a0771bdc609",
+      "bytes": 232
+    },
+    "computations/revenue-ytd.md": {
+      "sha256": "935c3c8fc6ac1c9f424b333765c3b4d4cb3257353c817e27a46f90481e1ef456",
+      "bytes": 2698
+    },
+    "index.md": {
+      "sha256": "02e3207cffe6169ef056b0ff5f0e76311116f5ca7d8b0cc9ab4301dc01a398c1",
+      "bytes": 536
+    },
+    "log.md": {
+      "sha256": "0d545cd61fe51beef259920e9b877e97975f033016694a10d763eeaa3da11b92",
+      "bytes": 1060
+    },
+    "metrics/gross-margin-legacy.md": {
+      "sha256": "138e8f1391ebb7edb4d2911ca43eb358901e1e039922cd8800a83e3ba84db15c",
+      "bytes": 1561
+    },
+    "metrics/gross-margin.md": {
+      "sha256": "aeb3589af67e70c27c54cfaadf81fdc3165461dd27fa6439ed60d79275b3a0fa",
+      "bytes": 2626
+    },
+    "metrics/index.md": {
+      "sha256": "2c8c23b90486c642b21b5d427cb64275d5804e1634fbfd74a18084844f854959",
+      "bytes": 304
+    },
+    "metrics/revenue.md": {
+      "sha256": "b818fd30277b4bed6362a7576264c35e0d78249695d4ca6ebfbff016208fad31",
+      "bytes": 1846
+    },
+    "policies/index.md": {
+      "sha256": "6b99c48d9f8d45e6ec4036cc30c66079f96f82579baee3067b72e52ced818949",
+      "bytes": 249
+    },
+    "policies/margin-standard.md": {
+      "sha256": "d4c4994847d6e51c8dd63c7e86e4a2f900a779a9f41eac9e6753c30458fcf5ba",
+      "bytes": 2406
+    },
+    "policies/revenue-recognition.md": {
+      "sha256": "ccf174ea71623786c81c5cfa97f4d5460944c7d3aad956f41868b33197ae159d",
+      "bytes": 2330
+    },
+    "skills/index.md": {
+      "sha256": "cd753f631320876fcca592823c32f55813419d00b4a14acf807d75aa8a0855fd",
+      "bytes": 128
+    },
+    "skills/run-on-bq.md": {
+      "sha256": "419ee7a107af4f14c407968f571ce2f387d6ff93756d39126b735e40818b159d",
+      "bytes": 2592
+    },
+    "tables/index.md": {
+      "sha256": "f0a8344e59cc7e4e05addd2fc1793fb817369a1f043fd45b59935b08b1c7acb0",
+      "bytes": 134
+    },
+    "tables/orders.md": {
+      "sha256": "988b6167c63eeba0935c873d91f4c7d3785bf723cd231f739a33bae61e5926f2",
+      "bytes": 3061
+    },
+    "viz.html": {
+      "sha256": "0f42258dabdcec7c8d4a1447cf2b7ccf47dd64fd975acf7783ccc5e73c56bcc2",
+      "bytes": 42887
+    }
+  }
+}
