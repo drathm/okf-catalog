@@ -15,7 +15,7 @@ Status: draft 3, 2026-10-06, after independent adversarial review round 1 and th
 3. stdout is the protocol channel; every log line goes to stderr; nothing in the start-up path may print to stdout.
 4. One company is one process, one cache folder, one database. Nothing is shared across companies.
 5. Spec §11 holds: a bundle is never refused for missing optional fields, unknown types, broken links or missing index files; those degrade and are reported. Reserved files (`index.md`, `log.md`) and non-Markdown files are never treated as pages and never refused for not being pages.
-6. No global installs. Dependencies land in the project's `node_modules` only. The models for full mode download only with the maintainer's approval at the time. Lexical installs set `NODE_LLAMA_CPP_SKIP_DOWNLOAD=1`, which stops qmd's native dependency from downloading or compiling in its postinstall; its prebuilt platform binaries are ordinary optional dependencies that npm installs regardless (13 MB on macOS arm64, measured in bite 1).
+6. No global installs. Dependencies land in the project's `node_modules` only. The models for full mode download only with the maintainer's approval at the time. Lexical installs set `NODE_LLAMA_CPP_SKIP_DOWNLOAD=1`, which stops qmd's native dependency from downloading or compiling in its postinstall; its prebuilt platform binaries are ordinary optional dependencies that npm installs regardless: 13 MB on macOS arm64, about 660 MB on Linux x64 because six variants match, both from bite 1.
 7. Page bodies are data. The skill says so, the acceptance test checks it, and no server code interprets body text as instructions.
 8. The repository holds no company names, company content or session details. Fixtures are built from the specification's own examples and from pages written for the tests.
 
@@ -57,7 +57,7 @@ The rule is checked by dependency-cruiser in CI. Its resolver maps a NodeNext `.
 ```
 okf-catalog/
   package.json                 name okf-catalog; type module; bin okf-catalog → dist/cli.js; engines node >=22.12
-  tsconfig.json                strict, NodeNext, ES2023, declaration, exactOptionalPropertyTypes, noUncheckedIndexedAccess
+  tsconfig.json                strict, NodeNext, ES2023, exactOptionalPropertyTypes, noUncheckedIndexedAccess; no declarations (a CLI), source maps with inline sources
   biome.json                   formatter and linter, recommended rules
   vitest.config.ts
   .dependency-cruiser.cjs      the layer rules above, resolving through tsconfig.json
@@ -174,7 +174,7 @@ interface Page {
   trust: Trust;                                // derived per §5.3
   sources: Source[]; usageWindow?: { from: string; to: string };
   resource?: string;
-  replacement?: PagePath;                      // deprecated pages: the link on the first non-empty body line, when it resolves
+  replacement?: PagePath;                      // deprecated pages: the first body link that resolves to an admitted page other than itself
   links: Array<{ raw: string; target?: PagePath }>;
   frontmatter: Record<string, unknown>;        // preserved in full, unknown keys and computation fields included
   body: string;                                // Markdown after the frontmatter
@@ -297,7 +297,7 @@ Every row of the field table in intent §6 maps to one function and one test. Th
 | Description from frontmatter, else first sentence; catalog line; snippet fallback | `page.ts deriveDescription`, `index-file.ts generate`, `policy.ts shape` | `page.test.ts description/*` |
 | Tags and type as rendered lines | `derived-document.ts`, `qmd.ts render` | render golden |
 | Status admission rule; default stable; development flag admits drafts and labels them, local source only | `contract.ts admit`, `policy.ts shape`, `company-config.ts` | `contract.test.ts admission/*`; `company-config.test.ts dev-needs-local` |
-| Replacement link on deprecated pages: the first non-empty body line | `page.ts deriveReplacement`, `markdown.ts firstLineLink`, `links.ts` | `page.test.ts deprecated/*` |
+| Replacement link on deprecated pages: the first body link that resolves to an admitted page other than itself, else a coded degradation | `page.ts deriveReplacement`, `markdown.ts links`, `links.ts` | `page.test.ts deprecated/*` |
 | `stale_after`: date form compared by UTC calendar day, datetime form by instant; the form the pinned text does not expect is reported; excluded unless `include_stale`; always served by `get_page`, flagged | `page.ts parseStaleAfter`, `policy.ts filterStale`, `provenance.ts` | `page.test.ts stale/date`, `stale/datetime`, `stale/unexpected-form`; `policy.test.ts stale/*` |
 | `generated` in provenance | `provenance.ts` | `provenance.test.ts` |
 | Trust tier per §5.3; bare mapping as a one-element list; tie-break | `page.ts deriveTrust`, `policy.ts rank` | `page.test.ts trust/*`, `policy.test.ts tiebreak` |
@@ -394,7 +394,7 @@ Nothing to build. The maintainer settles: the licence (Apache-2.0 proposed; `LIC
 
 **Files.** `package.json`, `package-lock.json`, `tsconfig.json`, `biome.json`, `vitest.config.ts`, `.dependency-cruiser.cjs`, `.github/workflows/ci.yml`, `LICENSE`, `NOTICE`, `src/cli.ts` (prints the version), `test/fixtures/bundles/*`, `docs/research/facts.md` (append the measurements).
 
-**Dependencies pinned exactly.** `@tobilu/qmd` 2.8.3, `@modelcontextprotocol/server` 2.3.1, `zod` 4.6.5, `yaml` 2.9.1, `mdast-util-from-markdown` 2.1.0, `mdast-util-to-string` 4.0.0. Dev: `typescript` 5.9.3, `@types/node` 22.x (the minimum supported Node, so the types cannot admit newer APIs), `vitest` 5.0.3 and the `vite` it requires, `@biomejs/biome` 2.5.15, `dependency-cruiser` 18.x, `@modelcontextprotocol/client` 2.3.1.
+**Dependencies pinned exactly.** `@tobilu/qmd` 2.8.3, `@modelcontextprotocol/server` 2.3.1, `zod` 4.6.5, `yaml` 2.9.1, `mdast-util-from-markdown` 2.1.0, `mdast-util-to-string` 4.0.0, `mdast-util-gfm` 3.1.0, `micromark-extension-gfm` 3.0.0. Dev: `typescript` 5.9.3, `@types/node` 22.x (the minimum supported Node, so the types cannot admit newer APIs), `@types/mdast`, `@types/unist`, `vitest` 5.0.3 and `vite` 8.3.3, `@biomejs/biome` 2.5.15, `dependency-cruiser` 18.5.0, `@modelcontextprotocol/client` 2.3.1.
 
 **Install flag.** CI and the README's lexical install set `NODE_LLAMA_CPP_SKIP_DOWNLOAD=1`, so qmd's native dependency neither downloads nor compiles at install; the README's full-mode install (version 1) omits it.
 
@@ -404,7 +404,7 @@ Nothing to build. The maintainer settles: the licence (Apache-2.0 proposed; `LIC
 
 **Measure and record.** `npm ci` wall time and `node_modules` size on macOS arm64 and Linux x64, with and without the install flag; whether a compiler ran; the installed git version and the three unverified options confirmed against it; cold start of `node dist/cli.js --version`.
 
-**Done when.** CI is green on the matrix; `npx okf-catalog --version` prints; the measurements are recorded; the dependency rule fails both violations and passes without them.
+**Done when.** CI is green on the matrix; `node dist/cli.js --version` prints; the measurements are recorded; the dependency rule fails the planted violations in every rule family and passes without them.
 
 ### Bite 2. The pure core
 

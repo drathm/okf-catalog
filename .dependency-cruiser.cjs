@@ -3,15 +3,17 @@ const CORE = "^src/(bundle|catalog|derive|search)/";
 const ADAPTERS = "^src/(engine|mcp)/";
 const EDGES = "^src/(source|fs|config|report)/|^src/log\\.ts$";
 const COMMANDS = "^src/commands/";
+const CORE_NPM =
+  "^node_modules/(yaml|zod|mdast-util-from-markdown|mdast-util-to-string|mdast-util-gfm|micromark-extension-gfm|@types/mdast|@types/unist)/";
 
 module.exports = {
   forbidden: [
     {
       name: "core-node-builtins",
-      comment: "The core may use only crypto, path and url from Node.",
+      comment: "The core may use only crypto, path, path/posix and url from Node.",
       severity: "error",
       from: { path: CORE },
-      to: { dependencyTypes: ["core"], pathNot: "^(node:)?(crypto|path|url)$" },
+      to: { dependencyTypes: ["core"], pathNot: "^(node:)?(crypto|path|path/posix|url)$" },
     },
     {
       name: "core-npm-allowlist",
@@ -27,8 +29,7 @@ module.exports = {
           "npm-no-pkg",
           "npm-unknown",
         ],
-        pathNot:
-          "^node_modules/(yaml|zod|mdast-util-from-markdown|mdast-util-to-string|@types/mdast|@types/unist)/",
+        pathNot: CORE_NPM,
       },
     },
     {
@@ -53,16 +54,16 @@ module.exports = {
       to: { path: "^node_modules/@modelcontextprotocol/" },
     },
     {
-      name: "adapters-import-core-only",
+      name: "adapters-import-core-and-self",
       comment:
-        "An adapter imports the core and its own library, never another adapter, an edge or a command.",
+        "An adapter imports the core, its own files and its one library; never another adapter, an edge or a command.",
       severity: "error",
-      from: { path: ADAPTERS },
-      to: { path: "^src/", pathNot: `${CORE}|^src/log\\.ts$` },
+      from: { path: "^src/(engine|mcp)/" },
+      to: { path: "^src/", pathNot: `${CORE}|^src/log\\.ts$|^src/$1/` },
     },
     {
       name: "edges-no-adapters-or-commands",
-      comment: "Edges import the core and Node, never an adapter or a command.",
+      comment: "Edges import the core and Node, never an adapter, a command or the entry point.",
       severity: "error",
       from: { path: EDGES },
       to: { path: `${ADAPTERS}|${COMMANDS}|^src/cli\\.ts$` },

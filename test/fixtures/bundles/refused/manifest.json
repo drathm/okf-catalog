@@ -1,0 +1,27 @@
+{
+  "okf_catalog": 1,
+  "commit": "0000000000000000000000000000000000000000",
+  "published_at": "2026-10-06T00:00:00Z",
+  "files": {
+    ".qmd/index.yml": {
+      "sha256": "e39abd6b82d1e2e49c8d5f939626a0bd22bcfc59286e5e1b70b7439df5fca2db",
+      "bytes": 58
+    },
+    "bad-yaml.md": {
+      "sha256": "37b3787c436b4b4d6c50e5680e99a4ec44114ed6607d52ec8446a1d0171983e9",
+      "bytes": 81
+    },
+    "fine.md": {
+      "sha256": "b8bda1631e6b4a832a91c34fb4fe319db5af626791e1c0304bcaf8982268f761",
+      "bytes": 323
+    },
+    "no-frontmatter.md": {
+      "sha256": "307a4a35e29552c810d2d2f840254bff6839d5549282901468555c71d5947796",
+      "bytes": 87
+    },
+    "no-type.md": {
+      "sha256": "d3885b20fd11c1a4cf464bd6fdbc531c9ffa96f7eb931124672454e50a7407e4",
+      "bytes": 127
+    }
+  }
+}

@@ -44,9 +44,71 @@ Reviewer: an independent Opus agent, read-only, with web access; 85 tool calls, 
 ### Build
 
 - Red: `test/unit/cli.test.ts` written first (version on stdout, nothing on stderr; unknown command exits 2 with usage on stderr); watched both fail against an empty entry file (exit 0, empty stdout). Green: `src/cli.ts` with `parseArgs` and `createRequire`; both pass. Then `biome check --write` formatted two files; `tsc --noEmit` clean; dependency-cruiser clean on the scaffold.
-- Dependency rule proof: see `docs/research/facts.md` and the output recorded below.
-- Fixtures: `spec-example` (verbatim copy, 19 files, manifest added), `behaviours` (26 files, manifest), `refused` (5 files, no manifest), `make-manifest.mjs`, README, integrity test.
+- Dependency rule proof: recorded in `docs/research/facts.md` under "Dependency rule proof", with the resolved edge and the rule names.
+- Fixtures: `spec-example` (verbatim copy, 19 files, manifest added), `behaviours` (24 files, manifest), `refused` (5 files, no manifest), `make-manifest.mjs`, README, integrity test.
 
 ### Measurements
 
 Recorded in `docs/research/facts.md` under "Bite 1 measurements": install time and footprint, the one compile (fsevents, a macOS development dependency), the skip flag's effect, duplicate packages, qmd's import time and stdout silence, lexical search without optional dependencies, and the three git options confirmed, with the consequence that bite 5's tests need `file` in an injectable protocol allowlist.
+
+## Bite 2. The pure core
+
+### Plan
+
+Scope: `src/bundle/*`, `src/catalog/*`, `src/report/report.ts`, their unit tests. Nothing in these modules may import `node:fs`, `node:child_process`, qmd or the MCP SDK; the dependency rule from bite 1 enforces it. Every function takes data and returns data. The deliverable is `loadBundle(company, files, options, now)` returning `{ catalog, report }` and passing one test per row of the field table in intent §6.
+
+Modules and their one job:
+
+| Module | Job | Key signatures |
+|---|---|---|
+| `src/bundle/model.ts` | The core types from plan §2.3: `PagePath`, `BundleFile`, `Status`, `Trust`, `StaleAfter`, `Source`, `Page`, `ReservedFile`, `Refusal`, `Degradation`, `RefusalRule`, `Caps`, `LoadOptions` | types only |
+| `src/bundle/frontmatter.ts` | Split a UTF-8 text into frontmatter and body (BOM, CRLF, `---` fences) and parse the YAML strictly | `splitFrontmatter(text) → { block?: string; body: string }`; `parseFrontmatter(block) → { ok: true; data: Record<string, unknown> } \| { ok: false; error: string }` using `yaml` with `version: "1.2"`, `schema: "core"`, `uniqueKeys: true`; a non-mapping is an error |
+| `src/bundle/reserved.ts` | Recognise `index.md` and `log.md` at any depth before any page rule runs; tolerate frontmatter on them; lift `okf_version` from a root index | `isReservedName(path) → "index" \| "log" \| undefined`; `parseReserved(file) → ReservedFile` |
+| `src/bundle/markdown.ts` | Read a body with `mdast-util-from-markdown`: first heading, first sentence of the first paragraph, every link in document order, whether raw HTML is present | `firstHeading(body)`, `firstSentence(body)`, `links(body) → Array<{ url, text }>`, `hasHtml(body)` |
+| `src/bundle/links.ts` | Resolve a link to a page path: bundle-absolute (leading slash) or relative to the page's folder, fragment stripped, external URLs ignored | `classifyLink(url) → "bundle" \| "external"`; `resolveLink(url, fromPath, pagePaths) → PagePath \| undefined` |
+| `src/bundle/page.ts` | Turn one `BundleFile` into a `Page` or a `Refusal`, deriving every field in the table with its source and a degradation wherever a fallback was used | `parsePage(file, context: { pagePaths: Set<PagePath>; specText }) → Page \| Refusal` |
+| `src/bundle/manifest.ts` | The manifest schema (zod), building one from files, verifying files against one | `ManifestSchema`; `buildManifest(files, { commit, publishedAt }) → Manifest`; `verifyManifest(manifest, files) → Array<{ path; problem: "hash-mismatch" \| "size-mismatch" \| "not-in-manifest" \| "missing-on-disk" }>` |
+| `src/bundle/index-file.ts` | Parse a §8 index file into sections and entries; generate one for a folder from its pages and subfolders in the §8 layout | `parseIndex(text) → IndexSections`; `generateIndex(folder, pages, subfolders) → string` |
+| `src/bundle/contract.ts` | The admission rule, the bundle-level refusals, caps, unknown types | `admit(page, admitStatuses, dev) → boolean`; `bundleRefusals(files, options) → Refusal[]`; `unknownTypes(pages, declared) → string[]` |
+| `src/bundle/load.ts` | Orchestrate: classify files, verify the manifest, parse reserved files and pages, resolve links, admit, build the catalog and the report | `loadBundle(company, files, options, now) → { catalog: Catalog; report: Report }` |
+| `src/catalog/model.ts` | The immutable catalog and its lookups | `Catalog`, `Folder`; `buildCatalog(...)`, `getPage`, `getFolder`, `listTypes` |
+| `src/catalog/provenance.ts` | The provenance view of a page, with `overdue` computed from the clock by the page's own `stale_after` form | `provenanceOf(page, now) → Provenance`; `isOverdue(staleAfter, now) → boolean` |
+| `src/report/report.ts` | The report type and its text rendering | `Report`; `renderReport(report) → string` |
+
+Rules decided for this bite, each flagged to the reviewer as a judgement call:
+
+1. **Unparseable frontmatter** is a refusal with its own rule, `frontmatter-unparseable`, added to the `RefusalRule` union: it is distinct from "no frontmatter" and the message names the YAML error.
+2. **Unknown `status` value** (not `draft`, `stable` or `deprecated`): treated as `draft` for admission, so it is not served by default, with a degradation naming the value. The specification's "absent means stable" applies only to an absent key.
+3. **`stale_after` by form.** `YYYY-MM-DD` is the date form: `at` is the start of that UTC day and the page is overdue when `now >= at`. An ISO datetime with an explicit offset is the datetime form: overdue when `now >= at`. A datetime without an offset is read as UTC and reported. Anything else is unparseable: no `staleAfter`, never overdue, reported. A form other than the one `spec_text` expects is reported as a degradation and still judged by its own rule.
+4. **`verified`**: a bare mapping becomes a one-entry list; an entry without `by` and `at` is dropped and reported; `trust` follows §5.3 on what remains.
+5. **Replacement link on a deprecated page**: the first link in the body, in document order, that resolves to another page in the bundle. This replaces draft 2's "first non-empty body line", because the specification's own deprecated example opens with a heading and links in the next paragraph.
+6. **Links** resolve against every `.md` page path in the bundle, admitted or not, so a link to a draft counts as resolved; whether the target is served is a separate question `get_page` answers.
+7. **`generated`**: `by` is required inside it per the specification; an entry without `by` is dropped and reported; `at` is optional and kept raw beside its instant.
+8. **Bundle-level refusals**: a missing manifest outside development mode, caps exceeded, and an engine configuration folder or file (`.qmd`) anywhere in the tree. Per-file refusals: no frontmatter, unparseable frontmatter, no type, hash mismatch, size mismatch, a file present on disk but absent from the manifest. A manifest entry whose file is missing on disk is reported, not refused. A bundle-level refusal sets `report.fatal`, which the commands treat as "do not serve".
+9. **Attachments**: any non-`.md` file other than `manifest.json` is counted, never parsed; a `.md` file is a page unless its name is reserved.
+10. **Degradations are reported for admitted pages only**; excluded pages are counted. Refusals are always reported.
+11. **The report's `encodedFolders`** is filled by the command after the engine's path codec runs (bite 3); the core leaves it empty.
+
+Tests first, one file per module under `test/unit/`, each test named after the behaviour it pins. The fixtures from bite 1 are read into memory with `readFixture`; variants that are easier to express inline (a tampered byte, a bare mapping, CRLF line endings, a BOM) are built in the test. The table in plan §2.5 is the checklist. Done when every row has a passing test, `loadBundle` runs on all three fixtures with the expected reports asserted field by field, `npm run check` is clean, and the dependency rule still passes.
+
+Review before build: an independent review of this plan. Review after build: an independent review of `contract.ts`, `page.ts`, `reserved.ts` and `load.ts` against the specification text and intent §6.
+
+### Plan review
+
+Reviewer: an independent Opus agent, read-only, probing the installed `yaml`, `mdast` and `zod` packages in memory and reading the two specification texts. Verdict: ready with changes. Dispositions, all applied before the first test:
+
+| # | Finding | Disposition |
+|---|---|---|
+| F1 | The core would import `Report` from `src/report/`, an edge layer the dependency rule forbids, so the bite could never pass its own gate | `Report` lives in `src/bundle/model.ts`; `src/report/report.ts` keeps only `renderReport`; `console` added to the globals the core may not use |
+| F2 | `dev` conflated "admit drafts" with "skip integrity", so `pack` on a source checkout could not be expressed; the manifest came in twice | `options.integrity: "require-manifest" \| "none"` separate from `dev`; the core reads the root `manifest.json` from the files; new rule `manifest-invalid`; the manifest type is inferred from the zod schema, path keys are validated, timestamps accept an offset, lookups use `Object.hasOwn` |
+| F3 | Rule 8 made `.qmd` and any exceeded cap fatal, contradicting the `refused` fixture; the report had no `fatal` field; walker refusals had no way in | Fatal only for a missing or invalid manifest when integrity is required, and for the file-count and tree-byte caps; per path for an oversize file, `.qmd/**`, walker refusals and page rules; `walkRefusals` is an input; `fatal` and `missingOnDisk` are report fields; `manifest.json` is recognised at the root only; hidden entries (a dot-leading segment) are skipped and counted, except `.qmd`, which is refused |
+| F4 | An unknown `status` was excluded and then never reported, since degradations were reported for admitted pages only | Values trimmed and lower-cased; unknown values excluded by default and always listed in `report.unknownStatuses`; `statusRaw` on the page; an empty `status` counts as absent |
+| F5 | The replacement rule could fall through to a "see also" link or name a draft, and the documents still stated the superseded rule | The first body link that is not a same-page anchor decides: a replacement when it resolves to an admitted page other than itself; otherwise none, with a coded degradation (`broken`, `external`, `not-served`, `self`); resolved after admission; plan §2.3 and §2.5 and intent §3 and §6 updated |
+| F6 | Resolving links only against page paths would report folders, reserved files and attachments as broken, miss reference-style links, and misread protocol-relative URLs | Links classify as page, folder, reserved, attachment, anchor, external or broken; any scheme and `//` are external; segments are percent-decoded; paths above the root are broken; `linkReference` resolves through its `definition`; links to excluded or refused pages have their own report list |
+| F7 | `new Date` made the staleness rules depend on the machine's time zone and accepted impossible dates | One `parseTimestamp` with explicit grammars (`YYYY-MM-DD`, RFC 3339 with `Z` or `±hh:mm`), built with `Date.UTC` and a calendar round trip; used for every timestamp; the unit suite runs under a non-UTC zone with a guard test; boundary tests at the instant and one millisecond before; a `verified` entry keeps its valid `by` when `at` is missing or bad, with a degradation |
+| F8 | The named `yaml` options were all defaults; `!!timestamp` and other tags would resolve; `parse()` writes warnings to stderr; a self-referencing alias crashes serialisation; an empty block was misclassified | `parseDocument` with `resolveKnownTags: false`, errors and warnings carried in the result, `toJS` with an alias cap, a JSON round trip to catch cycles; `null` becomes an empty mapping and then `no-type`; `type`, `title` and `description` must be non-empty strings after trimming, with scalars of other types taken as text and reported; duplicate keys refused, noted as stricter than okflint |
+| F9 | CommonMark without GFM mis-parses the specification's own tables, footnotes and autolinks | `micromark-extension-gfm` 3.0.0 and `mdast-util-gfm` 3.1.0 added and allowlisted; the description fallback skips tables and footnote definitions; a footnote reference with no matching source id is a degradation; one sentence splitter with whitespace collapsed, footnote marks stripped and a length cap; `hasHtml` counts block HTML and any `script`, `style` or `iframe` element |
+| F10 | Reserved files parsed without splitting their frontmatter would yield a heading built from YAML; the index round trip cannot be literal on the example bundle | `ReservedFile` carries frontmatter, body, text and degradations; `parseIndex` takes the body; a reserved file's unparseable frontmatter degrades, never refuses; the round trip is parse-after-generate; a test checks that each example index's page links equal the folder's pages, treating `x/` as `x/index.md` and excluding attachments; generated indexes list admitted pages only; a file index is served as the company wrote it |
+| F11 | "One test per row" named functions from later bites and bundled five behaviours in one row; free-text degradations make assertions brittle | The checklist is the rows whose functions live in the core, one test per rule, and the inline variants named (BOM, CRLF, fence at end of file, tampered and truncated bytes, empty file, `---\n---`, unclosed fence, a 0xFF byte with a new `not-utf8` rule, duplicate key, `!!timestamp`, alias cycle, `type: 123`, malformed verified entries); `Degradation.code` is a union; core tests set a far-off system time; `unknownTypes` is empty when no types are declared; a folder with only attachments is not a page folder |
+
+Also from the hand-walked pages: `StaleAfter.form` gains `unparseable` so provenance can say the recheck date is unreadable rather than absent.

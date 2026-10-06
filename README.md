@@ -6,7 +6,7 @@ okf-catalog is an MCP server that serves a company's [Open Knowledge Format](htt
 
 What it adds: **qmd done right for OKF.** [qmd](https://github.com/tobi/qmd) is the best Markdown search engine there is. okf-catalog makes it understand OKF's fields: titles, descriptions and tags ranked as they should be, status and recheck dates respected, trust and provenance returned with every answer, deprecated pages pointing to their replacements.
 
-**Status: planning.** Nothing runnable yet. Start with [docs/intent.md](docs/intent.md).
+**Status: version 0 in progress, nothing published.** Start with [docs/intent.md](docs/intent.md); the implementation plan and its execution record are under [docs/plans/](docs/plans/).
 
 ## Documents
 
@@ -18,4 +18,4 @@ What it adds: **qmd done right for OKF.** [qmd](https://github.com/tobi/qmd) is 
 
 ## Licence
 
-Not yet chosen. Apache-2.0 is proposed (decision D1).
+Apache-2.0 (see `LICENSE` and `NOTICE`), proposed in decision D1 and awaiting the maintainer's confirmation before the first push.

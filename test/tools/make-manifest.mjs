@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Writes manifest.json for a fixture bundle: every file except manifest.json, with its sha256 and size.
-// Usage: node test/fixtures/make-manifest.mjs test/fixtures/bundles/<name>
+// Usage: node test/tools/make-manifest.mjs test/fixtures/bundles/<name>
 // The `pack` command replaces this once it exists (bite 5); until then this is how fixture manifests are made.
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -14,13 +14,17 @@ if (!root) {
 const files = {};
 const walk = (dir) => {
   for (const entry of readdirSync(dir).sort()) {
+    if (entry === ".DS_Store" || entry === "Thumbs.db") continue;
     const full = join(dir, entry);
     if (statSync(full).isDirectory()) walk(full);
     else {
       const rel = relative(root, full).split("\\").join("/");
       if (rel === "manifest.json") continue;
       const bytes = readFileSync(full);
-      files[rel] = { sha256: createHash("sha256").update(bytes).digest("hex"), bytes: bytes.length };
+      files[rel] = {
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+        bytes: bytes.length,
+      };
     }
   }
 };
@@ -32,4 +36,6 @@ const manifest = {
   files: Object.fromEntries(Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1))),
 };
 writeFileSync(join(root, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`);
-process.stderr.write(`wrote ${Object.keys(files).length} entries to ${join(root, "manifest.json")}\n`);
+process.stderr.write(
+  `wrote ${Object.keys(files).length} entries to ${join(root, "manifest.json")}\n`,
+);

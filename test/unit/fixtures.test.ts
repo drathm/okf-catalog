@@ -10,7 +10,7 @@ interface FixtureManifest {
 }
 
 describe("fixture bundles", () => {
-  for (const name of ["spec-example", "behaviours"]) {
+  for (const name of ["spec-example", "behaviours", "refused"]) {
     it(`${name}: every file matches its manifest entry, and nothing is missing`, () => {
       const manifest = JSON.parse(
         readFileSync(join(FIXTURES, name, "manifest.json"), "utf8"),
@@ -29,8 +29,8 @@ describe("fixture bundles", () => {
     });
   }
 
-  it("refused: has no manifest, by design", () => {
-    expect(existsSync(join(FIXTURES, "refused", "manifest.json"))).toBe(false);
+  it("no-manifest: has no manifest, by design", () => {
+    expect(existsSync(join(FIXTURES, "no-manifest", "manifest.json"))).toBe(false);
   });
 
   it("spec-example: is the nineteen-file copy of the specification's example bundle", () => {

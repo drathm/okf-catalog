@@ -3,7 +3,6 @@ name: ci
 on:
   push:
     branches: ["**"]
-  pull_request:
 
 permissions:
   contents: read
@@ -17,8 +16,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        node: [22, 24]
+        node: [22.12.0, 22, 24]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

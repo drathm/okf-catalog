@@ -26,7 +26,8 @@
               "options": {
                 "deniedGlobals": {
                   "process": "The core is pure: take the clock and the environment as parameters.",
-                  "fetch": "The core is pure: no network."
+                  "fetch": "The core is pure: no network.",
+                  "console": "The core is pure and stdout is the protocol channel: return data, never print."
                 }
               }
             }
