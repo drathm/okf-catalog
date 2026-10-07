@@ -63,12 +63,14 @@ run_one() { # name prompt
   OUT="$RESULTS/$STAMP-$1.jsonl"
   EMPTY=$(mktemp -d "${TMPDIR:-/tmp}/okf-catalog-empty.XXXXXX")
   echo "running $1 from $EMPTY, saving $OUT"
+  # Standard input is detached: a claude process inherits the caller's, and in a loop over a question list it
+  # would read the remaining lines as its own input.
   ( cd "$EMPTY" && ENABLE_TOOL_SEARCH=false claude -p "$2" \
       --plugin-dir "$CHECKOUT/plugin/claude-code" \
       --mcp-config "${3:-$MCP}" --strict-mcp-config \
       --tools Skill --allowedTools "${4:-$TOOLS}" --permission-mode dontAsk $PROMPTS \
       --model "$MODEL" --max-budget-usd "$BUDGET" --no-session-persistence \
-      --output-format stream-json --verbose ) > "$OUT" || echo "claude exited $? for $1; verify.mjs reads the result event's subtype"
+      --output-format stream-json --verbose < /dev/null ) > "$OUT" || echo "claude exited $? for $1; verify.mjs reads the result event's subtype"
   rmdir "$EMPTY" 2>/dev/null || true
   echo "$OUT"
 }

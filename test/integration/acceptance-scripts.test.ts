@@ -81,6 +81,7 @@ describe("the acceptance scripts", { timeout: 60_000 }, () => {
     expect(script).toContain("--expect-no-page");
     expect(script).toContain('"alwaysLoad": true');
     expect(script).toContain("ENABLE_TOOL_SEARCH=false claude -p");
+    expect(script).toContain("--verbose < /dev/null )");
     expect(script).toContain('PROMPTS="--permission-prompts none"');
     expect(script).toContain("2.1.259");
     const syntax = spawnSync("sh", ["-n", join(ACCEPTANCE, "claude.sh")], { encoding: "utf8" });

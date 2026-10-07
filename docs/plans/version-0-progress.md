@@ -1001,3 +1001,7 @@ Reviewer: Opus (claude-opus-5-5) with a shell, a `git archive` of the commit bui
 
 Open questions, answered: (1) Whether a plugin with its two settings unset loads under `-p` is the first thing the runbook's step 3 settles, and the scripted runs depend on it; the runbook now says what to do when it does not. (2) The person's questions run on the laptop that holds the models; running them on the clean account would be a second pull and a second approval, which the runbook says. (3) Recorded for the maintainer with the probe's numbers; D51's anchor stays at 5, the lexical note's limit. (4) The person judges from the five printed answers; the script's signals are the tool gate, the citation and the review flag.
 
+### Scripted acceptance runs, after the folds
+
+With the standalone CLI updated to 2.1.292 and signed in by the maintainer (the desktop app's bundled Claude Code keeps its own session, which the CLI does not share), the author ran items 2, 3 and 4 and the two bite 4 questions through `claude.sh`: twelve processes, every one passing the verifier, 1.25 USD; the results and the two findings (the model receives the structured channel only; the plugin loads under `-p` with its settings unset) are in the acceptance document and the facts note. One defect found and fixed: the script's `claude` process inherited the caller's standard input. The person's column stays pending for the clean account.
+
