@@ -1,6 +1,6 @@
 {
   "name": "okf-catalog",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A small-company hosted knowledge catalog for AI agents: an MCP server that serves an OKF bundle, built on qmd.",
   "license": "Apache-2.0",
   "private": true,
@@ -14,7 +14,9 @@
   "files": [
     "dist",
     "recipes/publish",
-    "NOTICE"
+    "NOTICE",
+    "CHANGELOG.md",
+    "npm-shrinkwrap.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

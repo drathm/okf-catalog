@@ -1,10 +1,16 @@
 {
   "name": "okf-catalog",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Serves a company's Open Knowledge Format bundle to Claude: search, read pages whole, cite path, trust and recheck date.",
-  "author": { "name": "okf-catalog maintainers" },
+  "author": {
+    "name": "okf-catalog maintainers"
+  },
   "license": "Apache-2.0",
-  "keywords": ["okf", "knowledge", "mcp"],
+  "keywords": [
+    "okf",
+    "knowledge",
+    "mcp"
+  ],
   "userConfig": {
     "install_path": {
       "type": "directory",

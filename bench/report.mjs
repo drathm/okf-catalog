@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 // Renders docs/research/benchmark-lexical.md from the latest benchmark run (or the summary file given as the
-// first argument). Every number in the note comes from the run's files, so a re-run and a re-render keep the
-// note honest. Usage: node bench/report.mjs [bench/results/<stamp>.summary.json]
+// first argument), and docs/research/benchmark-modes.md when the run measured qmd's modes. Every number in a
+// note comes from the run's files, so a re-run and a re-render keep the notes honest. A run over a bundle
+// that is not the public corpus renders its modes note beside its results, with aggregates only, and never
+// touches docs/. Usage: node bench/report.mjs [<stamp>.summary.json]
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -183,5 +185,150 @@ out.push("## What this does not show\n");
 out.push(
   "No comparison with qmd's full mode (bite 6, with approval for the model download), so D7's reservation stays open. Twenty-five questions over one corpus, nine tenths of it one bundle, written by the system's author. The keyword form uses terms chosen with the page in view, so its numbers are an upper bound on what a reader who already knows the page can do. The filter rows use the gold page's own folder and type. The metadata block (D30) is not measured until a qmd release reads it.\n",
 );
-writeFileSync(join(here, "..", "docs", "research", "benchmark-lexical.md"), out.join("\n"));
-process.stdout.write(`wrote docs/research/benchmark-lexical.md from ${summaryPath}\n`);
+const onCorpus = (m.bundle ?? "the public corpus") === "the public corpus";
+if (onCorpus) {
+  writeFileSync(join(here, "..", "docs", "research", "benchmark-lexical.md"), out.join("\n"));
+  process.stdout.write(`wrote docs/research/benchmark-lexical.md from ${summaryPath}\n`);
+} else {
+  process.stdout.write("a run over another bundle: the lexical note is not rewritten\n");
+}
+
+if (S.modes !== null && S.modes !== undefined) {
+  const M = S.modes;
+  const fmtStat = (s) => (s.min === s.max ? `${s.min}` : `${s.min} / ${s.median} / ${s.max}`);
+  const fmtMode = (v) =>
+    `${fmtStat(v["hit@1"])} | ${fmtStat(v["hit@3"])} | ${fmtStat({ min: v["MRR@5"].min.toFixed(2), median: v["MRR@5"].median.toFixed(2), max: v["MRR@5"].max.toFixed(2) })}`;
+  const modeRows = rows.filter((r) => r.mode !== undefined);
+  const note = [];
+  note.push("# Lexical versus full mode, bite 6\n");
+  note.push(
+    `Run ${m.ran.slice(0, 10)} on ${m.os}, Node ${m.node}, qmd ${m.qmd}, node-llama-cpp ${M.nodeLlamaCpp}, ${commitLine}${M.stub ? ", with the embedder STUB (a measurement of the harness, not of a model)" : ""}. Reproduce with \`sh bench/fetch-corpus.sh\`, \`npm run build\`, \`node bench/pull-models.mjs ${M.models.map((x) => x.key).join(" ") || "…"}\` (the approval), \`node bench/run.mjs --modes ${M.requested.join(",")} --samples ${M.samplesRequested}\`, then \`node bench/report.mjs\`.\n`,
+  );
+  note.push("## Why\n");
+  note.push(
+    "Decision D7 made lexical search the default with a reservation: if qmd's full mode changes results dramatically, the default is wrong. This note is that measurement, over the same derived index the lexical benchmark uses, so the only thing that differs between the rows is the retrieval. The threshold was written before the run (D51): the worst of `full`'s samples, paired against `question/relaxed`, improves the gold rank of at least 8 of the 25 questions and worsens at most 2. The sample is the lexical note's: 25 author-written questions over a corpus that is mostly one bundle, a smoke test, not a survey of what users ask.\n",
+  );
+  note.push("## Method\n");
+  note.push(
+    `The modes, each over the second store the harness opens on the lexical run's database after one \`embed()\` of the collection, every call scoped to it: \`vector\` is \`searchVector\` (the embedding model alone, ${M.retrieval.vectorRows} rows cut to ${M.retrieval.returned} distinct pages); \`fused\` is okf-catalog's own candidate for a full mode, the production ladder's ranked list twenty deep fused with the vector list by reciprocal rank (k = ${M.retrieval.rrfK}) in the harness; \`hybrid\` is qmd's own pipeline without the reranker (its BM25 probe on the raw question, expansion by the language model unless the probe shows a strong signal, lexical and vector lists of ${M.retrieval.qmdListSize} for the original and each expansion, reciprocal-rank fusion with the original lists at double weight); \`full\` is the same with the reranker over ${M.retrieval.qmdCandidateLimit} candidates. The index is ${M.retrieval.indexed}. The modes that run a language model were sampled ${M.samplesRequested} times with qmd's cache cleared before each sample; their rows read min / median / max. Every mode is paired per question against \`question/relaxed\`, \`question/strict\` and \`keywords/relaxed\`, which bracket what production sends.\n`,
+  );
+  note.push("## Results\n");
+  note.push("| Mode | samples | hit@1 | hit@3 | MRR@5 |\n|---|---|---|---|---|");
+  for (const base of ["question/relaxed", "question/strict", "keywords/relaxed"]) {
+    const v = S.summary[base]?.all;
+    if (v)
+      note.push(
+        `| ${base} (lexical) | 1 | ${v["hit@1"]}/${v.n} | ${v["hit@3"]}/${v.n} | ${v["MRR@5"].toFixed(2)} |`,
+      );
+  }
+  for (const [mode, v] of Object.entries(M.perMode))
+    note.push(`| ${mode} | ${v.samples} | ${fmtMode(v.overall)} |`);
+  note.push("\nBy question style (min / median / max over the samples where they differ):\n");
+  const styles = Object.keys(Object.values(M.perMode)[0]?.byStyle ?? {});
+  note.push(
+    `| Mode | ${styles.map((s) => `${s} hit@1 | ${s} hit@3 | ${s} MRR@5`).join(" | ")} |\n|---|${styles.map(() => "---|---|---").join("|")}|`,
+  );
+  for (const [mode, v] of Object.entries(M.perMode))
+    note.push(`| ${mode} | ${styles.map((s) => fmtMode(v.byStyle[s])).join(" | ")} |`);
+  note.push("\nPaired by question, per sample (first better / first worse / same):\n");
+  note.push(
+    "| Mode | against question/relaxed | against question/strict | against keywords/relaxed |\n|---|---|---|---|",
+  );
+  for (const [mode, v] of Object.entries(M.perMode)) {
+    const cell = (list) => list.map((p) => `${p.better}/${p.worse}/${p.same}`).join(", ");
+    note.push(
+      `| ${mode} | ${cell(v.paired["question/relaxed"])} | ${cell(v.paired["question/strict"])} | ${cell(v.paired["keywords/relaxed"])} |`,
+    );
+  }
+  const full = M.perMode.full;
+  if (full !== undefined) {
+    const worst = full.paired["question/relaxed"].reduce(
+      (acc, p) => (acc === null || p.better - p.worse < acc.better - acc.worse ? p : acc),
+      null,
+    );
+    const met = worst !== null && worst.better >= 8 && worst.worse <= 2;
+    note.push(
+      `\nAgainst the threshold: the worst \`full\` sample improves ${worst?.better ?? "?"} questions and worsens ${worst?.worse ?? "?"} against \`question/relaxed\`; the D51 threshold (at least 8 better, at most 2 worse) is ${met ? "met, so the maintainer decides with the sample's limits in view" : "not met, so the lexical default stands and D7's reservation can close"}.\n`,
+    );
+  }
+  note.push("## Stability and cost\n");
+  note.push("| Measure | Value |\n|---|---|");
+  for (const [mode, v] of Object.entries(M.perMode)) {
+    note.push(
+      `| ${mode}: questions whose rank differed between samples | ${v.questionsWhoseRankVaried} of ${Object.keys(v.rankSpread).length} |`,
+    );
+    note.push(`| ${mode}: model load, timed on a warm-up query | ${v.modelLoadMs} ms |`);
+    const ms = modeRows.filter((r) => r.mode === mode).map((r) => r.ms);
+    if (ms.length > 0)
+      note.push(
+        `| ${mode}: query latency | median ${median(ms).toFixed(1)} ms, max ${Math.max(...ms).toFixed(1)} ms |`,
+      );
+  }
+  note.push(
+    `| Embedding the collection | ${M.embed.ms} ms, ${M.embed.docsProcessed} documents, ${M.embed.chunksEmbedded} chunks, ${M.embed.errors} errors |`,
+  );
+  note.push(
+    `| Store size before and after embedding | ${(M.dbBytesBefore / 1024 / 1024).toFixed(1)} MiB, ${(M.dbBytesAfterEmbed / 1024 / 1024).toFixed(1)} MiB |`,
+  );
+  note.push(`| qmd's cache rows at the end | ${M.llmCacheRowsAtEnd ?? "n/a"} |`);
+  const ph = m.memory.phases ?? {};
+  note.push(
+    `| Resident memory after load / index / lexical / embed / modes | ${["afterLoad", "afterIndex", "afterLexical", "afterEmbed", "afterModes"].map((k) => `${Math.round((ph[k] ?? 0) / 1024 / 1024)} MiB`).join(" / ")} |`,
+  );
+  if (onCorpus) {
+    note.push("\n## Where the gold page was not first\n");
+    note.push(
+      "| Mode | Sample | Question | Style | Gold rank | First hit | Lexical string qmd or the ladder ran |\n|---|---|---|---|---|---|---|",
+    );
+    for (const r of modeRows) {
+      if (r.rank !== 1)
+        note.push(
+          `| ${r.mode} | ${r.sample} | ${r.id} | ${r.style} | ${r.rank ?? "miss"} | ${r.top5[0] ? `\`${r.top5[0]}\`` : "(no hits)"} | ${r.lexString ?? ""} |`,
+        );
+    }
+    const expanded = modeRows.filter((r) => r.trace?.expansions);
+    if (expanded.length > 0) {
+      note.push(
+        "\nExpansions qmd generated (first sample of each mode), with the strong-signal shortcut where it fired:\n",
+      );
+      note.push("| Mode | Question | Strong signal | Expansions |\n|---|---|---|---|");
+      for (const r of expanded.filter((x) => x.sample === 1))
+        note.push(
+          `| ${r.mode} | ${r.id} | ${r.trace.strongSignal === null ? "no" : `yes (${r.trace.strongSignal.toFixed(3)})`} | ${(r.trace.expansions ?? []).map((e) => `${e.type}: ${e.query}`).join("; ")} |`,
+        );
+    }
+  } else {
+    note.push(
+      "\nThis run was over a bundle that is not the public corpus; per-question rows stay in the results folder and are not rendered here.\n",
+    );
+  }
+  note.push("\n## Reproducibility\n");
+  note.push("| Item | Value |\n|---|---|");
+  for (const x of M.models)
+    note.push(
+      `| ${x.key} | ${x.uri}, ${x.bytes} bytes, sha256 ${x.sha256}, host revision ${x.revision.slice(0, 12)}, at ${x.path} |`,
+    );
+  if (M.models.length === 0) note.push("| models | none: the embedder stub |");
+  note.push(
+    `| Environment | ${
+      Object.entries(M.environment)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(", ") || "none"
+    } |`,
+  );
+  note.push(`| Device | ${JSON.stringify(M.device)} |`);
+  note.push(
+    `| Retrieval depth | vector rows ${M.retrieval.vectorRows}, returned ${M.retrieval.returned}, qmd lists ${M.retrieval.qmdListSize}, candidates ${M.retrieval.qmdCandidateLimit}, RRF k ${M.retrieval.rrfK} |`,
+  );
+  note.push(`| Clock, request | ${m.clock}; limit ${m.request.limit}, overdue included |`);
+  note.push(`| qmd console lines during the modes | ${M.consoleLines.length} |`);
+  note.push("\n## What this does not show\n");
+  note.push(
+    "Twenty-five questions over one corpus, nine tenths of it one bundle, written by the system's author; the modes see the derived documents, not the original pages; the expansion model samples, so its rows are a range, not a point; a company's own questions run through the same harness with `--bundle`, `--config` and `--questions`, and their note stays beside their results.\n",
+  );
+  const target = onCorpus
+    ? join(here, "..", "docs", "research", "benchmark-modes.md")
+    : join(dirname(summaryPath), "benchmark-modes.md");
+  writeFileSync(target, note.join("\n"));
+  process.stdout.write(`wrote ${target} from ${summaryPath}\n`);
+}

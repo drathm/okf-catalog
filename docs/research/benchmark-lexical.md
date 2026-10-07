@@ -1,6 +1,6 @@
 # Lexical benchmark, bite 3
 
-Run 2026-10-07 on darwin arm64, Node v24.15.0, qmd 2.8.3, okf-catalog commit `07c6439` (clean tree). Reproduce with `sh bench/fetch-corpus.sh`, `npm run build`, `node bench/run.mjs`, then `node bench/report.mjs` to regenerate this note. The run writes one JSON line per question per configuration and a summary under `bench/results/` (gitignored).
+Run 2026-10-07 on darwin arm64, Node v24.15.0, qmd 2.8.3, okf-catalog commit `02cba7c` with uncommitted changes (diff hash `0b442d7b68f4`). Reproduce with `sh bench/fetch-corpus.sh`, `npm run build`, `node bench/run.mjs`, then `node bench/report.mjs` to regenerate this note. The run writes one JSON line per question per configuration and a summary under `bench/results/` (gitignored).
 
 ## Why
 
@@ -125,17 +125,17 @@ The first two runs of this benchmark disagreed on one question (B25: rank 1, the
 
 | Measure | Value |
 |---|---|
-| Index time, 736 pages | 680 ms |
-| Database size, 736 pages | 10.6 MiB |
+| Index time, 736 pages | 712 ms |
+| Database size, 736 pages | 10.7 MiB |
 | Documents not indexed | 0 (0 by path collision) |
-| Process RSS after the run | 1162 MiB (walked files, catalog and qmd store all resident) |
-| Query latency, question/relaxed | median 9.9 ms, max 28.0 ms |
-| Query latency, question/strict | median 0.4 ms, max 1.6 ms |
-| Query latency, keywords/relaxed | median 2.5 ms, max 12.4 ms |
-| Query latency, keywords/strict | median 0.4 ms, max 1.2 ms |
-| Query latency, question/relaxed+topic | median 11.0 ms, max 26.0 ms |
-| Query latency, question/relaxed+type | median 11.6 ms, max 24.9 ms |
-| Query latency, question/relaxed+pool100 | median 39.1 ms, max 125.1 ms |
+| Process RSS after the run | 1116 MiB (walked files, catalog and qmd store all resident) |
+| Query latency, question/relaxed | median 10.3 ms, max 27.8 ms |
+| Query latency, question/strict | median 0.4 ms, max 3.4 ms |
+| Query latency, keywords/relaxed | median 2.3 ms, max 12.1 ms |
+| Query latency, keywords/strict | median 0.3 ms, max 1.4 ms |
+| Query latency, question/relaxed+topic | median 12.1 ms, max 27.2 ms |
+| Query latency, question/relaxed+type | median 10.6 ms, max 26.5 ms |
+| Query latency, question/relaxed+pool100 | median 45.4 ms, max 104.9 ms |
 | Rows fetched per search, question/relaxed | median 210, max 515 (every row carries its page body) |
 | Rows fetched per search, question/strict | median 0, max 21 (every row carries its page body) |
 | Rows fetched per search, keywords/relaxed | median 45, max 250 (every row carries its page body) |

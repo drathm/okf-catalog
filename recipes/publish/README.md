@@ -15,7 +15,7 @@ The workflow has two jobs. `build` holds `contents: read` only and does not keep
 
 - A ruleset or branch protection that lets the workflow push `published` and nothing else. The `contents: write` permission is repository-wide, so the rule is what limits it.
 - Protection on the source branch as the company sees fit; the workflow only reads it.
-- The checkers' versions are in `checkers.txt`; `checkers.lock` is their hash-pinned resolution, which the workflow installs with `--require-hashes` into a Python 3.12 environment, the interpreter the lock was built for. Regenerate the lock after changing a version (the command is in `checkers.txt`). Unpinned: the npm packages the server package depends on resolve from its lock at install time, and the runner's Node is whatever `setup-node` gives for "22".
+- The checkers' versions are in `checkers.txt`; `checkers.lock` is their hash-pinned resolution, which the workflow installs with `--require-hashes` into a Python 3.12 environment, the interpreter the lock was built for. Regenerate the lock after changing a version (the command is in `checkers.txt`). The server package carries `npm-shrinkwrap.json`, so its own dependencies install at the versions its suite tested (a dependency's `package-lock.json` is ignored by npm; a shrinkwrap is not). Unpinned: the runner's Node is whatever `setup-node` gives for "22".
 
 ## Running by hand
 

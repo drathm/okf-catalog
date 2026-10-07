@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -505,6 +506,100 @@ describe("okf-catalog serve over stdio with a repository source", { timeout: 90_
       expect((await second.end()).code).toBe(0);
       expect((await first.end()).code).toBe(0);
       expect(first.stderr()).toMatch(/"event":"load.done"/);
+    } finally {
+      rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  it("serves its cache and reports the last fetch when the remote cannot be asked, and keeps serving on a failed tick", async () => {
+    const packWork = mkdtempSync(join(tmpdir(), "okf-catalog-stdio-offline-"));
+    mkdirSync(join(packWork, "kb"));
+    writeFileSync(join(packWork, "kb", "alpha.md"), PUBLISHED_PAGE);
+    writeFileSync(join(packWork, "okf-catalog.yaml"), "company: fixture\nsource:\n  local: ./kb\n");
+    const packed = join(packWork, "out");
+    expect(
+      runPack(
+        [
+          "--config",
+          join(packWork, "okf-catalog.yaml"),
+          "--from",
+          join(packWork, "kb"),
+          "--out",
+          packed,
+        ],
+        {
+          stdout: () => undefined,
+          stderr: (m) => void process.stderr.write(m),
+          env: { OKF_CATALOG_NOW: NOW_ISO },
+        },
+      ),
+    ).toBe(0);
+    const repo = publishedRepo(
+      Object.fromEntries(
+        readdirSync(packed).map((name) => [name, readFileSync(join(packed, name), "utf8")]),
+      ),
+    );
+    rmSync(packWork, { recursive: true, force: true });
+    try {
+      const yaml = `company: fixture\nsource:\n  repository: "${repo.url}"\n  branch: published\n`;
+      const b = box("spec-example", yaml);
+      b.env.OKF_CATALOG_GIT_PROTOCOLS = "file";
+      const statusOf = async (run: ReturnType<typeof rawServer>, id: number) => {
+        run.send({
+          jsonrpc: "2.0",
+          id,
+          method: "tools/call",
+          params: { name: "status", arguments: {} },
+        });
+        return (await run.waitFor(id)).result as {
+          structuredContent: { published: { commit: string; fetchedAt: string } | null };
+        };
+      };
+      // The first server fetches the branch and is ended cleanly, so the lock is free and the tree is on disk.
+      const first = rawServer(b);
+      first.send(INITIALIZE);
+      await first.waitFor(1);
+      first.send(INITIALIZED);
+      const before = await statusOf(first, 2);
+      expect(before.structuredContent.published?.fetchedAt).toBe(NOW_ISO.replace("Z", ".000Z"));
+      const commit = before.structuredContent.published?.commit;
+      expect((await first.end()).code).toBe(0);
+
+      // The remote goes away. The second server starts under a later clock, so a fetch time it made up would show.
+      renameSync(join(repo.root, "origin.git"), join(repo.root, "origin.moved"));
+      b.env.OKF_CATALOG_NOW = "2026-10-07T12:00:00Z";
+      const second = rawServer(b);
+      second.send(INITIALIZE);
+      await second.waitFor(1);
+      second.send(INITIALIZED);
+      const after = await statusOf(second, 2);
+      expect(after.structuredContent.published?.commit).toBe(commit);
+      expect(after.structuredContent.published?.fetchedAt).toBe(NOW_ISO.replace("Z", ".000Z"));
+      second.send({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "search", arguments: { question: "alpha" } },
+      });
+      expect(JSON.stringify(await second.waitFor(3))).toContain("alpha.md");
+      // A server that started from disk ticks at once; the tick must fail (the remote cannot be asked), never
+      // read as a deleted branch, and the server must still answer afterwards.
+      const started = Date.now();
+      while (!/"event":"poller.tick"/.test(second.stderr()) && Date.now() - started < 20_000) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      const tick = second
+        .stderr()
+        .split("\n")
+        .find((line) => line.includes('"event":"poller.tick"'));
+      expect(tick).toBeDefined();
+      expect(tick).toContain('"outcome":"failed"');
+      expect(tick).not.toContain('"outcome":"gone"');
+      expect(tick).toContain("could not be asked");
+      expect(tick).toContain(repo.url);
+      const still = await statusOf(second, 4);
+      expect(still.structuredContent.published?.fetchedAt).toBe(NOW_ISO.replace("Z", ".000Z"));
+      expect((await second.end()).code).toBe(0);
     } finally {
       rmSync(repo.root, { recursive: true, force: true });
     }

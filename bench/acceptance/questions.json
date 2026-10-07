@@ -1,0 +1,42 @@
+[
+  {
+    "id": "S1",
+    "style": "reuse",
+    "bodyOnly": false,
+    "question": "What is the revenue recognition policy for FY2026?",
+    "keywords": ["revenue", "recognition", "policy"],
+    "gold": "policies/revenue-recognition.md"
+  },
+  {
+    "id": "S2",
+    "style": "paraphrase",
+    "bodyOnly": false,
+    "question": "Which rules decide how costs are allocated when a margin is worked out?",
+    "keywords": ["cost", "allocation", "margin"],
+    "gold": "policies/margin-standard.md"
+  },
+  {
+    "id": "S3",
+    "style": "reuse",
+    "bodyOnly": false,
+    "question": "How is gross margin computed for a period?",
+    "keywords": ["gross", "margin", "period"],
+    "gold": "computations/gross-margin-period.md"
+  },
+  {
+    "id": "S4",
+    "style": "reuse",
+    "bodyOnly": true,
+    "question": "Which columns does the customer orders table hold?",
+    "keywords": ["orders", "table", "columns"],
+    "gold": "tables/orders.md"
+  },
+  {
+    "id": "S5",
+    "style": "paraphrase",
+    "bodyOnly": false,
+    "question": "How do I run one of the attested computations on BigQuery?",
+    "keywords": ["attested", "computation", "bigquery"],
+    "gold": "skills/run-on-bq.md"
+  }
+]

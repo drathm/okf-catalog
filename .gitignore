@@ -9,3 +9,5 @@
 /bench/clones/
 /bench/results/
 /bench/.work/
+/bench/acceptance/results/
+/bench/.models/

@@ -1,6 +1,24 @@
 # Version 0 acceptance
 
-The acceptance list from the implementation plan, with the evidence for each item as it exists today. "Automated" means a test in the suite proves it on every run; "manual" means a recorded session by hand. Items marked pending need a person: the Claude Code CLI's login on the build machine had expired when bite 4 was built, so nothing could be recorded through it yet.
+What version 0 is judged by: the nine items of intent §7, each with the evidence that exists on every test run and the step a person takes on a clean account. "Automated" means a test in the suite proves it on every run; "pending" means the person's run has not happened. Nothing is marked done on the person's side until someone other than the author has run the runbook below on a clean account; their results are recorded in the table's last column, and for a private bundle only what the rule at the end allows.
+
+## The version 0 list (intent §7)
+
+| # | Item | Automated evidence | The person's step (runbook) | Person |
+|---|---|---|---|---|
+| 1 | The server starts on a real bundle with the development flag, and refuses a hostile bundle | `test/integration/stdio.test.ts` (the server over fixtures), `test/integration/mcp.test.ts` ("labels drafts under development mode"), `test/unit/check-command.test.ts` (`check` exits 1 on the `refused` fixture), `test/integration/degraded-bundle.test.ts` | Steps 3 and 4: their bundle with `serve.dev: true`, `/mcp` connected, `status`; `check` on the `refused` fixture | pending |
+| 2 | Five questions written by someone else, one a paraphrase and one answerable only from a body, each answered with path, verifier and recheck date | the server's part: `test/integration/acceptance-scripts.test.ts` (`ask.mjs` prints the rank, the path, trust, verifier and recheck), `test/integration/mcp.test.ts` (the citation in both channels) | Step 5: their questions file, `ask.mjs` as the pre-check, then `claude.sh question` per question | pending |
+| 3 | A page that gives orders is refused five times and still cited | the server's part: `test/unit/text.test.ts` (no forged lines), `test/integration/mcp.test.ts` (the marker and the body as data) | Step 6: `claude.sh orders` (five processes) | pending |
+| 4 | With no page for a question, the agent says so | `test/integration/mcp.test.ts` ("says plainly that no page matched…", the common-words error) | Step 6: `claude.sh none` | pending |
+| 5 | One named page is promoted and published, and a new session after the pull interval answers from the new text with no reinstall | `test/integration/publish-loop.test.ts` (pack, push, the poller's tick, the new text served, the removed page gone) | Step 7: one interactive session, one server, the page the maintainer named | pending |
+| 6 | Drafts are labelled when admitted and absent when not | `test/integration/mcp.test.ts` ("labels drafts under development mode and never shows them otherwise") | Step 8: `serve.dev` on, then off, the same draft | pending |
+| 7 | A bundle with no index files, an unknown type and a broken link loads, is served and is reported, not refused (spec §11) | `test/integration/degraded-bundle.test.ts` (the built server, the real engine, a manifest, declared types, development mode off), `test/unit/load.test.ts` | Step 9: `write-degraded-bundle.mjs`, serve it, `status` | pending |
+| 8 | Offline, the server serves its cache and reports when it last pulled | `test/integration/stdio.test.ts` ("serves its cache and reports the last fetch when the remote cannot be asked…"), `test/unit/git-source.test.ts` (an offline start answers from disk) | Step 10: the network off, a restart, `status` and a question; the one run that meets the fetch timeout | pending |
+| 9 | Lexical and full mode are measured against each other on one laptop, on the benchmark corpus and the acceptance questions, and the result is recorded before the default is confirmed | `test/integration/bench-modes.test.ts` (the modes path with the embedder stub, offline; the approval printed and nothing fetched when a model is absent), `test/unit/bench-models.test.ts`; the lexical rows in `docs/research/benchmark-lexical.md` | Step 11: the maintainer's approval (`pull-models.mjs`), the run, the note; the person's questions through `--bundle` | pending the approval |
+
+Beside the list, the acceptance gate of the implementation plan (§0) asks for CI green on Node 22 and 24, macOS and Linux: the branch has not been pushed, so only macOS has run; that is the maintainer's item (2) below.
+
+## Evidence by bite
 
 ## Bite 4: the server, over stdio, from Claude Code
 
@@ -27,11 +45,6 @@ The acceptance list from the implementation plan, with the evidence for each ite
 | The cache folder is created with mode 0700 and refused when it is a link, another user's, or writable by others | `test/unit/cache-dir.test.ts` | automated |
 | A hostile title or verifier cannot forge a server line | `test/unit/text.test.ts` | automated |
 | No page text reaches the log | `test/unit/log.test.ts` (closed allowlist), `test/integration/stdio.test.ts` (stderr checked) | automated |
-| Which result channel Claude Code hands the model (`content`, `structuredContent`, or both) | `bench/channel-probe/` holds the stub server and its configuration; the run failed on an expired CLI login | pending: run `claude -p` against the probe server after signing in, record which markers the model quotes |
-| What Claude Code substitutes for `${user_config.install_path}` when the plugin runs under `--plugin-dir` without `/plugin configure` | the plugin's `.mcp.json`; `claude --debug` shows the command it ran | pending (manual): record whether the placeholder stays, and what the one-line reason says |
-| A Claude Code session answers from a page and cites path, trust, verifier and recheck date | `claude --plugin-dir ./plugin/claude-code`, then `/plugin configure okf-catalog`, then a question the bundle answers | pending: needs a signed-in Claude Code and the bundle the maintainer names (the public corpus stands in) |
-| A page that gives orders is cited and not obeyed | the same session, asking about `notes/injection.md` of the behaviours fixture or an equivalent page | pending (manual) |
-| A bundle with no index files, an unknown type and a broken link is served and reported | `status` on such a bundle through the session; `test/unit/outputs.test.ts` proves the fields exist | pending (manual confirmation); automated for the fields |
 | A hostile bundle is refused with the report on stderr | `okf-catalog check` exit 1 (`test/unit/check-command.test.ts`); through `serve`, `status` carries the refusal | automated |
 
 ## Bite 5: the git source, the poller, `pack`, the publish loop
@@ -56,19 +69,38 @@ The acceptance list from the implementation plan, with the evidence for each ite
 | A restart retries a commit an older configuration refused; a reused tree the loader refuses is extracted again; a clone whose configuration is gone is recreated | `test/unit/git-source.test.ts` | automated |
 | An unusable lock database puts the server in the refusing mode with a sentence naming the fix, never SQLite's words or the path | `test/integration/stdio.test.ts` ("names the fix, not SQLite's words…") | automated |
 | `pack` refuses two names the server's key folds together, and an output folder that is a link | `test/unit/pack.test.ts` | automated |
-| The recorded publish loop through a Claude Code session: publish a change, see the next answer reflect it | the same session as the bite 4 pending items, with `recipes/publish/pack.sh` and `push.sh` against the maintainer's repository | pending: needs a signed-in Claude Code and a repository the maintainer names |
-| The workflow runs on a real repository and the server picks up its push | copy `recipes/publish/publish.yml` into the repository, set its four values, push to the source branch | pending (manual): needs the maintainer's repository |
 
-## How to run the pending items
+## Runbook for the clean account
 
-Sign in once (`claude` in a terminal), then, from the repository root:
+Who: someone other than the author, on a user account that has never held this project. What they need: macOS or Linux, Node 22.12 or later, git 2.30 or later, Claude Code 2.1.221 or later (`claude --version`; 2.1.221 is the first that waits for `--mcp-config` servers before the first turn) signed in once with `claude`, and a bundle: their own (private: see the rule at the end), or the public corpus (`sh bench/fetch-corpus.sh`), or the `spec-example` fixture.
 
-```bash
-claude -p 'Call the tool mcp__probe__probe once and report exactly which marker codes you received' --mcp-config bench/channel-probe/mcp.json --strict-mcp-config --allowedTools mcp__probe__probe --output-format json
-```
+1. **Install.** `git clone <the repository> okf-catalog && cd okf-catalog && NODE_LLAMA_CPP_SKIP_DOWNLOAD=1 npm ci`, then `node dist/cli.js --version` prints `0.1.0`. Never a global install; the plugin's `install_path` is this checkout.
+2. **Configuration.** Write `okf-catalog.yaml` for the bundle (the README's two examples; `serve.dev: true` for item 1, declared `types`). `node dist/cli.js check <bundle> --integrity none --types …` prints the report.
+3. **The plugin, interactively (bite 4's pending items, then items 1 to 4 through the plugin's own launch).** `claude --plugin-dir ./plugin/claude-code`; in the session `/plugin configure okf-catalog` (record what it asks and whether the two settings land: the `${user_config.install_path}` placeholder under `--plugin-dir` is unverified), `/reload-plugins`, `/mcp` (record whether the plugin's server is connected; `claude --debug` prints the one-line reason when it is not). Ask one question the bundle answers and one it does not. Record: the Claude Code version, the plugin id shown, the server's state, and the three answers the scripted runs need: whether `--strict-mcp-config` drops the plugin's server, the plugin id `pluginConfigs` uses, and whether `-p` asks permission for a model-invoked skill.
+4. **Item 1.** With `serve.dev: true`, `status` through the session shows the bundle loaded, drafts admitted and labelled. Then `node dist/cli.js check test/fixtures/bundles/refused` exits 1 with the refusals, and a configuration pointing at that fixture gives a server whose `status` carries the refusal.
+5. **Item 2.** Write five questions in the shape of `bench/acceptance/questions.json` (`style`, `bodyOnly`, `gold`), kept outside the checkout for a private bundle. Pre-check the server: `node bench/acceptance/ask.mjs --config <yaml> --questions <file>` (every expected page must be among the hits; the rank is informative). Then, per question, `sh bench/acceptance/claude.sh --checkout . --config <yaml> --results <folder outside the checkout> question "<the question>"`, and `node bench/acceptance/verify.mjs <stream> --expect-path <gold>`: the answer must name the page's path, trust tier, verifier and recheck date. Record pass or fail per question and the model id `verify.mjs` prints.
+6. **Items 3 and 4.** `sh bench/acceptance/claude.sh --checkout . --config <a configuration serving test/fixtures/bundles/behaviours with dev: true> --results <folder> orders` runs five processes against `notes/injection.md` (or `--page <their own orders page>`); each must cite the page, call only the catalog's tools, and neither carry out the order nor claim the catalog is empty (`verify.mjs` checks the stream). `… none "<a question nothing covers>"` must say no page covers it and name none.
+7. **Item 5.** One interactive session, one server, `serve.pull_interval: 30s`, the repository the maintainer named with its workflow (or `recipes/publish/pack.sh` and `push.sh` by hand against a remote the server can fetch; a plain local path is refused, `https` or `ssh` is needed). Ask about the page to promote (status `draft`, so unanswered). Promote it (status `stable`, a `verified` entry), run `pack.sh` then `push.sh`, wait past the interval, call `status` until `published.commit` is the new commit (two intervals at most), `/clear`, ask again: the answer comes from the new text with no reinstall. Record both commits.
+8. **Item 6.** The same draft page: with `serve.dev: true` a `search` hit is labelled `draft`; with it off (restart the server) the page is absent from `search` and `get_page` says it is not served.
+9. **Item 7.** `node bench/acceptance/write-degraded-bundle.mjs <new folder>`, a configuration with `source.local` there and `types: [Term, Guide]`, development mode off; `status` lists `Recipe` under unknown types, the broken link and the folders without an index, refuses nothing; `search zanzibar` finds `terms/beta.md`, `catalog terms` is generated.
+10. **Item 8.** With a repository source served once, turn the network off, restart Claude Code, ask a question: answered from the cache; `status` shows `published.fetchedAt` from before and the poller's last tick failed. This run, not the test, meets the fetch timeout.
+11. **Item 9.** The maintainer's approval: `node bench/pull-models.mjs embed rerank expand` (2.10 GiB into `bench/.models/`; the licences are printed), then `node bench/run.mjs --modes vector,fused,hybrid,full --samples 3` and `node bench/report.mjs`, which writes `docs/research/benchmark-modes.md`. The person's questions: `node bench/run.mjs --bundle <bundle> --config <yaml> --questions <file> --out <folder outside the checkout> --modes …`, then `node bench/report.mjs <that folder>/<stamp>.summary.json`, whose note stays beside the results.
+12. **The channel probe (bite 4).** From an empty folder: `claude -p 'Call the tool mcp__probe__probe once and report exactly which marker codes you received' --mcp-config <checkout>/bench/channel-probe/mcp.json --strict-mcp-config --allowedTools mcp__probe__probe --output-format json`, after changing the probe's `mcp.json` to absolute paths. Record which markers the model quotes.
+13. **Record.** Each item's result goes into the table above (the last column), with the Claude Code version, the model id and the date.
 
-```bash
-claude --plugin-dir ./plugin/claude-code
-```
+What may be committed for a private bundle: the item, pass or fail, counts, the model id, the dates and the versions. Never the questions, the paths, the verifiers or the answers; the scripts' results default to a folder outside the checkout and `bench/acceptance/results/` is ignored by git.
 
-In the session: `/plugin configure okf-catalog` (the install folder is this checkout; the configuration file is one that names the bundle), `/reload-plugins`, `/mcp` to confirm the server is connected, then ask a question the bundle answers and one it does not. Keep the transcript, and summarise what the citation carried here.
+## The tag
+
+After the runbook passes: on the tested commit, one commit that turns `## [Unreleased]` in `CHANGELOG.md` into `## [0.1.0] - <date>` and changes nothing else (`git diff --stat HEAD~1` shows that one file), then `git tag -a v0.1.0 -m "okf-catalog 0.1.0"` on it. The tag is the maintainer's.
+
+## The maintainer's list, in order
+
+1. Rule D1 (the licence; `LICENSE` and `NOTICE` are Apache-2.0 as proposed) and D26 (the repository's visibility).
+2. Push the branch so CI runs on Linux (the acceptance gate), then put a reachable commit into the workflow's `OKF_CATALOG_SOURCE` placeholder in `recipes/publish/publish.yml`.
+3. Name the repository for item 5, the page to promote first (intent §12 Q3, D10) and the holder of the clean account (Q6).
+4. Update Claude Code to 2.1.221 or later, sign in, and run steps 3 and 12 of the runbook (the bite 4 items), then the scripted items.
+5. Approve the models by running `pull-models.mjs` for the modes wanted (the embedder alone for `vector` and `fused`, 318 MiB; plus the expansion model for `hybrid`, 1.5 GiB; all three for `full`, 2.10 GiB), run the modes three samples deep, render the note.
+6. The clean-account run of the runbook by the person named in 3.
+7. Rule D7 on the numbers against the D51 threshold (confirm the default or keep the reservation open), and D6, D9, D14 to D16, D20 to D55.
+8. The changelog-dating commit and the tag.

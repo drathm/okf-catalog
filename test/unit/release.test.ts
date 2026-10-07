@@ -1,0 +1,87 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const read = (path: string): string => readFileSync(join(REPO, path), "utf8");
+const pkg = JSON.parse(read("package.json")) as {
+  version: string;
+  private?: boolean;
+  files: string[];
+};
+
+/** What npm packs beside `dist/`: the `files` entries plus the files npm always includes. */
+const FIXED = [
+  "CHANGELOG.md",
+  "LICENSE",
+  "NOTICE",
+  "README.md",
+  "npm-shrinkwrap.json",
+  "package.json",
+  "recipes/publish/README.md",
+  "recipes/publish/checkers.lock",
+  "recipes/publish/checkers.txt",
+  "recipes/publish/pack.sh",
+  "recipes/publish/publish.yml",
+  "recipes/publish/push.sh",
+].sort();
+
+describe("the release candidate", () => {
+  it("carries one version in the package, in both lock fields and in the plugin", () => {
+    expect(pkg.version).toMatch(/^\d+\.\d+\.\d+$/);
+    const lock = JSON.parse(read("package-lock.json")) as {
+      version: string;
+      packages: Record<string, { version: string }>;
+    };
+    expect(lock.version).toBe(pkg.version);
+    expect(lock.packages[""]?.version).toBe(pkg.version);
+    const plugin = JSON.parse(read("plugin/claude-code/.claude-plugin/plugin.json")) as {
+      version: string;
+    };
+    expect(plugin.version).toBe(pkg.version);
+  });
+
+  it("keeps the shrinkwrap equal to the lock, so an install from git resolves what the suite tested", () => {
+    expect(read("npm-shrinkwrap.json")).toBe(read("package-lock.json"));
+  });
+
+  it("stays private until the maintainer rules on publication", () => {
+    expect(pkg.private).toBe(true);
+  });
+
+  it("opens the changelog with the unreleased section or the package's own version", () => {
+    const heading = read("CHANGELOG.md")
+      .split("\n")
+      .find((line) => line.startsWith("## "));
+    expect(heading).toMatch(
+      new RegExp(`^## \\[(Unreleased|${pkg.version.replace(/\./g, "\\.")})\\]`),
+    );
+  });
+
+  it("packs exactly the runtime, the recipe and the notices, with a source file for every dist file", () => {
+    const out = execFileSync("npm", ["pack", "--dry-run", "--ignore-scripts", "--json"], {
+      cwd: REPO,
+      encoding: "utf8",
+      env: { ...process.env, NODE_LLAMA_CPP_SKIP_DOWNLOAD: "1" },
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    const [result] = JSON.parse(out) as Array<{ files: Array<{ path: string }> }>;
+    const files = (result?.files ?? []).map((f) => f.path);
+    expect(files.filter((f) => !f.startsWith("dist/")).sort()).toEqual(FIXED);
+    const dist = files.filter((f) => f.startsWith("dist/"));
+    expect(dist.length).toBeGreaterThan(0);
+    for (const file of dist) {
+      expect(file, file).toMatch(/\.(js|d\.ts)(\.map)?$/);
+      const source = file.replace(/^dist\//, "src/").replace(/(\.d\.ts|\.js)(\.map)?$/, ".ts");
+      expect(existsSync(join(REPO, source)), `${file} has no ${source}`).toBe(true);
+    }
+  });
+
+  it("ignores the acceptance results and the model folder", () => {
+    const ignored = read(".gitignore").split("\n");
+    expect(ignored).toContain("/bench/acceptance/results/");
+    expect(ignored).toContain("/bench/.models/");
+  });
+});
