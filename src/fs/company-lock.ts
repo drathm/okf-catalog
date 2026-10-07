@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
+import type { LockOwnerStatus } from "../catalog/runtime.js";
 
 export interface LockOwner {
   pid: number;
@@ -110,6 +111,20 @@ function tryAcquire(companyDir: string, now: Date): Extract<Lock, { kind: "exclu
       rmSync(join(companyDir, OWNER), { force: true });
     },
   };
+}
+
+const OFFSET_DATETIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/**
+ * The holder named by `owner.json`, for `status` while this process runs in the private fallback: a positive
+ * integer pid and an offset date-time, else nothing, plus whether that process answers the signal-zero test now.
+ */
+export function readLockOwner(companyDir: string): LockOwnerStatus | undefined {
+  const owner = readOwner(companyDir);
+  if (owner === undefined) return undefined;
+  if (!Number.isInteger(owner.pid) || owner.pid <= 0 || !OFFSET_DATETIME.test(owner.startedAt))
+    return undefined;
+  return { pid: owner.pid, startedAt: owner.startedAt, alive: processAlive(owner.pid) };
 }
 
 function readOwner(companyDir: string): LockOwner | undefined {

@@ -173,7 +173,7 @@ describe("projections parse under their strict schemas and are JSON-safe", () =>
   it("status: JSON-safe, ISO dates, counts plus capped lists, never a path outside the bundle", () => {
     const out = projectStatus(
       generation,
-      { lock: "exclusive", lastAttempt: { at: NOW, outcome: "swapped" } },
+      { lock: "exclusive", loaded: true, lastAttempt: { at: NOW, outcome: "swapped" } },
       { company: "b", source: "./kb", dev: false, limitDefault: 8, resultBudget: RESULT_BUDGET },
       NOW,
     );
@@ -257,7 +257,7 @@ describe("result bounds (bite 4 build review)", () => {
     };
     const out = projectStatus(
       many,
-      { lock: "exclusive" },
+      { lock: "exclusive", loaded: true },
       { company: "b", source: "./kb", dev: false, limitDefault: 8, resultBudget: RESULT_BUDGET },
       NOW,
     );
@@ -268,7 +268,7 @@ describe("result bounds (bite 4 build review)", () => {
   it("puts the last attempt and the list counts on the status text line", () => {
     const out = projectStatus(
       generation,
-      { lock: "exclusive", lastAttempt: { at: NOW, outcome: "failed" } },
+      { lock: "exclusive", loaded: true, lastAttempt: { at: NOW, outcome: "failed" } },
       { company: "b", source: "./kb", dev: false, limitDefault: 8, resultBudget: RESULT_BUDGET },
       NOW,
     );

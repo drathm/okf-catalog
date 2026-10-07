@@ -188,6 +188,19 @@ export const StatusOutputSchema = z.strictObject({
     resetOnOpen: z.string().nullable(),
   }),
   lock: z.enum(["exclusive", "private"]),
+  /** The process holding the company lock while this one runs in the private fallback. */
+  lockOwner: z
+    .strictObject({ pid: z.number(), startedAt: z.string(), alive: z.boolean() })
+    .nullable(),
+  /** The fetched commit of the published branch and when it was fetched; null for a local source. */
+  published: z.strictObject({ commit: z.string(), fetchedAt: z.string() }).nullable(),
+  poller: z
+    .strictObject({
+      intervalMs: z.number(),
+      lastTick: z.string().nullable(),
+      lastOutcome: z.enum(["unchanged", "refreshed", "failed", "gone", "skipped"]).nullable(),
+    })
+    .nullable(),
   lastAttempt: z
     .strictObject({ at: z.string(), outcome: z.enum(["swapped", "fatal", "failed"]) })
     .nullable(),
@@ -403,9 +416,32 @@ export function projectStatus(
       notIndexed: generation.index.notIndexed.length,
       collisions: generation.index.collisions.length,
       encodedFolders: capped(generation.index.encodedFolders),
-      resetOnOpen: null,
+      resetOnOpen: runtime.resetOnOpen === undefined ? null : safe(runtime.resetOnOpen),
     },
     lock: runtime.lock,
+    lockOwner:
+      runtime.lockOwner === undefined || runtime.lockOwner === null
+        ? null
+        : {
+            pid: runtime.lockOwner.pid,
+            startedAt: safe(runtime.lockOwner.startedAt),
+            alive: runtime.lockOwner.alive,
+          },
+    published:
+      generation.published === undefined
+        ? null
+        : {
+            commit: generation.published.commit,
+            fetchedAt: generation.published.fetchedAt.toISOString(),
+          },
+    poller:
+      runtime.poller === undefined || runtime.poller === null
+        ? null
+        : {
+            intervalMs: runtime.poller.intervalMs,
+            lastTick: runtime.poller.lastTick?.toISOString() ?? null,
+            lastOutcome: runtime.poller.lastOutcome ?? null,
+          },
     lastAttempt:
       runtime.lastAttempt === undefined
         ? null
@@ -421,8 +457,21 @@ export function statusSummary(out: StatusOutput): string {
     `${out.company}: ${out.admitted} pages admitted, ${out.excludedByStatus} excluded by status, ${n(out.overdue, "overdue page")}, ${n(out.refusals.count, "refusal")}, ${n(out.degradations.count, "degradation")}`,
     `integrity ${out.integrity}`,
     `${out.engine.documents} documents indexed, ${out.engine.notIndexed} not indexed, ${n(out.engine.collisions, "collision")}`,
-    `lock ${out.lock}`,
+    out.lock === "private" && out.lockOwner !== null
+      ? `lock private (held by pid ${out.lockOwner.pid} since ${out.lockOwner.startedAt}, ${out.lockOwner.alive ? "alive" : "not alive"})`
+      : `lock ${out.lock}`,
     `loaded ${out.loadedAt}`,
+    ...(out.published === null
+      ? []
+      : [`published ${out.published.commit.slice(0, 12)} fetched ${out.published.fetchedAt}`]),
+    ...(out.poller === null
+      ? []
+      : [
+          `poller every ${Math.round(out.poller.intervalMs / 1000)} s${out.poller.lastTick === null ? ", no tick yet" : `, last tick ${out.poller.lastOutcome ?? "?"} at ${out.poller.lastTick}`}`,
+        ]),
+    ...(out.engine.resetOnOpen === null
+      ? []
+      : [`engine store rebuilt at open: ${out.engine.resetOnOpen}`]),
     `${n(out.unknownTypes.count, "unknown type")}, ${n(out.unknownStatuses.count, "unknown status")}, ${n(out.brokenLinks.count, "broken link")}, ${n(out.linksToUnserved.count, "link to an unserved page")}, ${n(out.foldersWithoutIndex.count, "folder without an index")}, ${n(out.missingOnDisk.count, "manifest entry missing on disk")}`,
   ];
   if (out.lastAttempt !== null)

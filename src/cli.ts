@@ -5,6 +5,7 @@ const USAGE = `usage: okf-catalog <command> [options]
 
 commands:
   check <bundle folder>   apply the intake contract to a folder and print the report
+  pack                    write the bundle a server will serve, with its manifest
   serve                   serve the company's bundle to an MCP client over stdio
 
 options:
@@ -60,6 +61,14 @@ async function main(argv: string[]): Promise<number> {
         return 0;
       }
       return runCheck(rest, io);
+    }
+    case "pack": {
+      const { PACK_USAGE, runPack } = await import("./commands/pack.js");
+      if (rest.includes("--help")) {
+        process.stdout.write(PACK_USAGE);
+        return 0;
+      }
+      return runPack(rest, io);
     }
     case "serve": {
       const { SERVE_USAGE, runServe } = await import("./commands/serve.js");

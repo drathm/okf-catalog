@@ -7,6 +7,7 @@ import type { WalkResult } from "../../src/fs/walk.js";
 import type { Engine, IndexResult } from "../../src/search/engine.js";
 import { search } from "../../src/search/search.js";
 import { createRuntime } from "../../src/serve/runtime.js";
+import type { Loaded, Source } from "../../src/source/source.js";
 import { NOW, readFixture } from "../helpers/fixtures.js";
 
 const options: LoadOptions = {
@@ -24,9 +25,10 @@ function memorySource(initial: BundleFile[]) {
   let throwing: string | undefined;
   return {
     kind: "local" as const,
-    load: (): WalkResult => {
+    load: async (): Promise<Loaded> => {
       if (throwing !== undefined) throw new Error(throwing);
-      return { files, hidden: [], hiddenFolders: [], refusals: [] };
+      const walk: WalkResult = { files, hidden: [], hiddenFolders: [], refusals: [] };
+      return { walk };
     },
     describe: () => "./kb",
     set: (next: BundleFile[]) => {
@@ -327,5 +329,144 @@ describe("createRuntime (bite 4 build review, round 2)", () => {
     expect(engine.closeCalls).toBe(1);
     expect(runtime.status().lastAttempt?.outcome).toBe("swapped");
     await expect(runtime.lease(async () => 1)).rejects.toThrow(/shut down/);
+  });
+});
+
+describe("createRuntime (bite 5: a source that fails, falls back and reports)", () => {
+  const files = readFixture("behaviours");
+
+  it("retries a failed first load on refresh, then clears the refusal", async () => {
+    const source = memorySource(files);
+    source.fail("the repository r could not be fetched; the log has git's message");
+    const { runtime } = build(source, countingEngine());
+    runtime.start();
+    await expect(runtime.ready()).rejects.toThrow(/could not be fetched/);
+    expect(runtime.status()).toMatchObject({
+      loaded: false,
+      refusing: expect.stringMatching(/fetched/),
+    });
+    const still = await runtime.refresh();
+    expect(still.outcome).toBe("failed");
+    expect(runtime.status().refusing).toMatch(/fetched/);
+    source.fail(undefined);
+    const recovered = await runtime.refresh();
+    expect(recovered.outcome).toBe("swapped");
+    expect(runtime.status()).toMatchObject({ loaded: true });
+    expect(runtime.status().refusing).toBeUndefined();
+    expect((await runtime.ready()).catalog.pages.size).toBeGreaterThan(0);
+    await runtime.shutdown();
+  });
+
+  it("retries a failed prepare too, running it again only until it succeeds", async () => {
+    let attempts = 0;
+    const engine = countingEngine();
+    const runtime = createRuntime({
+      company: "b",
+      source: memorySource(files),
+      prepare: async () => {
+        attempts += 1;
+        if (attempts === 1) throw new Error("the cache root cannot be read (EACCES)");
+        return { engine, lock: "exclusive" as const, resetOnOpen: "the store was rebuilt" };
+      },
+      load: options,
+      clock: () => NOW,
+      log: quiet,
+    });
+    runtime.start();
+    await expect(runtime.ready()).rejects.toThrow(/EACCES/);
+    expect((await runtime.refresh()).outcome).toBe("swapped");
+    expect(attempts).toBe(2);
+    expect((await runtime.refresh()).outcome).toBe("swapped");
+    expect(attempts).toBe(2);
+    expect(runtime.status().resetOnOpen).toBe("the store was rebuilt");
+    await runtime.shutdown();
+  });
+
+  it("serves the tree the source last served when the loader refuses the fetched commit at first load", async () => {
+    const good: Loaded = {
+      walk: { files, hidden: [], hiddenFolders: [], refusals: [] },
+      published: { commit: "a".repeat(40), fetchedAt: NOW },
+    };
+    const refused: Loaded = {
+      walk: {
+        files: [],
+        hidden: [],
+        hiddenFolders: [],
+        refusals: [],
+        fatal: {
+          path: "link.md",
+          rule: "symlink",
+          detail: "a symbolic link in the published tree",
+        },
+      },
+      published: { commit: "b".repeat(40), fetchedAt: NOW },
+    };
+    const served: string[] = [];
+    const source: Source = {
+      kind: "git",
+      load: async () => refused,
+      loadServed: async () => good,
+      served: (commit) => void served.push(commit),
+      describe: () => "git@h:o/r.git",
+    };
+    const { runtime } = build(source as ReturnType<typeof memorySource>, countingEngine());
+    runtime.start();
+    const generation = await runtime.ready();
+    expect(generation.catalog.pages.size).toBeGreaterThan(0);
+    expect(generation.published?.commit).toBe("a".repeat(40));
+    expect(runtime.status().lastAttempt?.outcome).toBe("fatal");
+    expect(served).toEqual(["a".repeat(40)]);
+    await runtime.shutdown();
+  });
+
+  it("tells the source which commit is served after each swap, keeps the published commit on the generation, and aborts the source at shutdown", async () => {
+    const served: string[] = [];
+    let commit = "1".repeat(40);
+    let aborted = 0;
+    const source: Source = {
+      kind: "git",
+      load: async () => ({
+        walk: { files, hidden: [], hiddenFolders: [], refusals: [] },
+        published: { commit, fetchedAt: NOW },
+      }),
+      served: (c) => void served.push(c),
+      describe: () => "git@h:o/r.git",
+      abort: () => {
+        aborted += 1;
+      },
+    };
+    const { runtime } = build(source as ReturnType<typeof memorySource>, countingEngine());
+    runtime.start();
+    expect((await runtime.ready()).published?.commit).toBe("1".repeat(40));
+    commit = "2".repeat(40);
+    const r = await runtime.refresh();
+    expect(r.outcome === "swapped" && r.generation.published?.commit).toBe("2".repeat(40));
+    expect(served).toEqual(["1".repeat(40), "2".repeat(40)]);
+    await runtime.shutdown();
+    expect(aborted).toBe(1);
+  });
+
+  it("merges the command's status fields (lock owner, poller) into its own", async () => {
+    const runtime = createRuntime({
+      company: "b",
+      source: memorySource(files),
+      prepare: async () => ({ engine: countingEngine(), lock: "private" as const }),
+      load: options,
+      clock: () => NOW,
+      log: quiet,
+      extra: () => ({
+        lockOwner: { pid: 4242, startedAt: "2026-10-07T00:00:00Z", alive: true },
+        poller: { intervalMs: 60_000, lastOutcome: "unchanged" },
+      }),
+    });
+    runtime.start();
+    await runtime.ready();
+    expect(runtime.status()).toMatchObject({
+      lock: "private",
+      loaded: true,
+      lockOwner: { pid: 4242, alive: true },
+      poller: { intervalMs: 60_000, lastOutcome: "unchanged" },
+    });
+    await runtime.shutdown();
   });
 });

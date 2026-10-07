@@ -1,0 +1,5 @@
+# The OKF checkers the recipe runs before and after `pack`, pinned. `checkers.lock` beside this file is the
+# hash-pinned resolution the workflow installs with `--require-hashes`; regenerate it after a change here with
+#   uv pip compile --universal --python-version 3.12 --generate-hashes recipes/publish/checkers.txt -o recipes/publish/checkers.lock
+okflint==0.5.0
+okf-schema==0.12.0

@@ -1,0 +1,188 @@
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join, relative } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { PACK_USAGE, runPack } from "../../src/commands/pack.js";
+import { FIXTURES } from "../helpers/fixtures.js";
+
+const dirs: string[] = [];
+afterEach(() => {
+  for (const d of dirs) rmSync(d, { recursive: true, force: true });
+  dirs.length = 0;
+});
+const temp = (): string => {
+  const d = mkdtempSync(join(tmpdir(), "okf-catalog-pack-"));
+  dirs.push(d);
+  return d;
+};
+
+function io(env: Record<string, string> = {}) {
+  const out: string[] = [];
+  const err: string[] = [];
+  return {
+    io: {
+      stdout: (t: string) => void out.push(t),
+      stderr: (t: string) => void err.push(t),
+      env: { ...env, OKF_CATALOG_NOW: env.OKF_CATALOG_NOW ?? "2026-10-06T00:00:00Z" },
+    },
+    stdout: () => out.join(""),
+    stderr: () => err.join(""),
+  };
+}
+
+const list = (root: string): string[] => {
+  const files: string[] = [];
+  const walk = (dir: string): void => {
+    for (const name of readdirSync(dir)) {
+      const full = join(dir, name);
+      if (statSync(full).isDirectory()) walk(full);
+      else files.push(relative(root, full));
+    }
+  };
+  walk(root);
+  return files.sort();
+};
+
+function config(dir: string, company = "acme"): string {
+  const path = join(dir, "okf-catalog.yaml");
+  writeFileSync(path, `company: ${company}\nsource:\n  local: ./kb\n`);
+  return path;
+}
+
+const PAGE = (title: string, status = "stable") =>
+  `---\ntype: Term\ntitle: ${title}\nstatus: ${status}\nverified:\n  - by: human:x\n    at: 2026-01-01T00:00:00Z\n---\n\nbody of ${title}\n`;
+
+describe("okf-catalog pack", () => {
+  it("reproduces the spec-example manifest byte for byte, and a packed bundle repacked gives the same manifest", () => {
+    const work = temp();
+    const cfg = config(work);
+    const from = join(FIXTURES, "spec-example");
+    const out = join(work, "out");
+    const run = io();
+    expect(runPack(["--config", cfg, "--from", from, "--out", out], run.io)).toBe(0);
+    expect(readFileSync(join(out, "manifest.json"), "utf8")).toBe(
+      readFileSync(join(from, "manifest.json"), "utf8"),
+    );
+    expect(list(out)).toEqual(list(from));
+    for (const file of list(from)) {
+      if (file === "manifest.json") continue;
+      expect(readFileSync(join(out, file)).equals(readFileSync(join(from, file))), file).toBe(true);
+    }
+    expect(run.stdout()).toMatch(/admitted/);
+    const again = join(work, "again");
+    expect(runPack(["--config", cfg, "--from", out, "--out", again], io().io)).toBe(0);
+    expect(readFileSync(join(again, "manifest.json"), "utf8")).toBe(
+      readFileSync(join(out, "manifest.json"), "utf8"),
+    );
+  });
+
+  it("leaves drafts out, copies attachments anywhere, writes an index where one is missing and keeps a written one, reporting one that lists an unpublished page", () => {
+    const work = temp();
+    const cfg = config(work);
+    const from = join(work, "kb");
+    mkdirSync(join(from, "terms"), { recursive: true });
+    mkdirSync(join(from, "assets"), { recursive: true });
+    writeFileSync(join(from, "terms", "stable.md"), PAGE("Stable"));
+    writeFileSync(join(from, "terms", "draft.md"), PAGE("Draft", "draft"));
+    writeFileSync(
+      join(from, "terms", "index.md"),
+      "# Terms\n\n- [Stable](stable.md)\n- [Draft](draft.md)\n",
+    );
+    writeFileSync(join(from, "assets", "diagram.svg"), "<svg/>\n");
+    writeFileSync(join(from, "root-note.md"), PAGE("Root"));
+    writeFileSync(join(from, "log.md"), "# Log\n\n- started\n");
+    const out = join(work, "out");
+    const run = io();
+    expect(runPack(["--config", cfg, "--from", from, "--out", out], run.io)).toBe(0);
+    expect(list(out)).toEqual([
+      "assets/diagram.svg",
+      "index.md",
+      "log.md",
+      "manifest.json",
+      "root-note.md",
+      "terms/index.md",
+      "terms/stable.md",
+    ]);
+    expect(readFileSync(join(out, "terms", "index.md"), "utf8")).toContain("[Draft](draft.md)");
+    expect(readFileSync(join(out, "index.md"), "utf8")).toMatch(/root-note\.md/);
+    expect(run.stdout()).toMatch(/index-lists-unserved/);
+    const manifest = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")) as {
+      files: Record<string, unknown>;
+    };
+    expect(Object.keys(manifest.files).sort()).toEqual(
+      list(out).filter((f) => f !== "manifest.json"),
+    );
+  });
+
+  it("writes nothing and exits 1 when the loader refuses a file, as check does", () => {
+    const work = temp();
+    const cfg = config(work);
+    const from = join(work, "kb");
+    mkdirSync(from);
+    writeFileSync(join(from, "ok.md"), PAGE("Ok"));
+    writeFileSync(join(from, "bad.md"), "no frontmatter here\n");
+    const out = join(work, "out");
+    const run = io();
+    expect(runPack(["--config", cfg, "--from", from, "--out", out], run.io)).toBe(1);
+    expect(existsSync(out)).toBe(false);
+    expect(run.stderr()).toMatch(/no-frontmatter/);
+  });
+
+  it("refuses a non-empty or overlapping output folder and a missing option with exit 2", () => {
+    const work = temp();
+    const cfg = config(work);
+    const from = join(work, "kb");
+    mkdirSync(from);
+    writeFileSync(join(from, "ok.md"), PAGE("Ok"));
+    const full = join(work, "full");
+    mkdirSync(full);
+    writeFileSync(join(full, "x"), "x");
+    const a = io();
+    expect(runPack(["--config", cfg, "--from", from, "--out", full], a.io)).toBe(2);
+    expect(a.stderr()).toMatch(/not empty/);
+    const b = io();
+    expect(runPack(["--config", cfg, "--from", from, "--out", join(from, "out")], b.io)).toBe(2);
+    expect(b.stderr()).toMatch(/inside/);
+    const c = io();
+    expect(runPack(["--config", cfg, "--from", from], c.io)).toBe(2);
+    expect(c.stderr()).toContain(PACK_USAGE.split("\n")[0]);
+  });
+
+  it("records the commit it is given and the zero commit otherwise, never copies hidden files, and writes names in form C", () => {
+    const work = temp();
+    const cfg = config(work);
+    const from = join(work, "kb");
+    mkdirSync(join(from, ".hidden"), { recursive: true });
+    writeFileSync(join(from, ".hidden", "secret"), "x");
+    writeFileSync(join(from, "café.md"), PAGE("Café"));
+    const out = join(work, "out");
+    const sha = "a".repeat(40);
+    expect(runPack(["--config", cfg, "--from", from, "--out", out, "--commit", sha], io().io)).toBe(
+      0,
+    );
+    const names = readdirSync(out);
+    expect(names.some((n) => n.startsWith("."))).toBe(false);
+    expect(names.map((n) => n.normalize("NFC"))).toContain("café.md");
+    expect(names).toContain("café.md");
+    const manifest = JSON.parse(readFileSync(join(out, "manifest.json"), "utf8")) as {
+      commit: string;
+      files: Record<string, unknown>;
+    };
+    expect(manifest.commit).toBe(sha);
+    expect(Object.keys(manifest.files)).toContain("café.md");
+    const plain = join(work, "plain");
+    expect(runPack(["--config", cfg, "--from", from, "--out", plain], io().io)).toBe(0);
+    expect(
+      (JSON.parse(readFileSync(join(plain, "manifest.json"), "utf8")) as { commit: string }).commit,
+    ).toBe("0".repeat(40));
+  });
+});

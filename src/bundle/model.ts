@@ -115,7 +115,8 @@ export type RefusalRule =
   | "manifest-invalid"
   | "oversize"
   | "too-many-files"
-  | "tree-too-large";
+  | "tree-too-large"
+  | "bundle-path-missing";
 
 export interface Refusal {
   path: string;

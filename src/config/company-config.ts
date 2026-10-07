@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod/v4";
 import { type Caps, DEFAULT_CAPS, type SpecText, type Status } from "../bundle/model.js";
+import { isSafeRelativePath } from "../bundle/paths.js";
 import { safe } from "../catalog/text.js";
 
 /** Configuration as the server uses it: paths resolved, defaults applied, `dev` mapped onto drafts and integrity. */
@@ -21,6 +22,54 @@ export interface CompanyConfig {
 export type ConfigResult = { ok: true; config: CompanyConfig } | { ok: false; problems: string[] };
 
 const COMPANY = /^[a-z0-9][a-z0-9-]{0,62}$/;
+/** The scp-like repository form: a user, a host, a colon and a path that is not an option. */
+const SCP_LIKE = /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^-\s/][^\s]*$/;
+/** A branch name as one plain ref segment or a few: letters, digits, `.`, `_`, `-` and `/`, nothing a refspec or an option could misread. */
+const BRANCH = /^[A-Za-z0-9_][A-Za-z0-9._/-]*$/;
+
+/** What a reader of the configuration may relax; only the suite does. */
+export interface ParseOptions {
+  /** Accept `file://` repositories (a test-only setting, paired with the `file` transport protocol). */
+  allowFileRepositories?: boolean;
+}
+
+/** Why a repository string is not one the server will fetch (D50), or undefined when it is. */
+export function repositoryProblem(value: string, options: ParseOptions = {}): string | undefined {
+  if (SCP_LIKE.test(value)) return undefined;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return "must be an https:// or ssh:// URL, or user@host:path";
+  }
+  if (url.protocol === "file:" && options.allowFileRepositories === true) return undefined;
+  if (url.protocol !== "https:" && url.protocol !== "ssh:")
+    return "must be an https:// or ssh:// URL, or user@host:path (a local path or another scheme is not fetched)";
+  if (url.hostname.length === 0) return "must name a host";
+  if (url.password.length > 0) return "must not carry a password; use a credential helper";
+  if (url.protocol === "https:" && url.username.length > 0)
+    return "must not carry a user name over https; use a credential helper";
+  return undefined;
+}
+
+/** Why a branch name is refused (D50), or undefined when it is accepted. */
+export function branchProblem(value: string): string | undefined {
+  if (!BRANCH.test(value) || value.includes("..") || value.includes("//") || value.includes("@{"))
+    return "must be a plain branch name of letters, digits, '.', '_', '-' and '/'";
+  if (value.endsWith("/") || value.endsWith(".lock") || value.endsWith(".") || value.includes("/."))
+    return "must not end in '/', '.' or '.lock', and no segment may start with '.'";
+  return undefined;
+}
+
+/** Why a bundle path is refused (D50), or undefined: `.` or a safe relative path with no dot-leading segment. */
+export function bundlePathProblem(value: string): string | undefined {
+  if (value === ".") return undefined;
+  if (!isSafeRelativePath(value) || value.endsWith("/"))
+    return "must be '.' or a relative path with no empty, '.', '..' or backslash segments";
+  if (value.split("/").some((segment) => segment.startsWith(".")))
+    return "must not name a hidden folder (a segment starting with '.')";
+  return undefined;
+}
 const DURATION = /^(\d+)(s|m|h)$/;
 const MIN_INTERVAL_MS = 30_000;
 const MAX_INTERVAL_MS = 24 * 60 * 60 * 1000;
@@ -82,7 +131,12 @@ function durationMs(text: string): number | undefined {
 }
 
 /** Parses one company's YAML configuration. Every problem is a sentence naming the key; nothing is guessed. */
-export function parseCompanyConfig(text: string, configDir: string, home: string): ConfigResult {
+export function parseCompanyConfig(
+  text: string,
+  configDir: string,
+  home: string,
+  parseOptions: ParseOptions = {},
+): ConfigResult {
   let document: unknown;
   try {
     document = parseYaml(text, { version: "1.2" });
@@ -109,6 +163,14 @@ export function parseCompanyConfig(text: string, configDir: string, home: string
   if (!hasLocal && !hasGit) problems.push("source: local or repository is required");
   if (hasLocal && (raw.source.branch !== undefined || raw.source.bundle_path !== undefined)) {
     problems.push("source: branch and bundle_path belong to a repository source");
+  }
+  if (hasGit) {
+    const repository = repositoryProblem(raw.source.repository ?? "", parseOptions);
+    if (repository !== undefined) problems.push(`source.repository: ${repository}`);
+    const branch = branchProblem(raw.source.branch ?? "published");
+    if (branch !== undefined) problems.push(`source.branch: ${branch}`);
+    const bundle = bundlePathProblem(raw.source.bundle_path ?? ".");
+    if (bundle !== undefined) problems.push(`source.bundle_path: ${bundle}`);
   }
   const admit = raw.serve?.admit ?? ["stable", "deprecated"];
   if (admit.length === 0) problems.push("serve.admit: at least one status is required");
@@ -197,7 +259,11 @@ export function discoverConfigPath(
 /** A configuration is a short file; anything over this is refused unread. */
 export const CONFIG_SIZE_CAP = 1024 * 1024;
 
-export function readCompanyConfig(path: string, home: string): ConfigResult {
+export function readCompanyConfig(
+  path: string,
+  home: string,
+  parseOptions: ParseOptions = {},
+): ConfigResult {
   let text: string;
   try {
     const stat = statSync(path);
@@ -223,5 +289,5 @@ export function readCompanyConfig(path: string, home: string): ConfigResult {
           : `cannot be read (${code ?? "error"})`;
     return { ok: false, problems: [`the configuration file ${path} ${why}`] };
   }
-  return parseCompanyConfig(text, dirname(path), home);
+  return parseCompanyConfig(text, dirname(path), home, parseOptions);
 }

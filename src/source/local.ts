@@ -1,12 +1,10 @@
 import type { Caps } from "../bundle/model.js";
-import { type WalkResult, walkBundle } from "../fs/walk.js";
+import { walkBundle } from "../fs/walk.js";
+import type { Loaded, Source } from "./source.js";
 
 /** A bundle folder on disk, walked afresh on every load. */
-export interface LocalSource {
+export interface LocalSource extends Source {
   kind: "local";
-  load(): WalkResult;
-  /** The source as written in the configuration, never a resolved or cache path. */
-  describe(): string;
 }
 
 export function createLocalSource(
@@ -15,9 +13,9 @@ export function createLocalSource(
 ): LocalSource {
   return {
     kind: "local",
-    load: () => {
+    load: async (): Promise<Loaded> => {
       try {
-        return walkBundle(source.path, caps);
+        return { walk: walkBundle(source.path, caps) };
       } catch (error) {
         // The model is told the source as configured; the resolved path travels as detail, for the log only.
         const original = (error as Error).message;

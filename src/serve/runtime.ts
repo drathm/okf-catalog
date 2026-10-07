@@ -1,20 +1,37 @@
 import { loadBundle } from "../bundle/load.js";
 import type { LoadOptions, Report } from "../bundle/model.js";
 import type { Catalog } from "../catalog/model.js";
-import type { Generation, RefreshOutcome, Runtime, RuntimeStatus } from "../catalog/runtime.js";
+import type {
+  Generation,
+  PublishedInfo,
+  RefreshOutcome,
+  Runtime,
+  RuntimeStatus,
+} from "../catalog/runtime.js";
 import { type DerivedDocument, deriveDocument } from "../derive/derived-document.js";
-import type { WalkResult } from "../fs/walk.js";
 import type { Log } from "../log.js";
 import type { Engine, IndexResult } from "../search/engine.js";
+import type { Loaded, Source } from "../source/source.js";
+
+export interface PrepareResult {
+  engine: Engine;
+  lock: "exclusive" | "private";
+  /** Why the engine rebuilt its store, when it did. */
+  resetOnOpen?: string;
+  /** A source that could only be built once the work folder was known (the repository source). */
+  source?: Source;
+}
 
 export interface RuntimeDeps {
   company: string;
-  source: { load(): WalkResult; describe(): string };
-  /** Runs once, at the start of the first load: the cache folder, the lock and the engine. Never for a probe. */
-  prepare: () => Promise<{ engine: Engine; lock: "exclusive" | "private" }>;
+  source: Source;
+  /** Runs at the start of the first load, once it succeeds: the cache folder, the lock and the engine. Never for a probe. A failure is retried by `refresh()`. */
+  prepare: () => Promise<PrepareResult>;
   load: LoadOptions;
   clock: () => Date;
   log: Log;
+  /** Status fields the command owns: the lock's holder and the poller. */
+  extra?: () => Pick<RuntimeStatus, "lockOwner" | "poller">;
 }
 
 export interface ServingRuntime extends Runtime {
@@ -36,8 +53,15 @@ const EMPTY_INDEX: IndexResult = {
 const yieldToLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 type Prepared =
-  | { kind: "docs"; catalog: Catalog; report: Report; docs: DerivedDocument[]; now: Date }
-  | { kind: "fatal"; catalog: Catalog; report: Report; now: Date };
+  | {
+      kind: "docs";
+      catalog: Catalog;
+      report: Report;
+      docs: DerivedDocument[];
+      now: Date;
+      published?: PublishedInfo;
+    }
+  | { kind: "fatal"; catalog: Catalog; report: Report; now: Date; published?: PublishedInfo };
 
 /**
  * The serving runtime (decisions D28, D38, D39). The first load begins on `start()` or the first `ready()`,
@@ -52,8 +76,12 @@ type Prepared =
 export function createRuntime(deps: RuntimeDeps): ServingRuntime {
   let engine: Engine | undefined;
   let lock: "exclusive" | "private" = "exclusive";
+  let resetOnOpen: string | undefined;
+  let source: Source = deps.source;
+  let prepared: Promise<PrepareResult> | undefined;
   let current: Generation | undefined;
   let firstLoad: Promise<Generation> | undefined;
+  let firstLoadFailed = false;
   let refreshing: Promise<RefreshOutcome> | undefined;
   let closing: Promise<void> | undefined;
   let closed = false;
@@ -80,9 +108,34 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
     degraded: report.degradations.length,
   });
 
+  /** `prepare()` once, kept once it succeeds; a failure is forgotten so the next attempt runs it again. */
+  function prepare(): Promise<PrepareResult> {
+    if (prepared === undefined) {
+      prepared = deps.prepare().then(
+        (result) => {
+          engine = result.engine;
+          lock = result.lock;
+          if (result.resetOnOpen !== undefined) resetOnOpen = result.resetOnOpen;
+          if (result.source !== undefined) source = result.source;
+          return result;
+        },
+        (error: unknown) => {
+          prepared = undefined;
+          throw error;
+        },
+      );
+    }
+    return prepared;
+  }
+
   /** Walk, load and derive, yielding between the phases; the engine is not touched here. */
   async function prepareDocs(): Promise<Prepared> {
-    const walked = deps.source.load();
+    return prepareFrom(await source.load());
+  }
+
+  async function prepareFrom(loaded: Loaded): Promise<Prepared> {
+    const walked = loaded.walk;
+    const published = loaded.published;
     await yieldToLoop();
     const options: LoadOptions = {
       ...deps.load,
@@ -94,10 +147,12 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
     const now = deps.clock();
     const { catalog, report } = loadBundle(deps.company, walked.files, options, now);
     await yieldToLoop();
-    if (report.fatal !== undefined) return { kind: "fatal", catalog, report, now };
+    const withPublished = published === undefined ? {} : { published };
+    if (report.fatal !== undefined)
+      return { kind: "fatal", catalog, report, now, ...withPublished };
     const docs = [...catalog.pages.values()].map(deriveDocument);
     await yieldToLoop();
-    return { kind: "docs", catalog, report, docs, now };
+    return { kind: "docs", catalog, report, docs, now, ...withPublished };
   }
 
   const whenDrained = (): Promise<void> =>
@@ -146,45 +201,66 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
         loadedAt: prepared.now,
         dev: deps.load.dev,
         integrity,
+        ...(prepared.published === undefined ? {} : { published: prepared.published }),
       };
       current = generation;
+      if (generation.published !== undefined) source.served?.(generation.published.commit);
       return generation;
     } finally {
       releaseGate();
     }
   }
 
+  const fatalGeneration = (next: Prepared & { kind: "fatal" }): Generation => ({
+    catalog: next.catalog,
+    report: next.report,
+    index: EMPTY_INDEX,
+    loadedAt: next.now,
+    dev: deps.load.dev,
+    integrity,
+    ...(next.published === undefined ? {} : { published: next.published }),
+  });
+
+  /** The first load: prepare, load, publish. A loader refusal falls back to the tree the source last served (D43). */
+  async function firstLoadBody(): Promise<Generation> {
+    await prepare();
+    const next = await prepareDocs();
+    if (next.kind === "fatal") {
+      lastAttempt = { at: deps.clock(), outcome: "fatal" };
+      deps.log.error("load.fatal", {
+        rule: next.report.fatal?.rule,
+        path: next.report.fatal?.path,
+        detail: next.report.fatal?.detail,
+      });
+      const servedOnDisk = source.loadServed === undefined ? undefined : await source.loadServed();
+      if (servedOnDisk !== undefined) {
+        const served = await prepareFrom(servedOnDisk);
+        if (served.kind === "docs") {
+          const generation = await commit(served);
+          deps.log.warn("load.served-previous", {
+            commit: generation.published?.commit,
+            refused: next.published?.commit,
+          });
+          return generation;
+        }
+      }
+      current = fatalGeneration(next);
+      return current;
+    }
+    const generation = await commit(next);
+    lastAttempt = { at: deps.clock(), outcome: "swapped" };
+    deps.log.info("load.done", counts(generation.report, generation.index));
+    return generation;
+  }
+
   function start(): void {
     if (firstLoad !== undefined || closed) return;
     firstLoad = (async () => {
       try {
-        const prepared = await deps.prepare();
-        engine = prepared.engine;
-        lock = prepared.lock;
-        const next = await prepareDocs();
-        if (next.kind === "fatal") {
-          current = {
-            catalog: next.catalog,
-            report: next.report,
-            index: EMPTY_INDEX,
-            loadedAt: next.now,
-            dev: deps.load.dev,
-            integrity,
-          };
-          lastAttempt = { at: deps.clock(), outcome: "fatal" };
-          deps.log.error("load.fatal", {
-            rule: next.report.fatal?.rule,
-            path: next.report.fatal?.path,
-            detail: next.report.fatal?.detail,
-          });
-          return current;
-        }
-        const generation = await commit(next);
-        lastAttempt = { at: deps.clock(), outcome: "swapped" };
-        deps.log.info("load.done", counts(generation.report, generation.index));
-        return generation;
+        return await firstLoadBody();
       } catch (error) {
         refusing = (error as Error).message;
+        firstLoadFailed = true;
         lastAttempt = { at: deps.clock(), outcome: "failed" };
         const detail = (error as { detail?: unknown }).detail;
         deps.log.error("serve.refusing", {
@@ -255,6 +331,18 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
     refreshing = (async (): Promise<RefreshOutcome> => {
       try {
         if (firstLoad === undefined) throw new Error("the first load has not started");
+        if (firstLoadFailed) {
+          // A first load that failed (the network, the cache, the lock) is tried again from the start.
+          firstLoadFailed = false;
+          firstLoad = undefined;
+          start();
+          if (firstLoad === undefined) throw new Error("the runtime is shut down");
+          const generation: Generation = await firstLoad;
+          refusing = undefined;
+          return generation.report.fatal === undefined
+            ? { outcome: "swapped", generation }
+            : { outcome: "fatal", report: generation.report };
+        }
         await firstLoad;
         const next = await prepareDocs();
         if (next.kind === "fatal") {
@@ -284,9 +372,14 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
   }
 
   function status(): RuntimeStatus {
-    const result: RuntimeStatus = { lock };
+    const result: RuntimeStatus = {
+      lock,
+      loaded: current !== undefined,
+      ...(deps.extra?.() ?? {}),
+    };
     if (lastAttempt !== undefined) result.lastAttempt = lastAttempt;
     if (refusing !== undefined) result.refusing = refusing;
+    if (resetOnOpen !== undefined) result.resetOnOpen = resetOnOpen;
     return result;
   }
 
@@ -294,6 +387,7 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
     if (closing !== undefined) return closing;
     closed = true;
     closing = (async () => {
+      source.abort?.();
       if (firstLoad !== undefined) await firstLoad.catch(() => undefined);
       if (refreshing !== undefined) await refreshing.catch(() => undefined);
       await whenNoneRequested();

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Writes manifest.json for a fixture bundle: every file except manifest.json, with its sha256 and size.
 // Usage: node test/tools/make-manifest.mjs test/fixtures/bundles/<name>
-// The `pack` command replaces this once it exists (bite 5); until then this is how fixture manifests are made.
+// `okf-catalog pack` writes real manifests, but it leaves drafts out and refuses what the loader refuses, while
+// the fixtures carry drafts and refused files on purpose; so this small tool stays for the fixtures alone.
 import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";

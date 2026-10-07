@@ -1,6 +1,7 @@
-import { rmSync } from "node:fs";
+import { accessSync, constants, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
+import { delimiter, join } from "node:path";
 import { Writable } from "node:stream";
 import { parseArgs } from "node:util";
 import { RESULT_BUDGET } from "../catalog/outputs.js";
@@ -12,13 +13,18 @@ import {
   type Lock,
   makePrivateDir,
   processAlive,
+  readLockOwner,
   sweepPrivate,
 } from "../fs/company-lock.js";
 import { createLog, type Level, type Log } from "../log.js";
 import { createServerFactory } from "../mcp/server.js";
 import { serveOverStdio } from "../mcp/stdio.js";
-import { createRuntime } from "../serve/runtime.js";
+import { createPoller, type Poller } from "../serve/poller.js";
+import { createRuntime, type PrepareResult } from "../serve/runtime.js";
+import { createGitSource, type GitSource } from "../source/git.js";
+import { createGitRunner, type GitRunner, redactCredentials } from "../source/git-runner.js";
 import { createLocalSource } from "../source/local.js";
+import type { Source } from "../source/source.js";
 import { clockFrom } from "./check.js";
 
 export const SERVE_USAGE = `usage: okf-catalog serve [options]
@@ -58,6 +64,37 @@ function reserveStdout(): Writable {
   return protocol;
 }
 
+/** The minimum git this server runs (D50): `--end-of-options`, `protocol.allow`, `maintenance.auto` and the rest are older. */
+const MIN_GIT: [number, number] = [2, 30];
+
+/** `git` on PATH, resolved once; never read from a variable of its own. */
+async function gitBinary(cacheRoot: string): Promise<string> {
+  void cacheRoot;
+  for (const folder of (process.env.PATH ?? "").split(delimiter)) {
+    if (folder.length === 0) continue;
+    const candidate = join(folder, "git");
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // not here
+    }
+  }
+  throw new Error(
+    "git was not found on PATH; install git 2.30 or later to serve a repository source",
+  );
+}
+
+async function requireGitVersion(runner: GitRunner, cwd: string): Promise<void> {
+  const result = await runner.run(["--version"], { cwd, timeoutMs: 30_000 });
+  const match = /git version (\d+)\.(\d+)/.exec(result.stdout.toString("utf8"));
+  const [major, minor] = match === null ? [0, 0] : [Number(match[1]), Number(match[2])];
+  if (major > MIN_GIT[0] || (major === MIN_GIT[0] && minor >= MIN_GIT[1])) return;
+  throw new Error(
+    `git ${MIN_GIT[0]}.${MIN_GIT[1]} or later is required to serve a repository source; this is ${match?.[0] ?? "an unknown version"}`,
+  );
+}
+
 /** Stream failures that mean the client is gone; anything else (a malformed line) is only logged. */
 const STREAM_FAILURES = new Set(["EPIPE", "ERR_STREAM_DESTROYED", "ECONNRESET", "EIO"]);
 
@@ -92,7 +129,7 @@ function refusingRuntime(problem: string, log: Log): Runtime {
     ready: reject,
     lease: reject,
     refresh: reject,
-    status: () => ({ lock: "exclusive", refusing: problem }),
+    status: () => ({ lock: "exclusive", loaded: false, refusing: problem }),
     shutdown: async () => undefined,
   };
 }
@@ -162,46 +199,62 @@ export async function runServe(argv: string[]): Promise<number> {
   };
   let lockHandle: Extract<Lock, { kind: "exclusive" }> | undefined;
   let privateWork: string | undefined;
+  let poller: Poller | undefined;
+  let closing: Promise<void> | undefined;
 
   if ("error" in found) {
     runtime = refusingRuntime(found.error, log);
   } else {
-    const read = readCompanyConfig(found.path, home);
+    // A test-only setting (like OKF_CATALOG_NOW): `file` repositories, for the suite's local bare repositories.
+    const fileRepositories = process.env.OKF_CATALOG_GIT_PROTOCOLS === "file";
+    const read = readCompanyConfig(found.path, home, { allowFileRepositories: fileRepositories });
     if (!read.ok) {
       runtime = refusingRuntime(
         `the configuration at ${found.path} is not usable: ${read.problems.join("; ")}`,
         log,
       );
-    } else if (read.config.source.kind !== "local") {
-      runtime = refusingRuntime(
-        "git sources arrive with the next bite; use source.local in the configuration",
-        log,
-      );
     } else {
       const config = read.config;
-      const local = read.config.source;
+      const configured = config.source;
       const root = cacheRoot({ env: process.env, platform: process.platform, home });
       const dir = companyDir(root.root, config.company);
-      const source = createLocalSource(
-        { path: local.path, configured: local.configured },
-        config.caps,
-      );
+      const described =
+        configured.kind === "local"
+          ? configured.configured
+          : redactCredentials(configured.repository);
+      // A repository source is built inside prepare(), once the lock has decided the work folder (D47).
+      let gitSource: GitSource | undefined;
+      const placeholder: Source = {
+        kind: "git",
+        load: async () => {
+          throw new Error("the repository source is not prepared");
+        },
+        describe: () => described,
+      };
+      const source: Source =
+        configured.kind === "local"
+          ? createLocalSource(
+              { path: configured.path, configured: configured.configured },
+              config.caps,
+            )
+          : placeholder;
       options = {
         company: config.company,
-        source: local.configured,
+        source: described,
         dev: config.serve.dev,
         limitDefault: config.serve.limitDefault,
         resultBudget: RESULT_BUDGET,
       };
-      runtime = createRuntime({
+      let lockKind: "exclusive" | "private" = "exclusive";
+      const serving = createRuntime({
         company: config.company,
         source,
         prepare: async () => {
-          if (cacheOverlapsBundle(dir, local.path)) {
+          if (configured.kind === "local" && cacheOverlapsBundle(dir, configured.path)) {
             const described = new Error(
               "the cache folder lies inside the bundle folder, or the bundle inside the cache folder; set XDG_CACHE_HOME to a folder outside the bundle",
             ) as Error & { detail?: string };
-            described.detail = `cache ${dir}; bundle ${local.path}`;
+            described.detail = `cache ${dir}; bundle ${configured.path}`;
             throw described;
           }
           const ensured = ensureCache(dir, root.root, {
@@ -214,21 +267,46 @@ export async function runServe(argv: string[]): Promise<number> {
             throw described;
           }
           sweepPrivate(dir, processAlive);
-          const lock = acquireLock(dir, clock());
+          const lock = lockHandle ?? acquireLock(dir, clock());
           let work = dir;
-          let kind: "exclusive" | "private" = "exclusive";
           if (lock.kind === "exclusive") lockHandle = lock;
           else {
             work = makePrivateDir(dir, process.pid);
             privateWork = work;
-            kind = "private";
+            lockKind = "private";
           }
+          let result: PrepareResult;
           // Imported here, after stdout is reserved, so nothing the engine's modules do at load can reach the channel.
           const { QmdEngine } = await import("../engine/qmd.js");
           const engine = await QmdEngine.open({ company: config.company, dir: work });
           if (engine.resetOnOpen !== undefined)
             log.warn("engine.reset", { detail: engine.resetOnOpen });
-          return { engine, lock: kind };
+          result = {
+            engine,
+            lock: lockKind,
+            ...(engine.resetOnOpen === undefined ? {} : { resetOnOpen: engine.resetOnOpen }),
+          };
+          if (configured.kind === "git") {
+            const binary = await gitBinary(root.root);
+            const runner = createGitRunner({
+              binary,
+              allowProtocols: `https:ssh${process.env.OKF_CATALOG_GIT_PROTOCOLS === "file" ? ":file" : ""}`,
+              cacheRoot: root.root,
+              env: process.env,
+            });
+            await requireGitVersion(runner, work);
+            gitSource = createGitSource({
+              repository: configured.repository,
+              branch: configured.branch,
+              bundlePath: configured.bundlePath,
+              workDir: join(work, "source"),
+              caps: config.caps,
+              runner,
+              clock,
+            });
+            result = { ...result, source: gitSource };
+          }
+          return result;
         },
         load: {
           admit: config.serve.admit,
@@ -240,10 +318,45 @@ export async function runServe(argv: string[]): Promise<number> {
         },
         clock,
         log,
+        extra: () => ({
+          lockOwner: lockKind === "private" ? (readLockOwner(dir) ?? null) : null,
+          poller:
+            poller?.state() ??
+            (configured.kind === "git" ? { intervalMs: config.serve.pullIntervalMs } : null),
+        }),
       });
+      // The poller starts once the first load has run, whatever its outcome, and ticks at once when the load
+      // answered from the tree on disk; it never starts before the handshake, since start() runs on it.
+      let pollerStarted = false;
+      const startPoller = (): void => {
+        if (pollerStarted || configured.kind !== "git") return;
+        pollerStarted = true;
+        void serving
+          .ready()
+          .catch(() => undefined)
+          .then(() => {
+            if (closing !== undefined || gitSource === undefined) return;
+            poller = createPoller({
+              runtime: serving,
+              source: gitSource,
+              intervalMs: config.serve.pullIntervalMs,
+              log,
+              clock,
+              immediate: gitSource.startedFromDisk(),
+            });
+            poller.start();
+          });
+      };
+      runtime = {
+        ...serving,
+        start: () => {
+          serving.start();
+          startPoller();
+        },
+      };
       log.info("serve.start", {
         company: config.company,
-        source: local.configured,
+        source: described,
         dev: config.serve.dev,
         node: process.versions.node,
         configRule: found.rule,
@@ -268,7 +381,6 @@ export async function runServe(argv: string[]): Promise<number> {
   const done = new Promise<void>((resolve) => {
     finished = resolve;
   });
-  let closing: Promise<void> | undefined;
   let signals = 0;
   const cleanup = (): void => {
     lockHandle?.close();
@@ -279,6 +391,7 @@ export async function runServe(argv: string[]): Promise<number> {
     closing = (async () => {
       log.info("serve.shutdown", { reason });
       try {
+        await poller?.stop();
         await runtime.shutdown();
       } catch (error) {
         log.error("transport.error", { error: (error as Error).message });

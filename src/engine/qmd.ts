@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createStore, type QMDStore } from "@tobilu/qmd";
-import { byCodeUnit, folderOf } from "../bundle/paths.js";
+import { byCodeUnit, collisionKey, folderOf } from "../bundle/paths.js";
 import type { DerivedDocument } from "../derive/derived-document.js";
 import type { Engine, EngineHit, IndexResult } from "../search/engine.js";
 import { decodePath, encodePath, renderDocument } from "./qmd-render.js";
@@ -30,7 +30,6 @@ const GENERATION = /^gen-\d+-\d+-\d+$/;
 const TEMP_LINK = /^derived\.tmp-\d+$/;
 
 /** The name two paths share once case and Unicode form are ignored, which is what a case-insensitive file system sees. */
-const collisionKey = (encoded: string): string => encoded.normalize("NFC").toLowerCase();
 
 /**
  * The qmd adapter. Each `index` writes a new generation folder, flips the `derived` link to it (by base name,
@@ -69,20 +68,35 @@ export class QmdEngine implements Engine {
     const config = {
       collections: { [options.company]: { path: join(dir, LINK), pattern: "**/*.md" } },
     };
-    let store = await createStore({ dbPath: join(dir, DB), config });
     let reset: string | undefined;
+    let store: Awaited<ReturnType<typeof createStore>>;
+    try {
+      store = await createStore({ dbPath: join(dir, DB), config });
+    } catch (error) {
+      // A derived store that is not a database any more is rebuilt once (D48); any other failure is a failure.
+      const code = (error as { code?: string }).code;
+      if (code !== "SQLITE_NOTADB" && code !== "SQLITE_CORRUPT") throw error;
+      QmdEngine.removeStore(dir);
+      reset = `the store could not be opened (${code}: ${(error as Error).message}); it was rebuilt`;
+      store = await createStore({ dbPath: join(dir, DB), config });
+    }
     const status = await store.getStatus();
     const own = status.collections.find((c) => c.name === options.company)?.documents ?? 0;
     const others = status.collections.filter((c) => c.name !== options.company).map((c) => c.name);
     if (others.length > 0 || status.totalDocuments !== own) {
       reset = `the store held ${status.totalDocuments - own} document(s) outside the ${options.company} collection (${others.join(", ") || "no collection"}); it was rebuilt`;
       await store.close();
-      for (const suffix of ["", "-wal", "-shm", "-journal"]) {
-        rmSync(join(dir, `${DB}${suffix}`), { force: true });
-      }
+      QmdEngine.removeStore(dir);
       store = await createStore({ dbPath: join(dir, DB), config });
     }
     return new QmdEngine(store, { ...options, dir }, reset);
+  }
+
+  /** The store and its sidecars; the lock database in the same folder is never touched. */
+  private static removeStore(dir: string): void {
+    for (const suffix of ["", "-wal", "-shm", "-journal"]) {
+      rmSync(join(dir, `${DB}${suffix}`), { force: true });
+    }
   }
 
   /** Temporary links a crash left behind, and generation folders the live link does not name, are removed. */

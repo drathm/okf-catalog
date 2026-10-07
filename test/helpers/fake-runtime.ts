@@ -94,7 +94,9 @@ export function fakeRuntime(
 ): Runtime & { leases: number } {
   const engine = generation === undefined ? undefined : fakeEngine(generation.catalog);
   const status: RuntimeStatus =
-    refusing === undefined ? { lock: "exclusive" } : { lock: "exclusive", refusing };
+    refusing === undefined
+      ? { lock: "exclusive", loaded: generation !== undefined }
+      : { lock: "exclusive", loaded: false, refusing };
   const runtime: Runtime & { leases: number } = {
     leases: 0,
     async ready() {

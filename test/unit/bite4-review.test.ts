@@ -118,7 +118,7 @@ describe("outputs (round 2)", () => {
       (p) => p.staleAfter?.at !== undefined && NOW.getTime() >= p.staleAfter.at.getTime(),
     ).length;
     expect(expected).toBeGreaterThan(0);
-    const out = projectStatus(generation, { lock: "exclusive" }, toolOptions, NOW);
+    const out = projectStatus(generation, { lock: "exclusive", loaded: true }, toolOptions, NOW);
     expect(out.overdue).toBe(expected);
     expect(statusSummary(out)).toContain(`${expected} overdue`);
   });
@@ -143,7 +143,12 @@ describe("outputs (round 2)", () => {
     const made = refusingText(long);
     expect(made.length).toBeLessThanOrEqual(REFUSING_CAP + 40);
     expect(made).not.toContain("\n");
-    const out = projectStatus(generation, { lock: "exclusive", refusing: long }, toolOptions, NOW);
+    const out = projectStatus(
+      generation,
+      { lock: "exclusive", loaded: true, refusing: long },
+      toolOptions,
+      NOW,
+    );
     expect(out.refusing?.length ?? 0).toBeLessThanOrEqual(REFUSING_CAP + 40);
     expect(out.refusing).not.toContain("\n");
   });

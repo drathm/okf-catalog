@@ -28,3 +28,6 @@ export function isSafeRelativePath(path: string): boolean {
       (segment) => segment !== "" && segment !== "." && segment !== ".." && segment !== "__proto__",
     );
 }
+
+/** Two paths that agree under this key would be one file to the engine (and to a case-folding file system). */
+export const collisionKey = (path: string): string => path.normalize("NFC").toLowerCase();

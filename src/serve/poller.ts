@@ -1,0 +1,116 @@
+import type { PollerOutcome, PollerStatus, Runtime } from "../catalog/runtime.js";
+import type { Log } from "../log.js";
+import type { Source } from "../source/source.js";
+
+export interface PollerDeps {
+  runtime: Runtime;
+  source: Source;
+  intervalMs: number;
+  log: Log;
+  clock: () => Date;
+  /** Run the first tick at once instead of one interval after `start()` (the first load came from disk). */
+  immediate?: boolean;
+}
+
+export interface Poller {
+  start(): void;
+  /** Clears the timer, aborts the source's transport and waits for the tick in flight. */
+  stop(): Promise<void>;
+  /** One tick, for tests and for `start()`: never two at once. */
+  tick(): Promise<PollerOutcome>;
+  state(): PollerStatus;
+}
+
+/**
+ * Asks the source whether the remote moved, one whole tick at a time on a chained timer, and refreshes when it
+ * did or when the first load has not succeeded yet (D44). It runs from its timer and never from a lease, backs
+ * off no further than its interval, never keeps the process alive, and is stopped before the runtime drains.
+ */
+export function createPoller(deps: PollerDeps): Poller {
+  let timer: NodeJS.Timeout | undefined;
+  let inFlight: Promise<PollerOutcome> | undefined;
+  let stopped = false;
+  let lastTick: Date | undefined;
+  let lastOutcome: PollerOutcome | undefined;
+  let goneLogged = false;
+
+  async function run(): Promise<PollerOutcome> {
+    const started = performance.now();
+    let outcome: PollerOutcome = "failed";
+    let error: string | undefined;
+    try {
+      const status = deps.runtime.status();
+      let shouldRefresh = !status.loaded || status.refusing !== undefined;
+      if (!shouldRefresh && deps.source.changed !== undefined) {
+        const change = await deps.source.changed();
+        if (change === "gone") outcome = "gone";
+        else shouldRefresh = change === "moved";
+      }
+      if (outcome !== "gone") {
+        if (shouldRefresh) {
+          const result = await deps.runtime.refresh();
+          outcome = result.outcome === "swapped" ? "refreshed" : "failed";
+          if (result.outcome === "failed") error = result.error;
+          if (result.outcome === "fatal") error = result.report.fatal?.rule;
+        } else outcome = "unchanged";
+      }
+    } catch (caught) {
+      outcome = "failed";
+      error = (caught as Error).message;
+    }
+    lastTick = deps.clock();
+    lastOutcome = outcome;
+    const fields = {
+      outcome,
+      ms: Math.round(performance.now() - started),
+      ...(error === undefined ? {} : { error }),
+    };
+    if (outcome === "gone") {
+      if (goneLogged) deps.log.debug("poller.tick", fields);
+      else deps.log.warn("poller.tick", fields);
+      goneLogged = true;
+    } else {
+      goneLogged = false;
+      if (outcome === "failed") deps.log.warn("poller.tick", fields);
+      else deps.log.info("poller.tick", fields);
+    }
+    return outcome;
+  }
+
+  function tick(): Promise<PollerOutcome> {
+    if (stopped || inFlight !== undefined) return Promise.resolve("skipped");
+    inFlight = run().finally(() => {
+      inFlight = undefined;
+    });
+    return inFlight;
+  }
+
+  function arm(delay: number): void {
+    if (stopped) return;
+    timer = setTimeout(() => {
+      timer = undefined;
+      void tick().finally(() => arm(deps.intervalMs));
+    }, delay);
+    timer.unref();
+  }
+
+  return {
+    start: () => {
+      if (timer !== undefined || stopped) return;
+      arm(deps.immediate === true ? 0 : deps.intervalMs);
+    },
+    stop: async () => {
+      stopped = true;
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+      deps.source.abort?.();
+      if (inFlight !== undefined) await inFlight.catch(() => undefined);
+    },
+    tick,
+    state: () => ({
+      intervalMs: deps.intervalMs,
+      ...(lastTick === undefined ? {} : { lastTick }),
+      ...(lastOutcome === undefined ? {} : { lastOutcome }),
+    }),
+  };
+}

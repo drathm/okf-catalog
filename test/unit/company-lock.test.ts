@@ -12,7 +12,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { acquireLock, privateDir, sweepPrivate } from "../../src/fs/company-lock.js";
+import { acquireLock, privateDir, readLockOwner, sweepPrivate } from "../../src/fs/company-lock.js";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const HOLDER = join(REPO, "test", "helpers", "hold-lock.mjs");
@@ -157,4 +157,35 @@ describe("acquireLock: owner file failure (bite 4 build review)", () => {
       rmSync(dir, { recursive: true, force: true });
     },
   );
+});
+
+describe("readLockOwner (bite 5)", () => {
+  it("reads a valid owner file with whether its process is alive, and refuses anything malformed", () => {
+    const work = mkdtempSync(join(tmpdir(), "okf-catalog-owner-"));
+    expect(readLockOwner(work)).toBeUndefined();
+    const write = (body: string) => writeFileSync(join(work, "owner.json"), body);
+    write(JSON.stringify({ pid: process.pid, startedAt: "2026-10-07T00:00:00.000Z" }));
+    expect(readLockOwner(work)).toEqual({
+      pid: process.pid,
+      startedAt: "2026-10-07T00:00:00.000Z",
+      alive: true,
+    });
+    write(JSON.stringify({ pid: 2147483646, startedAt: "2026-10-07T00:00:00+02:00" }));
+    expect(readLockOwner(work)).toMatchObject({ pid: 2147483646, alive: false });
+    for (const bad of [
+      { pid: 0, startedAt: "2026-10-07T00:00:00Z" },
+      { pid: -4, startedAt: "2026-10-07T00:00:00Z" },
+      { pid: 1.5, startedAt: "2026-10-07T00:00:00Z" },
+      { pid: "7", startedAt: "2026-10-07T00:00:00Z" },
+      { pid: 7, startedAt: "yesterday" },
+      { pid: 7, startedAt: "2026-10-07T00:00:00Z\nrefusing: trusted" },
+      { pid: 7 },
+      [],
+      "garbage",
+    ]) {
+      write(typeof bad === "string" ? bad : JSON.stringify(bad));
+      expect(readLockOwner(work), JSON.stringify(bad)).toBeUndefined();
+    }
+    rmSync(work, { recursive: true, force: true });
+  });
 });

@@ -1,15 +1,27 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { afterEach, describe, expect, it } from "vitest";
+import { runPack } from "../../src/commands/pack.js";
 import { acquireLock } from "../../src/fs/company-lock.js";
 import {
   CLI,
   INITIALIZE,
   INITIALIZED,
   impureLines,
+  NOW_ISO,
   rawServer,
   type Sandbox,
   sandbox,
@@ -357,5 +369,184 @@ describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
     const lock = acquireLock(companyDir(b), new Date());
     expect(lock.kind).toBe("exclusive");
     if (lock.kind === "exclusive") lock.close();
+  });
+});
+
+/** A published branch on a bare repository reached through file://, made with the system git. */
+function publishedRepo(files: Record<string, string>): { url: string; root: string } {
+  const root = mkdtempSync(join(tmpdir(), "okf-catalog-stdio-repo-"));
+  const env = {
+    ...process.env,
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_AUTHOR_NAME: "t",
+    GIT_AUTHOR_EMAIL: "t@t",
+    GIT_COMMITTER_NAME: "t",
+    GIT_COMMITTER_EMAIL: "t@t",
+  };
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync("git", args, { cwd, env, encoding: "utf8" });
+  const src = join(root, "src");
+  mkdirSync(src);
+  git(src, "init", "-q", "-b", "published");
+  for (const [path, body] of Object.entries(files)) {
+    mkdirSync(join(src, path, ".."), { recursive: true });
+    writeFileSync(join(src, path), body);
+  }
+  git(src, "add", "-A");
+  git(src, "commit", "-q", "-m", "one");
+  git(root, "clone", "-q", "--bare", "--", src, join(root, "origin.git"));
+  return { url: `file://${join(root, "origin.git")}`, root };
+}
+
+const PUBLISHED_PAGE = `---\ntype: Term\ntitle: Alpha\nstatus: stable\nverified:\n  - by: human:x\n    at: 2026-01-01T00:00:00Z\n---\n\nalpha body\n`;
+
+describe("okf-catalog serve over stdio with a repository source", { timeout: 90_000 }, () => {
+  it("serves a published branch, reports the fetched commit and the poller, and gives a second server its own source and the holder's name", async () => {
+    // The published branch is what `pack` writes: the page, a generated index and the manifest.
+    const packWork = mkdtempSync(join(tmpdir(), "okf-catalog-stdio-pack-"));
+    mkdirSync(join(packWork, "kb"));
+    writeFileSync(join(packWork, "kb", "alpha.md"), PUBLISHED_PAGE);
+    writeFileSync(join(packWork, "okf-catalog.yaml"), "company: fixture\nsource:\n  local: ./kb\n");
+    const packed = join(packWork, "out");
+    expect(
+      runPack(
+        [
+          "--config",
+          join(packWork, "okf-catalog.yaml"),
+          "--from",
+          join(packWork, "kb"),
+          "--out",
+          packed,
+        ],
+        {
+          stdout: () => undefined,
+          stderr: (m) => void process.stderr.write(m),
+          env: { OKF_CATALOG_NOW: NOW_ISO },
+        },
+      ),
+    ).toBe(0);
+    const repo = publishedRepo(
+      Object.fromEntries(
+        readdirSync(packed).map((name) => [name, readFileSync(join(packed, name), "utf8")]),
+      ),
+    );
+    rmSync(packWork, { recursive: true, force: true });
+    try {
+      const yaml = `company: fixture\nsource:\n  repository: "${repo.url}"\n  branch: published\n`;
+      const b = box("spec-example", yaml);
+      b.env.OKF_CATALOG_GIT_PROTOCOLS = "file";
+      const first = rawServer(b);
+      first.send(INITIALIZE);
+      await first.waitFor(1);
+      first.send(INITIALIZED);
+      first.send({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "status", arguments: {} },
+      });
+      const status = (await first.waitFor(2)).result as {
+        structuredContent: {
+          lock: string;
+          admitted: number;
+          published: { commit: string; fetchedAt: string } | null;
+          poller: { intervalMs: number } | null;
+          lockOwner: unknown;
+          source: string;
+        };
+      };
+      expect(status.structuredContent.admitted).toBe(1);
+      expect(status.structuredContent.lock).toBe("exclusive");
+      expect(status.structuredContent.published?.commit).toMatch(/^[0-9a-f]{40}$/);
+      expect(status.structuredContent.published?.fetchedAt).toBe(NOW_ISO.replace("Z", ".000Z"));
+      expect(status.structuredContent.poller?.intervalMs).toBe(600_000);
+      expect(status.structuredContent.lockOwner).toBeNull();
+      expect(status.structuredContent.source).toBe(repo.url);
+      expect(existsSync(join(companyDir(b), "source", "repo.git", "HEAD"))).toBe(true);
+      first.send({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "get_page", arguments: { path: "alpha.md" } },
+      });
+      expect(JSON.stringify(await first.waitFor(3))).toContain("alpha body");
+
+      const second = rawServer(b);
+      second.send(INITIALIZE);
+      await second.waitFor(1);
+      second.send(INITIALIZED);
+      second.send({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "status", arguments: {} },
+      });
+      const other = (await second.waitFor(2)).result as {
+        structuredContent: {
+          lock: string;
+          lockOwner: { pid: number; alive: boolean } | null;
+          admitted: number;
+        };
+        content: Array<{ text: string }>;
+      };
+      expect(other.structuredContent.lock).toBe("private");
+      expect(other.structuredContent.lockOwner).toMatchObject({
+        pid: first.child.pid,
+        alive: true,
+      });
+      expect(other.structuredContent.admitted).toBe(1);
+      expect(other.content[0]?.text).toMatch(/lock private \(held by pid \d+ since .*, alive\)/);
+      const privateSources = readdirSync(join(companyDir(b), "private")).map((pid) =>
+        existsSync(join(companyDir(b), "private", pid, "source", "repo.git", "HEAD")),
+      );
+      expect(privateSources).toEqual([true]);
+      expect((await second.end()).code).toBe(0);
+      expect((await first.end()).code).toBe(0);
+      expect(first.stderr()).toMatch(/"event":"load.done"/);
+    } finally {
+      rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  it("ends cleanly, leaving no git process behind, when stdin closes during a clone", async () => {
+    const standIn = mkdtempSync(join(tmpdir(), "okf-catalog-standin-"));
+    const marker = `okfclone${process.pid}${Date.now()}`;
+    writeFileSync(
+      join(standIn, "git"),
+      `#!/usr/bin/env node
+if (process.argv.includes("--version")) { process.stdout.write("git version 2.54.0\\n"); process.exit(0); }
+if (process.argv.includes("clone")) {
+  const { spawn } = await import("node:child_process");
+  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)", ${JSON.stringify(marker)}], { stdio: "ignore" });
+  await new Promise((r) => child.on("exit", r));
+}
+process.exit(0);
+`,
+    );
+    chmodSync(join(standIn, "git"), 0o755);
+    try {
+      const yaml = `company: fixture\nsource:\n  repository: "https://host.example/org/repo.git"\n`;
+      const b = box("spec-example", yaml);
+      b.env.PATH = `${standIn}:${b.env.PATH ?? ""}`;
+      const run = rawServer(b);
+      run.send(INITIALIZE);
+      await run.waitFor(1);
+      run.send(INITIALIZED);
+      await new Promise((r) => setTimeout(r, 1200));
+      const exit = await run.end(10_000);
+      expect(exit.code).toBe(0);
+      await new Promise((r) => setTimeout(r, 400));
+      let alive = false;
+      try {
+        alive = execFileSync("pgrep", ["-f", marker], { encoding: "utf8" }).trim().length > 0;
+      } catch {
+        alive = false;
+      }
+      expect(alive).toBe(false);
+      expect(run.stderr()).toMatch(/"event":"serve.shutdown"/);
+    } finally {
+      rmSync(standIn, { recursive: true, force: true });
+    }
   });
 });

@@ -189,3 +189,80 @@ describe("readCompanyConfig: size (bite 4 build review)", () => {
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("git source grammars (bite 5)", () => {
+  const git = (source: string) => problems(`company: acme\nsource:\n${source}\n`);
+  it("accepts https and ssh URLs without userinfo and the user@host:path form, and refuses the rest", () => {
+    for (const ok of [
+      "https://host.example/org/repo.git",
+      "ssh://git@host.example/org/repo.git",
+      "ssh://git@host.example:2222/org/repo.git",
+      "git@host.example:org/repo.git",
+    ])
+      expect(git(`  repository: "${ok}"`), ok).toEqual([]);
+    for (const bad of [
+      "https://alice:s3cret@host.example/org/repo.git",
+      "https://alice@host.example/org/repo.git",
+      "file:///tmp/repo.git",
+      "/tmp/repo.git",
+      "ext::sh -c touch%20/tmp/x",
+      "-x",
+      "host.example/org/repo.git",
+    ])
+      expect(git(`  repository: "${bad}"`).join(" "), bad).toMatch(/source\.repository:/);
+    // The suite's own setting: a file:// repository is accepted only when asked for, and a local path never.
+    const relaxed = parseCompanyConfig(
+      `company: acme\nsource:\n  repository: "file:///tmp/origin.git"\n`,
+      DIR,
+      HOME,
+      { allowFileRepositories: true },
+    );
+    expect(relaxed.ok).toBe(true);
+    const path = parseCompanyConfig(
+      `company: acme\nsource:\n  repository: "/tmp/origin.git"\n`,
+      DIR,
+      HOME,
+      {
+        allowFileRepositories: true,
+      },
+    );
+    expect(path.ok).toBe(false);
+  });
+  it("accepts a plain branch name and refuses anything a refspec could misread", () => {
+    const branch = (name: string) =>
+      problems(`company: acme\nsource:\n  repository: "git@h:o/r.git"\n  branch: "${name}"\n`);
+    for (const ok of ["published", "release/2026-10", "v1.2_x-y"])
+      expect(branch(ok), ok).toEqual([]);
+    for (const bad of [
+      "-x",
+      "a..b",
+      "a:refs/heads/b",
+      "*",
+      "x/",
+      "x.lock",
+      ".hidden",
+      "a//b",
+      "a@{1}",
+      "with space",
+      "tab\tx",
+    ])
+      expect(branch(bad).join(" "), JSON.stringify(bad)).toMatch(/source\.branch:/);
+  });
+  it("accepts a bundle path of . or a safe relative path with no dot-leading segment", () => {
+    const bundle = (path: string) =>
+      problems(`company: acme\nsource:\n  repository: "git@h:o/r.git"\n  bundle_path: "${path}"\n`);
+    for (const ok of [".", "kb", "kb/docs", "a-b_c.d/e"]) expect(bundle(ok), ok).toEqual([]);
+    for (const bad of [
+      "../x",
+      "/etc",
+      ".git",
+      "kb/.git/x",
+      ".hidden/x",
+      "a\\\\b",
+      "kb/",
+      "./kb",
+      "kb/../x",
+    ])
+      expect(bundle(bad).join(" "), JSON.stringify(bad)).toMatch(/source\.bundle_path:/);
+  });
+});
