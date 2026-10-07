@@ -1,6 +1,6 @@
 {
   "name": "okf-catalog",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Serves a company's Open Knowledge Format bundle to Claude: search, read pages whole, cite path, trust and recheck date. Needs the okf-catalog command on PATH (npm install -g okf-catalog) and an okf-catalog.yaml in the project folder or named by OKF_CATALOG_CONFIG.",
   "author": {
     "name": "Bitfusion PR LLC",

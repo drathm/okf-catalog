@@ -1,6 +1,12 @@
 # Changelog
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in `package.json` names the release. 0.1.0 is published before the clean-account run of the acceptance list in `docs/acceptance/version-0.md`, by the maintainer's choice; what that run finds goes into 0.1.1.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in `package.json` names the release. 0.1.0 was published on 2026-10-07, before the clean-account run of the acceptance list in `docs/acceptance/version-0.md`, by the maintainer's choice; what that run finds goes into a later patch release.
+
+## [0.1.1] - 2026-10-07
+
+### Fixed
+
+- The package no longer ships `npm-shrinkwrap.json`. npm honours a shrinkwrap found inside an installed package and installs its whole locked tree nested under the package, development tools and every platform's native binaries included: `npm install okf-catalog@0.1.0` put 336 packages and 3.1 GB under `node_modules/okf-catalog/node_modules`. Without the file the same install is 204 packages and 227 MB, hoisted and filtered by platform. Nothing else changes; 0.1.0 works, it is only large.
 
 ## [0.1.0] - 2026-10-07
 
@@ -21,4 +27,4 @@ Version 0: serve a company's Open Knowledge Format 0.2 bundle to Claude Code, lo
 
 ### Not in this version
 
-HTTP transport and authorization, full mode as a product option, Codex and Grok Build plugins, Windows, npm publication.
+HTTP transport and authorization, full mode as a product option, Codex and Grok Build plugins, Windows.

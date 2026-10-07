@@ -6,17 +6,17 @@ okf-catalog is an MCP server that serves a company's [Open Knowledge Format](htt
 
 What it adds: **qmd done right for OKF.** [qmd](https://github.com/tobi/qmd) is the best Markdown search engine there is. okf-catalog makes it understand OKF's fields: titles, descriptions and tags ranked as they should be, status and recheck dates respected, trust and provenance returned with every answer, deprecated pages pointing to their replacements.
 
-**Status: version 0 release candidate (0.1.0), not yet accepted, not published.** Every item of the version 0 acceptance list that a test can prove is proven on every run; the items that need a person on a clean account (a signed-in Claude Code answering from a bundle, a real publish, the network off) are pending, with their runbook in [docs/acceptance/version-0.md](docs/acceptance/version-0.md). The package is marked private and nothing is on npm; the licence is Apache-2.0 (decision D1). Start with [docs/intent.md](docs/intent.md); the implementation plan and its execution record are under [docs/plans/](docs/plans/).
+**Status: version 0 (0.1.1) on npm, not yet accepted.** Every item of the version 0 acceptance list that a test can prove is proven on every run; the items that need a person on a clean account (a signed-in Claude Code answering from a bundle, a real publish, the network off) are pending, with their runbook in [docs/acceptance/version-0.md](docs/acceptance/version-0.md). The package is public on npm as `okf-catalog` (0.1.0 published 2026-10-07; 0.1.1 removes a shipped lock file that made the install 3 GB); the licence is Apache-2.0 (decision D1). Start with [docs/intent.md](docs/intent.md); the implementation plan and its execution record are under [docs/plans/](docs/plans/).
 
 ## Quickstart
 
-Once the package is on npm, the install is one command, and the `okf-catalog` command lands on your PATH:
+The install is one command, and the `okf-catalog` command lands on your PATH:
 
 ```bash
 NODE_LLAMA_CPP_SKIP_DOWNLOAD=1 npm install -g okf-catalog
 ```
 
-Until then, or to work on the code, use a checkout:
+To work on the code, use a checkout:
 
 ```bash
 git clone https://github.com/drathm/okf-catalog.git && cd okf-catalog

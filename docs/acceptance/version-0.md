@@ -88,7 +88,7 @@ Two caveats the clean-account run removes: the author's account loads its own pl
 
 Who: someone other than the author, on a user account that has never held this project. What they need: macOS or Linux, Node 24 or later, git 2.30 or later, Claude Code 2.1.221 or later (`claude --version`; 2.1.221 is the first that waits for `--mcp-config` servers before the first turn) signed in once with `claude`, and a bundle: their own (private: see the rule at the end), or the public corpus (`sh bench/fetch-corpus.sh`), or the `spec-example` fixture.
 
-1. **Install.** `NODE_LLAMA_CPP_SKIP_DOWNLOAD=1 npm install -g okf-catalog` once the package is on npm; until then `git clone https://github.com/drathm/okf-catalog.git && cd okf-catalog && NODE_LLAMA_CPP_SKIP_DOWNLOAD=1 npm ci && npm install -g .`. `okf-catalog --version` prints `0.1.0`.
+1. **Install.** `NODE_LLAMA_CPP_SKIP_DOWNLOAD=1 npm install -g okf-catalog` (or, from a checkout, `git clone https://github.com/drathm/okf-catalog.git && cd okf-catalog && NODE_LLAMA_CPP_SKIP_DOWNLOAD=1 npm ci && npm install -g .`). `okf-catalog --version` prints the version in `package.json`.
 2. **Configuration.** Write `okf-catalog.yaml` in the project folder for the bundle (the README's two examples; `serve.dev: true` for item 1, declared `types`). `okf-catalog check <bundle> --integrity none --types …` prints the report.
 3. **The plugin, interactively (items 1 to 4 through the plugin's own launch).** With `okf-catalog.yaml` in the project folder, `claude --plugin-dir "$(npm root -g)/okf-catalog/plugin/claude-code"` (or `./plugin/claude-code` from the checkout); in the session `/mcp` shows the `okf-catalog` server connected with no settings dialog. Ask one question the bundle answers and one it does not. Record the Claude Code version, the server's state and the two answers. The bite 4 question about `${user_config}` placeholders is answered (the table above): the plugin asks for nothing now.
 4. **Item 1.** With `serve.dev: true`, `status` through the session shows the bundle loaded, drafts admitted and labelled. Then `node dist/cli.js check test/fixtures/bundles/refused` exits 1 with the refusals, and a configuration pointing at that fixture gives a server whose `status` carries the refusal.
@@ -108,6 +108,8 @@ What may be committed for a private bundle: the item, pass or fail, counts, the 
 
 After the runbook passes: on the tested commit, one commit that turns `## [Unreleased]` in `CHANGELOG.md` into `## [0.1.0] - <date>` and changes nothing else (`git diff --stat HEAD~1` shows that one file), then `git tag -a v0.1.0 -m "okf-catalog 0.1.0"` on it. The tag is the maintainer's.
 
+Record. 0.1.0 was published by the maintainer on 2026-10-07 at 15:07 UTC from a fresh clone of f205c9d with `npm publish --access public --no-provenance` (the flag because a publish from a laptop has no CI provider to sign with), after enabling two-factor authentication on the account, which npm now requires for every publish. The registry's `gitHead` is f205c9d: 107 files, 294.5 kB packed. The tag `v0.1.0` is on f205c9d and is lightweight, created through the API after three pushes of the annotated tag were rejected by GitHub with an internal server error while branch pushes went through. The first install from the registry found the defect that 0.1.1 fixes the same day (the changelog has it); the trusted publisher on npmjs.com (GitHub Actions, `drathm/okf-catalog`, `release.yml`, with `npm publish` allowed) is set up after 0.1.1.
+
 ## The maintainer's list, in order
 
 1. Rule D1 (the licence; `LICENSE` and `NOTICE` are Apache-2.0 as proposed) and D26 (the repository's visibility).
@@ -117,4 +119,4 @@ After the runbook passes: on the tested commit, one commit that turns `## [Unrel
 5. ~~Approve the models and run the modes three samples deep~~ Done 2026-10-07: all three models pulled, the modes run, the note rendered (`docs/research/benchmark-modes.md`); the lexical default stands.
 6. The clean-account run of the runbook by the person named in 3.
 7. Rule D7 (the numbers are in and the threshold is not met: the proposal is to confirm the lexical default and close the reservation), and D6, D9, D14 to D16, D20 to D55.
-8. The changelog-dating commit and the tag.
+8. ~~The changelog-dating commit and the tag~~ Done 2026-10-07 for 0.1.0 (the record above). Then: publish 0.1.1, tag it, and add the trusted publisher on npmjs.com.

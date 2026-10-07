@@ -21,7 +21,6 @@ const FIXED = [
   "LICENSE",
   "NOTICE",
   "README.md",
-  "npm-shrinkwrap.json",
   "package.json",
   "plugin/claude-code/.claude-plugin/plugin.json",
   "plugin/claude-code/.mcp.json",
@@ -49,8 +48,12 @@ describe("the release candidate", () => {
     expect(plugin.version).toBe(pkg.version);
   });
 
-  it("keeps the shrinkwrap equal to the lock, so an install from git resolves what the suite tested", () => {
-    expect(read("npm-shrinkwrap.json")).toBe(read("package-lock.json"));
+  // Measured on 0.1.0 (2026-10-07): with `npm-shrinkwrap.json` in the tarball, `npm install okf-catalog` put the
+  // whole locked tree under `node_modules/okf-catalog/node_modules`, development tools and every platform's native
+  // binaries included: 336 packages, 3.1 GB. Without it: 204 packages, 227 MB, hoisted and filtered by platform.
+  it("ships no lock file, so an install resolves and filters the dependencies like any package", () => {
+    expect(existsSync(join(REPO, "npm-shrinkwrap.json"))).toBe(false);
+    expect(pkg.files).not.toContain("npm-shrinkwrap.json");
   });
 
   it("is publishable to npm as a public package with provenance, under its owner", () => {
