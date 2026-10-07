@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 ### Fixed
 
 - The publish recipe (`recipes/publish/publish.yml`, the file a company copies) installs the server from npm at the exact version it came from, on Node 24, the line the CLI requires; it used to name a placeholder git commit and Node 22, on which the installed CLI refuses to run. Its actions are pinned to their current releases, and the recipe's README no longer describes a shipped lock file.
+- `pack.sh`'s second okflint pass, on the packed folder, crashed okflint 0.5.0 with a Python error because the manifest's root does not cover that folder; the integration test's stub checkers could not see it. The pass now runs on a copy of the manifest beside a copy of the pack at the manifest's first root path. Found by running the real checkers on the acceptance fixture bundle.
 
 ## [0.1.2] - 2026-10-07
 

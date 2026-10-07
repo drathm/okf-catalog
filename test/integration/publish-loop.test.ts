@@ -88,7 +88,7 @@ function stubCheckers(dir: string): { bin: string; log: string } {
   for (const name of ["okflint", "okf-schema"]) {
     writeFileSync(
       join(bin, name),
-      `#!/bin/sh\necho "${name} $*" >> ${JSON.stringify(log)}\nif [ -n "\${FAIL_CHECK_ON:-}" ]; then case "$*" in *"$FAIL_CHECK_ON"*) echo "${name}: stub failing" >&2; exit 1 ;; esac; fi\nexit 0\n`,
+      `#!/bin/sh\necho "${name} $*" >> ${JSON.stringify(log)}\nfor a in "$@"; do last=$a; done\nif [ -f "$last/manifest.json" ]; then echo "${name} saw-manifest" >> ${JSON.stringify(log)}; fi\nif [ -n "\${FAIL_CHECK_ON:-}" ]; then case "$*" in *"$FAIL_CHECK_ON"*) echo "${name}: stub failing" >&2; exit 1 ;; esac; fi\nexit 0\n`,
     );
     chmodSync(join(bin, name), 0o755);
   }
@@ -114,7 +114,10 @@ describe("the publish loop", { timeout: 120_000 }, () => {
       '[core]\n\tautocrlf = input\n\tattributesfile = ~/.gitattributes\n[filter "shout"]\n\tclean = tr a-z A-Z\n\tsmudge = cat\n',
     );
     writeFileSync(join(home, ".gitattributes"), "* text=auto\n*.html filter=shout\n");
-    writeFileSync(join(root, "okf-base.yaml"), "name: loop\n");
+    writeFileSync(
+      join(root, "okf-base.yaml"),
+      'okf_version: "0.2"\nbase:\n  name: loop\n  roots:\n    - path: src/kb\n',
+    );
     const env = {
       ...GIT_ENV,
       HOME: home,
@@ -165,12 +168,18 @@ describe("the publish loop", { timeout: 120_000 }, () => {
     ]);
     expect(pack1.status, pack1.stderr).toBe(0);
     expect(pack1.stdout.trim()).toBe(sha1);
-    expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([
+    const calls = readFileSync(log, "utf8").trim().split("\n");
+    expect(calls.slice(0, 2)).toEqual([
       `okflint validate --manifest ${join(root, "okf-base.yaml")} ${join(src, "kb")}`,
       `okf-schema validate --path ${join(src, "kb")}`,
-      `okflint validate --manifest ${join(root, "okf-base.yaml")} ${packed1}`,
-      `okf-schema validate --path ${packed1}`,
     ]);
+    // okflint 0.5.0 resolves the manifest's roots against the manifest's folder and fails on a target outside them,
+    // so the packed folder is checked through a copy of the manifest whose root path holds a copy of the pack.
+    const mirrored = /^okflint validate --manifest (.+)\/okf-base\.yaml \1\/src\/kb$/.exec(calls[2] ?? "");
+    expect(mirrored, calls[2]).not.toBeNull();
+    expect(mirrored?.[1]).not.toBe(root);
+    expect(calls[3]).toBe("okflint saw-manifest");
+    expect(calls.slice(4)).toEqual([`okf-schema validate --path ${packed1}`, "okf-schema saw-manifest"]);
     expect(JSON.parse(readFileSync(join(packed1, "manifest.json"), "utf8")).commit).toBe(sha1);
 
     // push.sh: the published branch appears, parent-linked from now on.

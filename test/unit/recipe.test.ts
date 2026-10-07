@@ -85,7 +85,7 @@ describe("the publish recipe", () => {
       'okflint validate --manifest "$OKFLINT_MANIFEST" "$SOURCE"',
       'okf-schema validate --path "$SOURCE"',
       "pack --config",
-      'okflint validate --manifest "$OKFLINT_MANIFEST" "$OUT"',
+      'okflint validate --manifest "$MIRROR_DIR/$(basename "$OKFLINT_MANIFEST")" "$MIRROR_ROOT"',
       'okf-schema validate --path "$OUT"',
     ].map((s) => pack.indexOf(s));
     expect(order.every((i) => i >= 0)).toBe(true);

@@ -4,7 +4,8 @@
 #
 # usage: pack.sh --config <path> --source <bundle folder> --out <folder> [--commit <sha>]
 # needs: sh, git, okf-catalog (or OKF_CATALOG_BIN, such as "node dist/cli.js"), and the checkers you enable on PATH.
-# settings: OKFLINT_MANIFEST (okflint's manifest file; unset leaves okflint out), OKF_SCHEMA (1, strict, or unset).
+# settings: OKFLINT_MANIFEST (okflint's manifest file, whose first root is a relative path; unset leaves okflint out),
+#           OKF_SCHEMA (1, strict, or unset).
 set -eu
 
 usage() {
@@ -49,7 +50,27 @@ fi
 # shellcheck disable=SC2086
 $OKF_CATALOG_BIN pack --config "$CONFIG" --from "$SOURCE" --out "$OUT" --commit "$COMMIT" >&2
 if [ -n "${OKFLINT_MANIFEST:-}" ]; then
-  okflint validate --manifest "$OKFLINT_MANIFEST" "$OUT" >&2
+  # okflint 0.5.0 resolves the manifest's roots against the manifest's own folder and fails (a Python error) on a
+  # target outside them, so the packed folder is checked through a copy of the manifest in a scratch folder that
+  # holds a copy of the pack at the manifest's first root path. The root must be relative; the copy of the manifest
+  # sits four folders deep so that a root such as ../kb still lands inside the scratch folder.
+  ROOT_REL=$(sed -n 's/^[[:space:]]*-[[:space:]]*path:[[:space:]]*//p' "$OKFLINT_MANIFEST" | head -n 1 \
+    | sed 's/[[:space:]]*#.*$//; s/^["'"'"']//; s/["'"'"']$//; s/[[:space:]]*$//; s|/*$||')
+  case "$ROOT_REL" in
+    ""|/*) echo "pack.sh: the okflint manifest's first root must be a relative path (found '${ROOT_REL}')" >&2; exit 2 ;;
+  esac
+  MIRROR=$(mktemp -d "${TMPDIR:-/tmp}/okf-catalog-okflint.XXXXXX")
+  trap 'rm -rf "$MIRROR"' EXIT
+  MIRROR_DIR="$MIRROR/.m/.m/.m/.m"
+  MIRROR_ROOT="$MIRROR_DIR/$ROOT_REL"
+  mkdir -p "$MIRROR_DIR" "$MIRROR_ROOT"
+  cp "$OKFLINT_MANIFEST" "$MIRROR_DIR/"
+  cp -R "$OUT"/. "$MIRROR_ROOT"/
+  case "$(cd "$MIRROR_ROOT" && pwd -P)" in
+    "$(cd "$MIRROR" && pwd -P)"/*) ;;
+    *) echo "pack.sh: the okflint manifest's first root '${ROOT_REL}' leaves the scratch folder" >&2; exit 2 ;;
+  esac
+  okflint validate --manifest "$MIRROR_DIR/$(basename "$OKFLINT_MANIFEST")" "$MIRROR_ROOT" >&2
 fi
 if [ "${OKF_SCHEMA:-}" = 1 ]; then
   okf-schema validate --path "$OUT" >&2
