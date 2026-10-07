@@ -91,7 +91,6 @@ okf-catalog/
     search/
       engine.ts                Engine port: index(docs), lex(terms, limit), status(), close(); hits carry qmd's score and the raw BM25
       query.ts                 question → content terms: lower-case, punctuation off, stopwords off; the relaxation ladder
-      policy.ts                candidate pool size, filters (type, topic, stale), trust tie-break, shaping, strategy record
       search.ts                search(catalog, engine, request, clock) → SearchResponse
     engine/
       qmd-render.ts            pure: the rendered text qmd indexes, and the path codec; imports no qmd
@@ -296,15 +295,15 @@ Every row of the field table in intent §6 maps to one function and one test. Th
 
 | Behaviour (intent §6) | Function | Test |
 |---|---|---|
-| `type` filter, unknown type reported, no type refused | `page.ts parseType`, `contract.ts`, `policy.ts filterType` | `page.test.ts type/*`; `contract.test.ts no-type` |
-| Title from frontmatter, else first heading, else file name; weight 4.0 via the rendered `#` line | `page.ts deriveTitle`, `derived-document.ts`, `qmd.ts render` | `page.test.ts title/*`; `qmd.test.ts render-golden` |
-| Description from frontmatter, else first sentence; catalog line; snippet fallback | `page.ts deriveDescription`, `index-file.ts generate`, `policy.ts shape` | `page.test.ts description/*` |
-| Tags and type as rendered lines | `derived-document.ts`, `qmd.ts render` | render golden |
-| Status admission rule; default stable; development flag admits drafts and labels them, local source only | `contract.ts admit`, `policy.ts shape`, `company-config.ts` | `contract.test.ts admission/*`; `company-config.test.ts dev-needs-local` |
+| `type` filter, unknown type reported, no type refused | `page.ts parseType`, `contract.ts`, `search.ts filterType` | `page.test.ts type/*`; `contract.test.ts no-type` |
+| Title from frontmatter, else first heading, else file name; weight 4.0 via the rendered `#` line | `page.ts deriveTitle`, `derived-document.ts`, `qmd-render.ts render` | `page.test.ts title/*`; `qmd.test.ts render-golden` |
+| Description from frontmatter, else first sentence; catalog line; snippet fallback | `page.ts deriveDescription`, `index-file.ts generate`, `search.ts shape` | `page.test.ts description/*` |
+| Tags and type as rendered lines | `derived-document.ts`, `qmd-render.ts render` | render golden |
+| Status admission rule; default stable; development flag admits drafts and labels them, local source only | `contract.ts admit`, `search.ts shape`, `company-config.ts` | `contract.test.ts admission/*`; `company-config.test.ts dev-needs-local` |
 | Replacement link on deprecated pages: the first body link that is not an anchor decides; a replacement only when it resolves to an admitted page other than itself, else a coded degradation, never a later link | `page.ts deriveReplacement`, `markdown.ts links`, `links.ts` | `page.test.ts deprecated/*` |
-| `stale_after`: date form compared by UTC calendar day, datetime form by instant; the form the pinned text does not expect is reported; excluded unless `include_stale`; always served by `get_page`, flagged | `page.ts parseStaleAfter`, `policy.ts filterStale`, `provenance.ts` | `page.test.ts stale/date`, `stale/datetime`, `stale/unexpected-form`; `policy.test.ts stale/*` |
+| `stale_after`: date form compared by UTC calendar day, datetime form by instant; the form the pinned text does not expect is reported; excluded unless `include_stale`; always served by `get_page`, flagged | `page.ts parseStaleAfter`, `search.ts filterStale`, `provenance.ts` | `page.test.ts stale/date`, `stale/datetime`, `stale/unexpected-form`; `search.test.ts stale/*` |
 | `generated` in provenance | `provenance.ts` | `provenance.test.ts` |
-| Trust tier per §5.3; bare mapping as a one-element list; tie-break | `page.ts deriveTrust`, `policy.ts rank` | `page.test.ts trust/*`, `policy.test.ts tiebreak` |
+| Trust tier per §5.3; bare mapping as a one-element list; tie-break | `page.ts deriveTrust`, `search.ts rank` | `page.test.ts trust/*`, `search.test.ts tiebreak` |
 | Sources with ids and credibility signals; footnote resolution | `page.ts parseSources`, `provenance.ts` | `provenance.test.ts sources` |
 | `resource` returned | `provenance.ts` | |
 | Links resolved, bundle-absolute and relative; broken reported, never refused | `links.ts resolve`, `contract.ts` | `links.test.ts`, `contract.test.ts broken-link` |
@@ -315,7 +314,7 @@ Every row of the field table in intent §6 maps to one function and one test. Th
 | Non-Markdown files counted, never indexed, never executed | `load.ts`, `contract.ts` | `load.test.ts attachments` |
 | Manifest integrity; refused without it outside development mode | `manifest.ts verify`, `contract.ts` | `manifest.test.ts mismatch/missing/dev-mode` |
 | Refusals: symlink, gitlink, escape, engine config, oversize, too many files | `fs/walk.ts`, `source/git.ts validateTree`, `contract.ts` | `walk.test.ts` on the hostile fixture; `git.test.ts tree/*` |
-| Keyword contract and relaxation ladder | `query.ts`, `policy.ts ladder` | `query.test.ts`, `search.test.ts sentence-vs-keywords` |
+| Keyword contract and relaxation ladder | `query.ts`, `search.ts` ladder | `query.test.ts`, `search.test.ts sentence-vs-keywords` |
 
 ### 2.6 Cache layout and configuration
 

@@ -13,11 +13,22 @@ export interface DerivedDocument {
 
 const normalise = (s: string): string => s.replace(/\s+/g, " ").trim().toLowerCase();
 
-/** Removes a leading heading whose text equals the title, so the rendered copy carries the title once. */
+const ATX_HEADING = /^(?:[ \t]*\n)* {0,3}#{1,6}[ \t]+([^\n]*?)(?:[ \t]+#+)?[ \t]*\n+/;
+const SETEXT_HEADING = /^(?:[ \t]*\n)* {0,3}([^\n]+?)[ \t]*\n {0,3}=+[ \t]*\n+/;
+
+/**
+ * Removes a leading heading whose text equals the title, so the rendered copy carries the title once. ATX or
+ * setext, at most three spaces of indentation (four is a code block), and closing hashes only after a space, as
+ * CommonMark reads them: `# C#` under the title C stays.
+ */
 function withoutDuplicateHeading(body: string, title: string): string {
-  const match = /^\s*#{1,6}[ \t]+([^\n]*?)[ \t]*#*[ \t]*\n+/.exec(body);
-  if (match === null || normalise(match[1] ?? "") !== normalise(title)) return body;
-  return body.slice(match[0].length);
+  for (const pattern of [ATX_HEADING, SETEXT_HEADING]) {
+    const match = pattern.exec(body);
+    if (match !== null && normalise(match[1] ?? "") === normalise(title)) {
+      return body.slice(match[0].length);
+    }
+  }
+  return body;
 }
 
 export function deriveDocument(page: Page): DerivedDocument {

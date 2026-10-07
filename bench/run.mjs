@@ -6,7 +6,15 @@
 // comparisons, and the run's metadata under bench/results/ (gitignored). Build first: npm run build.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadBundle } from "../dist/bundle/load.js";
@@ -24,6 +32,23 @@ const repo = join(here, "..");
 const corpus = join(here, "corpus");
 if (!existsSync(corpus)) {
   process.stderr.write("no corpus: run bench/fetch-corpus.sh first\n");
+  process.exit(2);
+}
+// The runner imports dist/; a stale build would measure code that is not the tree's. Refuse to run one.
+const newestSource = (dir) => {
+  let newest = 0;
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    const at = entry.isDirectory() ? newestSource(path) : statSync(path).mtimeMs;
+    if (at > newest) newest = at;
+  }
+  return newest;
+};
+if (
+  !existsSync(join(repo, "dist", "cli.js")) ||
+  newestSource(join(repo, "src")) > statSync(join(repo, "dist", "cli.js")).mtimeMs
+) {
+  process.stderr.write("dist/ is missing or older than src/: run npm run build first\n");
   process.exit(2);
 }
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -123,6 +148,9 @@ for (const config of CONFIGS) {
         top5: r.hits.map((h) => h.path),
         considered: r.considered,
         pool: r.pool,
+        engineQueries: r.engineQueries,
+        rowsFetched: r.rowsFetched,
+        floored: r.floored,
         topicExhausted: r.topicExhausted,
         ms,
       }),
@@ -235,6 +263,7 @@ const meta = {
   index: {
     documents: indexed.documents,
     notIndexed: indexed.notIndexed.length,
+    collisions: indexed.collisions.length,
     encodedFolders: indexed.encodedFolders,
     ms: indexMs,
     dbBytes: statSync(join(work, "index.sqlite")).size,
@@ -249,3 +278,5 @@ writeFileSync(join(resultsDir, `${stamp}.jsonl`), `${lines.join("\n")}\n`);
 writeFileSync(join(resultsDir, `${stamp}.summary.json`), `${JSON.stringify(result, null, 2)}\n`);
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 await engine.close();
+// The generation tree and the store are measurements' scaffolding, not results: a run leaves no work folder behind.
+rmSync(work, { recursive: true, force: true });

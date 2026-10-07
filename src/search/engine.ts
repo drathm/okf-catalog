@@ -16,8 +16,10 @@ export interface IndexResult {
   unchanged: number;
   removed: number;
   skipped: number;
-  /** Rendered documents the engine did not index, by bundle path. */
+  /** Rendered documents the engine did not index, by bundle path: a path that collided, could not be written, or was skipped by the engine. */
   notIndexed: PagePath[];
+  /** Paths that name the same file once case and Unicode form are ignored; the first by path order is kept. */
+  collisions: Array<{ kept: PagePath; dropped: PagePath }>;
   /** Bundle folders whose names had to be encoded for the engine. */
   encodedFolders: string[];
 }

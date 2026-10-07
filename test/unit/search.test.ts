@@ -9,15 +9,27 @@ import { search } from "../../src/search/search.js";
 import { NOW, readFixture } from "../helpers/fixtures.js";
 
 /** An in-memory engine with qmd's observable contract: every term must match as a prefix, hits carry a raw score and its qmd mapping, and `limit` is exact. */
-function fakeEngine(catalog: Catalog): Engine & { queries: string[][]; limits: number[] } {
+function fakeEngine(
+  catalog: Catalog,
+  options: { qmdLike?: boolean } = {},
+): Engine & { queries: string[][]; limits: number[] } {
   const texts = new Map<string, string[]>();
   for (const page of catalog.pages.values()) {
-    const text = renderDocument(deriveDocument(page)).toLowerCase();
+    // qmd indexes the path as a column of its own; the qmd-like engine adds its words and floors a term's
+    // weight when it is in at least half the pages, as SQLite's inverse document frequency does.
+    const prefix = options.qmdLike ? `${page.path} ` : "";
+    const text = `${prefix}${renderDocument(deriveDocument(page))}`.toLowerCase();
     texts.set(
       page.path,
       text.split(/[^\p{L}\p{N}-]+/u).filter((w) => w.length > 0),
     );
   }
+  const weight = (term: string): number => {
+    if (!options.qmdLike) return 1;
+    let df = 0;
+    for (const words of texts.values()) if (words.some((w) => w.startsWith(term))) df += 1;
+    return df * 2 >= texts.size ? 1e-6 : 1;
+  };
   const queries: string[][] = [];
   const limits: number[] = [];
   return {
@@ -32,6 +44,7 @@ function fakeEngine(catalog: Catalog): Engine & { queries: string[][]; limits: n
         removed: 0,
         skipped: 0,
         notIndexed: [],
+        collisions: [],
         encodedFolders: [],
       };
     },
@@ -45,7 +58,7 @@ function fakeEngine(catalog: Catalog): Engine & { queries: string[][]; limits: n
         for (const term of terms) {
           const n = words.filter((w) => w.startsWith(term)).length;
           if (n === 0) all = false;
-          bm25 += n;
+          bm25 += n * weight(term);
         }
         if (all && terms.length > 0) hits.push({ path, bm25, score: bm25 / (1 + bm25) });
       }
@@ -210,6 +223,7 @@ describe("search: ties at the engine's cut", () => {
           removed: 0,
           skipped: 0,
           notIndexed: [],
+          collisions: [],
           encodedFolders: [],
         };
       },
@@ -313,14 +327,16 @@ describe("search: the relaxed rung after the bite 3 build review", () => {
       NOW,
     ).catalog;
     expect(big.pages.size).toBe(520);
-    const r = await search(
-      big,
-      fakeEngine(big),
-      request("common word", { topic: "b", limit: 20 }),
-      NOW,
-    );
+    const engine = fakeEngine(big);
+    const r = await search(big, engine, request("common word", { topic: "b", limit: 20 }), NOW);
     expect(r.pool).toBe(500);
     expect(r.topicExhausted).toBe(true);
+    // The first rung widened to the cap (every page ties, so the tie check asks up to 501 rows). Each relaxed
+    // per-term query starts from `limit × 4` (+1 for the tie check), never from the widened pool.
+    expect(engine.limits).toContain(501);
+    const perTermAsks = engine.limits.filter((_, i) => engine.queries[i]?.length === 1);
+    expect(perTermAsks[0]).toBe(81);
+    expect(perTermAsks.filter((l) => l === 81)).toHaveLength(r.terms.length);
     const small = await search(
       big,
       fakeEngine(big),
@@ -328,5 +344,94 @@ describe("search: the relaxed rung after the bite 3 build review", () => {
       NOW,
     );
     expect(small.topicExhausted).toBe(false);
+  });
+});
+
+describe("search: frequency floor, limits and filters (bite 3 build review)", () => {
+  it("ignores a term at the engine's frequency floor on the relaxed rung and names it", async () => {
+    const withMd = await search(
+      base,
+      fakeEngine(base, { qmdLike: true }),
+      request("alpha zzzzunknown md", { includeStale: true }),
+      NOW,
+    );
+    const without = await search(
+      base,
+      fakeEngine(base, { qmdLike: true }),
+      request("alpha zzzzunknown", { includeStale: true }),
+      NOW,
+    );
+    expect(withMd.floored).toEqual(["md"]);
+    expect(withMd.strategy).toBe("relaxed");
+    expect(withMd.hits.map((h) => [h.path, h.termsMatched, h.score])).toEqual(
+      without.hits.map((h) => [h.path, h.termsMatched, h.score]),
+    );
+  });
+
+  it("clamps the limit to a whole number between one and twenty-five", async () => {
+    const engine = fakeEngine(base);
+    const big = await search(
+      base,
+      engine,
+      request("term", { limit: 1000, includeStale: true }),
+      NOW,
+    );
+    expect(big.pool).toBe(100);
+    const nan = await search(
+      base,
+      engine,
+      request("term", { limit: Number.NaN, includeStale: true }),
+      NOW,
+    );
+    expect(nan.hits.length).toBeLessThanOrEqual(1);
+    const half = await search(
+      base,
+      engine,
+      request("term", { limit: 2.5, includeStale: true }),
+      NOW,
+    );
+    expect(half.hits.length).toBeLessThanOrEqual(2);
+  });
+
+  it("counts a hit for a path the catalog does not hold as filtered out, and drops a relaxed hit under one percent of the best", async () => {
+    const paths = [...base.pages.keys()].sort();
+    const [p1, p2] = paths as [string, string];
+    const empty: IndexResult = {
+      documents: 0,
+      indexed: 0,
+      updated: 0,
+      unchanged: 0,
+      removed: 0,
+      skipped: 0,
+      notIndexed: [],
+      collisions: [],
+      encodedFolders: [],
+    };
+    const scripted: Engine = {
+      async index() {
+        return empty;
+      },
+      async lex(terms) {
+        if (terms.length !== 1) return [];
+        if (terms[0] === "alpha") return [{ path: p1, bm25: 100, score: 100 / 101 }];
+        if (terms[0] === "beta") return [{ path: p2, bm25: 0.5, score: 0.5 / 1.5 }];
+        if (terms[0] === "ghost") return [{ path: "nowhere/ghost.md", bm25: 3, score: 0.75 }];
+        return [];
+      },
+      async status() {
+        return { documents: 0 };
+      },
+      async close() {},
+    };
+    const floor = await search(base, scripted, request("alpha beta", { includeStale: true }), NOW);
+    expect(floor.hits.map((h) => h.path)).toEqual([p1]);
+    const unknown = await search(
+      base,
+      scripted,
+      request("ghost zzzz", { includeStale: true }),
+      NOW,
+    );
+    expect(unknown.hits).toEqual([]);
+    expect(unknown.filteredOut.unknown).toBe(1);
   });
 });

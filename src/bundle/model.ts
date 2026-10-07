@@ -86,6 +86,7 @@ export type DegradationCode =
   | "replacement-not-a-page"
   | "frontmatter-warning"
   | "reserved-frontmatter-unparseable"
+  | "reserved-unanalysed"
   | "okf-version-unknown";
 
 export interface Degradation {

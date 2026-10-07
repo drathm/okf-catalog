@@ -36,12 +36,20 @@ export interface CommandIo {
 
 const STATUSES = new Set<Status>(["draft", "stable", "deprecated"]);
 
-/** The clock: a fixed instant from OKF_CATALOG_NOW for deterministic runs, else now. */
+const CLOCK = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
+
+/** The clock: a fixed instant from OKF_CATALOG_NOW for deterministic runs, else now. The instant must carry its offset, or the host's time zone would decide it. */
 export function clockFrom(env: NodeJS.ProcessEnv): Date {
   const fixed = env.OKF_CATALOG_NOW;
   if (fixed === undefined || fixed.length === 0) return new Date();
+  if (!CLOCK.test(fixed)) {
+    throw new Error(
+      `OKF_CATALOG_NOW must be a datetime with an offset, such as 2026-10-06T12:00:00Z; got ${JSON.stringify(fixed)}`,
+    );
+  }
   const at = new Date(fixed);
-  if (Number.isNaN(at.getTime())) throw new Error(`OKF_CATALOG_NOW is not a datetime: ${fixed}`);
+  if (Number.isNaN(at.getTime()))
+    throw new Error(`OKF_CATALOG_NOW is not a valid datetime: ${fixed}`);
   return at;
 }
 
@@ -96,6 +104,21 @@ export function runCheck(argv: string[], io: CommandIo): number {
     .split(",")
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
+  if (admit.length === 0) {
+    io.stderr(`--admit needs at least one status\n${CHECK_USAGE}`);
+    return 2;
+  }
+  const types =
+    parsed.values.types === undefined
+      ? undefined
+      : String(parsed.values.types)
+          .split(",")
+          .map((s) => s.trim())
+          .filter((s) => s.length > 0);
+  if (types !== undefined && types.length === 0) {
+    io.stderr(`--types needs at least one type name\n${CHECK_USAGE}`);
+    return 2;
+  }
   if (folder === undefined || parsed.positionals.length !== 1) {
     io.stderr(`check takes exactly one bundle folder\n${CHECK_USAGE}`);
     return 2;
@@ -136,12 +159,16 @@ export function runCheck(argv: string[], io: CommandIo): number {
     hiddenPaths: walked.hidden,
     hiddenFolders: walked.hiddenFolders,
   };
-  if (parsed.values.types !== undefined)
-    options.types = String(parsed.values.types)
-      .split(",")
-      .map((s) => s.trim());
+  if (types !== undefined) options.types = types;
   if (walked.fatal !== undefined) options.walkFatal = walked.fatal;
-  const { report } = loadForCheck("check", walked.files, options, now);
+  let report: Report;
+  try {
+    report = loadForCheck("check", walked.files, options, now).report;
+  } catch (error) {
+    // Content problems never throw; this is the last resort for a defect, told apart from a refusal by its code.
+    io.stderr(`check failed on a defect, not on the bundle: ${(error as Error).message}\n`);
+    return 2;
+  }
   io.stdout(parsed.values.json === true ? reportToJson(report) : renderReport(report));
   return report.fatal !== undefined || report.refusals.length > 0 ? 1 : 0;
 }

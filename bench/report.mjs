@@ -124,7 +124,7 @@ out.push("| Comparison | first better | first worse | same |\n|---|---|---|---|"
 for (const [k, v] of Object.entries(S.paired))
   out.push(`| ${k} | ${v.better} | ${v.worse} | ${v.same} |`);
 out.push(
-  `\nReading. With keywords, the all-terms rung answers every question and relaxation never runs, so the two keyword rows are identical. With the question text, the all-terms rung alone puts the gold page first ${w(qs["hit@1"])} times in ${w(n)}; relaxation lifts that to ${w(qr["hit@1"])} at the top and ${w(qr["hit@3"])} in the top three, improving ${w(relaxP.better)} questions and worsening ${w(relaxP.worse)}. The paraphrase rows are the reservation in D7 made concrete: lexical search over a paraphrase finds the page at the top ${S.summary["question/relaxed"].paraphrase["hit@1"]} times in ${S.summary["question/relaxed"].paraphrase.n}. The topic filter changes ${w(topicP.better + topicP.worse)} questions (${w(topicP.better)} better, ${w(topicP.worse)} worse) and the type filter ${w(typeP.better + typeP.worse)} (${w(typeP.better)} better, ${w(typeP.worse)} worse); a relaxed pool of 100 changes ${w(poolP.better + poolP.worse)} (${w(poolP.better)} better, ${w(poolP.worse)} worse) against the first rung's pool of ${rows.find((r) => r.config === "question/relaxed")?.pool ?? "?"}.\n`,
+  `\nReading. With keywords, the all-terms rung puts the gold page in place for every question; relaxation only appends hits after the first rung's, so it cannot move a gold page the first rung found, and the two keyword rows are identical. For the same reason the relaxed-versus-strict pairing cannot show a loss: it measures what relaxation adds, not a trade. With the question text, the all-terms rung alone puts the gold page first ${w(qs["hit@1"])} times in ${w(n)}; relaxation lifts that to ${w(qr["hit@1"])} at the top and ${w(qr["hit@3"])} in the top three, improving ${w(relaxP.better)} questions and worsening ${w(relaxP.worse)}. The paraphrase rows are the reservation in D7 made concrete: lexical search over a paraphrase finds the page at the top ${S.summary["question/relaxed"].paraphrase["hit@1"]} times in ${S.summary["question/relaxed"].paraphrase.n}. The topic filter changes ${w(topicP.better + topicP.worse)} questions (${w(topicP.better)} better, ${w(topicP.worse)} worse) and the type filter ${w(typeP.better + typeP.worse)} (${w(typeP.better)} better, ${w(typeP.worse)} worse); a relaxed pool of 100 changes ${w(poolP.better + poolP.worse)} (${w(poolP.better)} better, ${w(poolP.worse)} worse) against the first rung's pool of ${rows.find((r) => r.config === "question/relaxed")?.pool ?? "?"}.\n`,
 );
 out.push("## Where the gold page was not first\n");
 out.push(
@@ -143,7 +143,7 @@ out.push(
 );
 out.push("## Determinism\n");
 out.push(
-  "The first two runs of this benchmark disagreed on one question (B25: rank 1, then a miss). Three fresh indexes of the same corpus answered it two ways. The cause is in qmd: its lexical query orders by `bm25_score` alone (`store.js`, `ORDER BY bm25_score ASC LIMIT ?`), rows with equal scores come back in insertion order, and insertion order follows `fastGlob`'s traversal, which is not sorted. A pool that cut inside a group of equal scores therefore depended on the index build. The search policy now completes the tie group at every engine cut: it asks for one row beyond the pool, and when that row ties with the cut it widens the request until a lower score is seen, the engine runs out, or the cap is reached (`lexComplete` in `src/search/search.ts`). After the change three consecutive runs produced byte-identical summaries and three fresh indexes agreed on every question and score.\n",
+  "The first two runs of this benchmark disagreed on one question (B25: rank 1, then a miss). Three fresh indexes of the same corpus answered it two ways. The cause is in qmd: its lexical query orders by `bm25_score` alone (`store.js`, `ORDER BY bm25_score ASC LIMIT ?`), rows with equal scores come back in insertion order, and insertion order follows `fastGlob`'s traversal, which is not sorted. A pool that cut inside a group of equal scores therefore depended on the index build. The search policy now completes the tie group at every engine cut: it asks for one row beyond the pool, and when that row ties with the cut it widens the request until a lower score is seen, the engine runs out, or the cap is reached (`lexComplete` in `src/search/search.ts`). After the change three consecutive runs produced identical ranks, scores and paired outcomes (only timings and sizes differ) and three fresh indexes agreed on every question and score.\n",
 );
 out.push("## Cost\n");
 out.push("| Measure | Value |\n|---|---|");
@@ -151,7 +151,9 @@ out.push(`| Index time, ${m.index.documents} pages | ${m.index.ms} ms |`);
 out.push(
   `| Database size, ${m.index.documents} pages | ${(m.index.dbBytes / 1024 / 1024).toFixed(1)} MiB |`,
 );
-out.push(`| Documents not indexed | ${m.index.notIndexed} |`);
+out.push(
+  `| Documents not indexed | ${m.index.notIndexed} (${m.index.collisions ?? 0} by path collision) |`,
+);
 out.push(
   `| Process RSS after the run | ${Math.round(m.memory.rssAfterBytes / 1024 / 1024)} MiB (walked files, catalog and qmd store all resident) |`,
 );
@@ -161,6 +163,16 @@ for (const [k, v] of byConfig)
   out.push(
     `| Query latency, ${k} | median ${median(v).toFixed(1)} ms, max ${Math.max(...v).toFixed(1)} ms |`,
   );
+const rowsBy = new Map();
+for (const r of rows) rowsBy.set(r.config, [...(rowsBy.get(r.config) ?? []), r.rowsFetched ?? 0]);
+for (const [k, v] of rowsBy)
+  out.push(
+    `| Rows fetched per search, ${k} | median ${median(v)}, max ${Math.max(...v)} (every row carries its page body) |`,
+  );
+const relaxedRows = rows.filter((r) => r.config === "question/relaxed");
+out.push(
+  `| Questions with a term at the frequency floor (question/relaxed) | ${relaxedRows.filter((r) => (r.floored ?? []).length > 0).length} of ${relaxedRows.length} |`,
+);
 out.push("\nFixtures, for the record (measured once on the same machine):\n");
 out.push("| Fixture | Pages | Index time | Database |\n|---|---|---|---|");
 out.push(

@@ -73,4 +73,23 @@ describe("okf-catalog check", () => {
     const report = JSON.parse(run.stdout) as { loadedAt: string };
     expect(report.loadedAt).toBe("2026-10-06T12:00:00.000Z");
   });
+
+  it("rejects a clock without an offset or in a loose format, naming the variable", async () => {
+    for (const bad of ["2026-10-06T12:00:00", "Tue Oct 06 2026", "2026-10-06"]) {
+      const run = await runCli(["check", join(FIXTURES, "spec-example")], {
+        env: { OKF_CATALOG_NOW: bad },
+      });
+      expect(run.code, bad).toBe(2);
+      expect(run.stderr, bad).toMatch(/OKF_CATALOG_NOW/);
+    }
+  });
+
+  it("refuses an empty --admit or --types list as a usage error", async () => {
+    const admit = await runCli(["check", join(FIXTURES, "spec-example"), "--admit", ""]);
+    expect(admit.code).toBe(2);
+    expect(admit.stderr).toMatch(/--admit/);
+    const types = await runCli(["check", join(FIXTURES, "spec-example"), "--types", ""]);
+    expect(types.code).toBe(2);
+    expect(types.stderr).toMatch(/--types/);
+  });
 });

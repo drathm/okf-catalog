@@ -4,6 +4,7 @@ import { decodeUtf8 } from "./frontmatter.js";
 import { generateIndex, type IndexPage, parseIndex } from "./index-file.js";
 import { type LinkIndex, resolveLink } from "./links.js";
 import { MANIFEST_NAME, type Manifest, parseManifest, verifyManifest } from "./manifest.js";
+import { ANALYSIS_BUDGET, analysisBounds } from "./markdown.js";
 import type {
   BundleFile,
   Degradation,
@@ -15,7 +16,7 @@ import type {
   ReservedFile,
 } from "./model.js";
 import { decideReplacement, parsePage } from "./page.js";
-import { byCodeUnit as byPath, folderOf, isSafeRelativePath } from "./paths.js";
+import { byCodeUnit, byCodeUnit as byPath, folderOf, isSafeRelativePath } from "./paths.js";
 import { parseReserved, reservedKind } from "./reserved.js";
 
 export interface LoadResult {
@@ -259,8 +260,31 @@ export function loadBundle(
   // A company's own index that lists pages which are not served is reported, since the catalog serves it as written.
   for (const index of reserved.values()) {
     if (index.kind !== "index") continue;
+    // An index past the analysis bounds is served as written but not read: its parse could take minutes.
+    const bound = index.body.length > ANALYSIS_BUDGET ? "size" : analysisBounds(index.body);
+    if (bound !== undefined) {
+      report.degradations.push({
+        path: index.path,
+        code: "reserved-unanalysed",
+        field: "body",
+        detail: `the index was not analysed (${bound} beyond the analysis bounds); it is served as written`,
+      });
+      continue;
+    }
+    let entries: ReturnType<typeof parseIndex>[number]["entries"];
+    try {
+      entries = parseIndex(index.body).flatMap((s) => s.entries);
+    } catch (error) {
+      report.degradations.push({
+        path: index.path,
+        code: "reserved-unanalysed",
+        field: "body",
+        detail: `the index could not be read: ${(error as Error).message}`,
+      });
+      continue;
+    }
     const unserved: string[] = [];
-    for (const entry of parseIndex(index.body).flatMap((s) => s.entries)) {
+    for (const entry of entries) {
       const resolved = resolveLink(entry.href, index.path, linkIndex);
       if (
         resolved.kind === "page" &&
@@ -344,5 +368,12 @@ export function loadBundle(
   };
   if (report.commit !== undefined) input.commit = report.commit;
   if (okfVersion !== undefined) input.okfVersion = okfVersion;
-  return { catalog: buildCatalog(input), report };
+  return { catalog: buildCatalog(input), report: ordered(report) };
+}
+
+/** Refusals and missing paths in path order, whatever order the walker or the manifest produced them in. */
+function ordered(report: Report): Report {
+  report.refusals.sort((a, b) => byCodeUnit(a.path, b.path) || byCodeUnit(a.rule, b.rule));
+  report.missingOnDisk.sort(byCodeUnit);
+  return report;
 }

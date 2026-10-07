@@ -36,3 +36,29 @@ describe("readBody: safety (review round 2)", () => {
     expect(facts.firstSentence).toBe("Hello world.");
   });
 });
+
+describe("readBody: safety (bite 3 build review)", () => {
+  it("leaves a body of thousands of emphasis delimiter runs unanalysed instead of parsing it", () => {
+    const body = `${"*a ".repeat(4000)}x${" a*".repeat(4000)}\n`;
+    const started = performance.now();
+    const facts = readBody(body);
+    expect(performance.now() - started).toBeLessThan(300);
+    expect(facts.unanalysed).toBe(true);
+  });
+
+  it("leaves a body of thousands of link definitions unanalysed instead of parsing it", () => {
+    const body = `${Array.from({ length: 3000 }, (_, i) => `[d${i}]: /x${i}.md`).join("\n")}\n`;
+    const started = performance.now();
+    const facts = readBody(body);
+    expect(performance.now() - started).toBeLessThan(300);
+    expect(facts.unanalysed).toBe(true);
+  });
+
+  it("still analyses an ordinary page with emphasis, identifiers and a few definitions", () => {
+    const facts = readBody(
+      "Some *emphasis*, **strong** text and snake_case_names_with_many_underscores.\n\n[a]: /a.md\n[b]: /b.md\n\nSee [a][a].\n",
+    );
+    expect(facts.unanalysed).toBe(false);
+    expect(facts.links.map((l) => l.url)).toEqual(["/a.md"]);
+  });
+});

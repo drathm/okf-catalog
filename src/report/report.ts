@@ -2,6 +2,12 @@ import type { Report } from "../bundle/model.js";
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+/** Control, delete and bidirectional-override characters written as escapes, so a name cannot forge or hide a line. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: finding them is the point
+const UNSAFE = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g;
+const safe = (line: string): string =>
+  line.replace(UNSAFE, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`);
+
 /** The report as text for `status` and `check`: the fatal refusal first when there is one, then counts, then detail. */
 export function renderReport(report: Report): string {
   const lines: string[] = [];
@@ -48,5 +54,5 @@ export function renderReport(report: Report): string {
       `Folders without an index (generated): ${report.foldersWithoutIndex.map((f) => f || "(root)").join(", ")}`,
     );
   }
-  return `${lines.join("\n")}\n`;
+  return `${lines.map(safe).join("\n")}\n`;
 }

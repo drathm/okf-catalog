@@ -1,4 +1,12 @@
-import { existsSync, mkdtempSync, readdirSync, readlinkSync, rmSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readlinkSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createStore } from "@tobilu/qmd";
@@ -175,7 +183,7 @@ describe("QmdEngine: directories, generations and other companies (bite 3 build 
       const r = await e.index([note("a.md", "Alpha", "alpha body text")]);
       expect(r.documents).toBe(1);
       expect(r.notIndexed).toEqual([]);
-      expect(readlinkSync(join("cache", "rel", "derived"))).toMatch(/^gen-\d+-1$/);
+      expect(readlinkSync(join("cache", "rel", "derived"))).toMatch(/^gen-\d+-\d+-1$/);
       expect((await e.lex(["alpha"], 5))[0]?.path).toBe("a.md");
       await e.close();
     } finally {
@@ -261,5 +269,69 @@ describe("QmdEngine: directories, generations and other companies (bite 3 build 
       }
       expect(hit.score, hit.path).toBeCloseTo(sum, 6);
     }
+  });
+});
+
+describe("QmdEngine: collisions, odd names and housekeeping (bite 3 build review)", () => {
+  const note = (path: string, title: string, body: string): DerivedDocument => ({
+    path,
+    title,
+    type: "Note",
+    tags: [],
+    metadata: {},
+    body,
+  });
+
+  it("keeps one page when two paths collide by case or Unicode form, and names what it dropped", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "okf-catalog-collide-"));
+    const e = await QmdEngine.open({ company: "col", dir });
+    const r = await e.index([
+      note("notes/alpha.md", "Lower", "kumquat only"),
+      note("notes/Alpha.md", "Upper", "pineapple only"),
+      note("caf\u00e9.md", "Composed", "lychee only"),
+      note("cafe\u0301.md", "Decomposed", "durian only"),
+    ]);
+    expect(r.documents).toBe(2);
+    expect(r.collisions).toEqual([
+      { kept: "cafe\u0301.md", dropped: "caf\u00e9.md" },
+      { kept: "notes/Alpha.md", dropped: "notes/alpha.md" },
+    ]);
+    expect(r.notIndexed).toEqual(["caf\u00e9.md", "notes/alpha.md"]);
+    expect((await e.lex(["pineapple"], 5)).map((h) => h.path)).toEqual(["notes/Alpha.md"]);
+    expect(await e.lex(["kumquat"], 5)).toEqual([]);
+    await e.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("indexes a name qmd would read as a drive letter, and reports a name the file system cannot hold instead of failing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "okf-catalog-names-"));
+    const e = await QmdEngine.open({ company: "nm", dir });
+    const tooLong = `_${"a".repeat(251)}.md`;
+    const r = await e.index([
+      note("Q:A.md", "Colon", "citrus only"),
+      note(tooLong, "Long", "mango only"),
+      note("plain.md", "Plain", "papaya only"),
+    ]);
+    expect(r.notIndexed).toEqual([tooLong]);
+    expect(r.documents).toBe(2);
+    expect((await e.lex(["citrus"], 5)).map((h) => h.path)).toEqual(["Q:A.md"]);
+    await e.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("names generations by time, process and sequence, and clears stale links and orphan generations on open", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "okf-catalog-gc-"));
+    mkdirSync(join(dir, "gen-1-1-1"));
+    symlinkSync("gen-nowhere", join(dir, "derived.tmp-7"));
+    const e = await QmdEngine.open({ company: "gc", dir });
+    expect(
+      readdirSync(dir).filter((n) => n.startsWith("gen-") || n.startsWith("derived.tmp-")),
+    ).toEqual([]);
+    await e.index([note("a.md", "A", "x")]);
+    const gens = readdirSync(dir).filter((n) => n.startsWith("gen-"));
+    expect(gens).toHaveLength(1);
+    expect(gens[0]).toMatch(new RegExp(`^gen-\\d+-${process.pid}-1$`));
+    await e.close();
+    rmSync(dir, { recursive: true, force: true });
   });
 });

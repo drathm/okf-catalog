@@ -14,12 +14,27 @@ export const STOPWORDS: ReadonlySet<string> = new Set(
     "some such no not only own same too very just also ever never here there now again further once " +
     "am is are was were be been being have has had having do does did doing done will would shall should can could " +
     "may might must ought get got gets getting give gives tell tells show shows let lets please thanks " +
-    "something anything nothing everything someone anyone"
+    "something anything nothing everything someone anyone " +
+    // Residues of English contractions, in case one arrives on its own (`re: budget`).
+    "ve re ll don doesn didn isn aren wasn weren hasn haven hadn wouldn shouldn couldn mustn"
   ).split(/\s+/),
 );
 
 const MAX_TERMS = 12;
-const TOKEN = /^[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*$/u;
+const TOKEN = /^[\p{L}\p{N}\p{M}]+(?:-[\p{L}\p{N}\p{M}]+)*$/u;
+const IRREGULAR_CONTRACTIONS: Record<string, string> = {
+  "can't": "can",
+  "won't": "will",
+  "shan't": "shall",
+};
+
+/** `don't` becomes `do`, `we've` becomes `we`: the residue of a contraction must never become a content term. */
+function uncontract(word: string): string {
+  const plain = word.replace(/’/g, "'");
+  const irregular = IRREGULAR_CONTRACTIONS[plain];
+  if (irregular !== undefined) return irregular;
+  return plain.replace(/n't$/, "").replace(/'(s|re|ve|ll|d|m)$/, "");
+}
 const CJK = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 const CJK_RUN =
   /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+|[^\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]+/gu;
@@ -36,10 +51,15 @@ function pairs(run: string): string[] {
  * Lower-cased content tokens in question order; CJK runs become overlapping pairs; nothing shorter than two code
  * points. A run of two or more hyphens separates tokens like any other punctuation. Digits are split exactly as
  * the engine's tokenizer splits them, so `1,000` becomes `1` (dropped) and `000`, which is what the index holds.
+ * Combining marks stay with their letters, as the engine keeps them. English contractions lose their suffix.
  */
 export function tokenize(question: string): string[] {
   const tokens: string[] = [];
-  for (const raw of question.toLowerCase().split(/[^\p{L}\p{N}-]+|-{2,}/u)) {
+  const words = question
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}\p{M}'’-]+|-{2,}/u)
+    .flatMap((raw) => uncontract(raw.replace(/^['’]+|['’]+$/g, "")).split(/['’]+/));
+  for (const raw of words) {
     const trimmed = raw.replace(/^-+|-+$/g, "");
     if (trimmed.length === 0) continue;
     if (CJK.test(trimmed)) {

@@ -1,7 +1,8 @@
 import {
-  existsSync,
+  lstatSync,
   mkdirSync,
   readdirSync,
+  readlinkSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -25,15 +26,22 @@ export interface QmdEngineOptions {
 
 const LINK = "derived";
 const DB = "index.sqlite";
+const GENERATION = /^gen-\d+-\d+-\d+$/;
+const TEMP_LINK = /^derived\.tmp-\d+$/;
+
+/** The name two paths share once case and Unicode form are ignored, which is what a case-insensitive file system sees. */
+const collisionKey = (encoded: string): string => encoded.normalize("NFC").toLowerCase();
 
 /**
  * The qmd adapter. Each `index` writes a new generation folder, flips the `derived` link to it (by base name,
  * with `symlink` then `rename`, so there is never a moment without a live folder and the link holds wherever
  * the directory is mounted), runs qmd's `update()` on the linked folder, compares qmd's count for this
  * collection with what was written, names any gap, and only then removes the older generations. Paths go
- * through the codec so a folder qmd would skip, or a name it mangles, still round-trips. One process owns a
- * directory: `open()` rebuilds a store that holds another collection's rows, and `index()` refuses to run twice
- * at once; the per-company lock that keeps two processes apart is the composition layer's (decision D32).
+ * through the codec so a folder qmd would skip, or a name it mangles, still round-trips; two paths that would
+ * be one file on a case-insensitive disk are a collision everywhere, and only the first by path order is
+ * written. One process owns a directory: `open()` rebuilds a store that holds another collection's rows and
+ * clears what an earlier run left behind, and `index()` refuses to run twice at once; the per-company lock that
+ * keeps two processes apart is the composition layer's (decision D32).
  */
 export class QmdEngine implements Engine {
   private generation = 0;
@@ -57,6 +65,7 @@ export class QmdEngine implements Engine {
     }
     const dir = resolve(options.dir);
     mkdirSync(dir, { recursive: true });
+    QmdEngine.clearLeftovers(dir);
     const config = {
       collections: { [options.company]: { path: join(dir, LINK), pattern: "**/*.md" } },
     };
@@ -76,6 +85,21 @@ export class QmdEngine implements Engine {
     return new QmdEngine(store, { ...options, dir }, reset);
   }
 
+  /** Temporary links a crash left behind, and generation folders the live link does not name, are removed. */
+  private static clearLeftovers(dir: string): void {
+    let live: string | undefined;
+    try {
+      live = readlinkSync(join(dir, LINK));
+    } catch {
+      live = undefined;
+    }
+    for (const name of readdirSync(dir)) {
+      if (TEMP_LINK.test(name) || (GENERATION.test(name) && name !== live)) {
+        rmSync(join(dir, name), { recursive: true, force: true });
+      }
+    }
+  }
+
   async index(docs: readonly DerivedDocument[]): Promise<IndexResult> {
     if (this.indexing) {
       throw new Error(
@@ -93,26 +117,45 @@ export class QmdEngine implements Engine {
         }
       }
       this.generation += 1;
-      const genName = `gen-${Date.now()}-${this.generation}`;
+      const genName = `gen-${Date.now()}-${process.pid}-${this.generation}`;
       const gen = join(this.options.dir, genName);
+      mkdirSync(gen, { recursive: true });
       const encodedFolders = new Set<string>();
       const written = new Set<string>();
-      for (const doc of docs) {
+      const notIndexed = new Set<string>();
+      const collisions: IndexResult["collisions"] = [];
+      const seen = new Map<string, string>();
+      for (const doc of [...docs].sort((a, b) => byCodeUnit(a.path, b.path))) {
         const encoded = encodePath(doc.path);
+        const key = collisionKey(encoded);
+        const kept = seen.get(key);
+        if (kept !== undefined) {
+          collisions.push({ kept, dropped: doc.path });
+          notIndexed.add(doc.path);
+          continue;
+        }
+        seen.set(key, doc.path);
         const folder = folderOf(doc.path);
         if (folder !== "" && encodePath(folder) !== folder) encodedFolders.add(folder);
         const target = join(gen, encoded);
-        mkdirSync(dirname(target), { recursive: true });
-        writeFileSync(
-          target,
-          renderDocument(doc, { metadataBlock: this.options.renderMetadataBlock === true }),
-        );
+        try {
+          mkdirSync(dirname(target), { recursive: true });
+          writeFileSync(
+            target,
+            renderDocument(doc, { metadataBlock: this.options.renderMetadataBlock === true }),
+          );
+        } catch {
+          // A name the file system cannot hold (too long once encoded, for one) costs that page, not the index.
+          notIndexed.add(doc.path);
+          continue;
+        }
         written.add(doc.path);
       }
-      if (docs.length === 0) mkdirSync(gen, { recursive: true });
-      if (!existsSync(gen) || written.size !== docs.length) {
+      // What is on disk is what qmd will see: count it before handing the folder over.
+      const onDisk = countFiles(gen);
+      if (onDisk !== written.size) {
         throw new Error(
-          `the generation folder does not hold every rendered document (${written.size} of ${docs.length})`,
+          `the generation folder holds ${onDisk} files for ${written.size} rendered documents`,
         );
       }
       // Flip the link: a new link under a temporary name, then an atomic rename over the live one.
@@ -122,20 +165,19 @@ export class QmdEngine implements Engine {
       renameSync(tmp, join(this.options.dir, LINK));
       const update = await this.store.update();
       const documents = await this.ownCount();
-      const notIndexed: string[] = [];
-      if (documents !== docs.length) {
+      if (documents !== written.size) {
         const listed = await this.store.multiGet(`${this.options.company}/**`);
         const indexed = new Set(
           listed.docs
             .map((d) => this.decode(d.doc.displayPath))
             .filter((p): p is string => p !== undefined),
         );
-        for (const doc of docs) if (!indexed.has(doc.path)) notIndexed.push(doc.path);
+        for (const path of written) if (!indexed.has(path)) notIndexed.add(path);
       }
       // Only now, with the new index in place, remove the older generations; a failure above leaves them behind
       // for the next run to clear, and the live link never names a folder that is gone.
       for (const name of readdirSync(this.options.dir)) {
-        if (name.startsWith("gen-") && name !== genName) {
+        if (GENERATION.test(name) && name !== genName) {
           rmSync(join(this.options.dir, name), { recursive: true, force: true });
         }
       }
@@ -146,7 +188,8 @@ export class QmdEngine implements Engine {
         unchanged: update.unchanged,
         removed: update.removed,
         skipped: update.skipped,
-        notIndexed: notIndexed.sort(byCodeUnit),
+        notIndexed: [...notIndexed].sort(byCodeUnit),
+        collisions: collisions.sort((a, b) => byCodeUnit(a.kept, b.kept)),
         encodedFolders: [...encodedFolders].sort(byCodeUnit),
       };
     } finally {
@@ -187,4 +230,20 @@ export class QmdEngine implements Engine {
     if (slash === -1 || displayPath.slice(0, slash) !== this.options.company) return undefined;
     return decodePath(displayPath.slice(slash + 1));
   }
+}
+
+/** Regular files under a folder, counted without following links. */
+function countFiles(root: string): number {
+  let count = 0;
+  const pending = [root];
+  while (pending.length > 0) {
+    const dir = pending.pop() as string;
+    for (const entry of readdirSync(dir)) {
+      const path = join(dir, entry);
+      const stat = lstatSync(path);
+      if (stat.isDirectory()) pending.push(path);
+      else if (stat.isFile()) count += 1;
+    }
+  }
+  return count;
 }

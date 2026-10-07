@@ -20,9 +20,41 @@ export interface BodyFacts {
 }
 
 const SENTENCE_CAP = 200;
-const ANALYSIS_BUDGET = 256 * 1024;
+export const ANALYSIS_BUDGET = 256 * 1024;
 const MAX_NESTING = 256;
+const MAX_EMPHASIS_RUNS = 2000;
+const MAX_DEFINITIONS = 1000;
 const SCRIPT_LIKE = /<\s*\/?\s*(script|style|iframe)\b/i;
+const DELIMITER_RUN = /[*_]+/g;
+const DEFINITION_LINE = /^ {0,3}\[[^\]]{1,999}\]:/;
+
+/** An emphasis delimiter run that could open or close: one not wedged between two word characters. */
+function isFlankingRun(text: string, start: number, end: number): boolean {
+  const before = start === 0 ? " " : (text[start - 1] ?? " ");
+  const after = end >= text.length ? " " : (text[end] ?? " ");
+  const wordy = (c: string): boolean => /[\p{L}\p{N}]/u.test(c);
+  return !(wordy(before) && wordy(after));
+}
+
+/**
+ * Why a body must not be parsed, or `undefined` when it may be. The parser's cost grows with the square of the
+ * number of emphasis delimiter runs and of link reference definitions, and its stack with nesting depth, so
+ * each is counted before any parse. The counts are deterministic and cheap.
+ */
+export function analysisBounds(text: string): "nesting" | "emphasis" | "definitions" | undefined {
+  if (nestingDepth(text) > MAX_NESTING) return "nesting";
+  let runs = 0;
+  for (const match of text.matchAll(DELIMITER_RUN)) {
+    if (isFlankingRun(text, match.index, match.index + match[0].length)) runs += 1;
+    if (runs > MAX_EMPHASIS_RUNS) return "emphasis";
+  }
+  let definitions = 0;
+  for (const line of text.split("\n")) {
+    if (DEFINITION_LINE.test(line)) definitions += 1;
+    if (definitions > MAX_DEFINITIONS) return "definitions";
+  }
+  return undefined;
+}
 
 /** The deepest run of block-quote markers or unclosed brackets, measured before any parse so the bound is deterministic. */
 export function nestingDepth(body: string): number {
@@ -83,7 +115,7 @@ const EMPTY: Omit<BodyFacts, "unanalysed" | "truncated"> = {
 export function readBody(body: string): BodyFacts {
   const truncated = body.length > ANALYSIS_BUDGET;
   const text = truncated ? body.slice(0, ANALYSIS_BUDGET) : body;
-  if (nestingDepth(text) > MAX_NESTING)
+  if (analysisBounds(text) !== undefined)
     return { ...EMPTY, links: [], footnoteReferences: [], unanalysed: true, truncated };
   const tree = fromMarkdown(text, {
     extensions: [gfmFootnote(), gfmTable()],

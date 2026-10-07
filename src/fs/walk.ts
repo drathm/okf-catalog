@@ -55,6 +55,21 @@ export function walkBundle(root: string, caps: Caps): WalkResult {
   while (pending.length > 0) {
     const relDir = pending.pop() as string;
     const absDir = relDir === "" ? realRoot : join(realRoot, relDir);
+    if (relDir !== "") {
+      // Checked when it was listed as an entry; checked again here, right before it is read, to narrow the
+      // window in which a folder swapped for a link could be followed.
+      let real: string;
+      try {
+        real = realpathSync(absDir);
+      } catch (error) {
+        refuse(relDir, "unreadable", `${errorCode(error)}: the folder could not be resolved`);
+        continue;
+      }
+      if (real !== absDir) {
+        refuse(relDir, "path-escape", "the folder changed under the walk");
+        continue;
+      }
+    }
     let listed: Dirent[];
     try {
       listed = readdirSync(absDir, { withFileTypes: true });

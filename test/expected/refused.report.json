@@ -5,10 +5,10 @@
   "admitted": 1,
   "excludedByStatus": 0,
   "attachments": 0,
-  "hidden": 0,
+  "hidden": 1,
   "refusals": [
     {
-      "path": ".qmd/index.yml",
+      "path": ".qmd",
       "rule": "engine-config",
       "detail": "the search engine's own configuration has no place in a bundle"
     },

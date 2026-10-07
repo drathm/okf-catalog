@@ -47,6 +47,8 @@ describe("path codec", () => {
       ["dists/a.md", "dists/a.md"],
       ["a\\b.md", "a%5Cb.md"],
       ["x%y.md", "x%25y.md"],
+      ["Q:A.md", "Q%3AA.md"],
+      ["notes/C:/page.md", "notes/C%3A/page.md"],
     ];
     for (const [plain, encoded] of cases) {
       expect(encodePath(plain), plain).toBe(encoded);

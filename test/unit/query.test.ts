@@ -83,3 +83,20 @@ describe("tokenize and normaliseQuestion: after the bite 3 build review", () => 
     expect(r.dropped).toEqual(["nu", "xi"]);
   });
 });
+
+describe("tokenize: scripts and contractions (bite 3 build review)", () => {
+  it("keeps a word with combining marks whole, as the engine's tokenizer does", () => {
+    expect(tokenize("हिन्दी भाषा")).toEqual(["हिन्दी", "भाषा"]);
+  });
+
+  it("strips English contractions so their residue cannot become a content term", () => {
+    expect(
+      tokenize("We've used it; don't, can't, won't, it's, I'm, they'll, you're, he'd"),
+    ).toEqual(["we", "used", "it", "do", "can", "will", "it", "they", "you", "he"]);
+    expect(tokenize("don’t")).toEqual(["do"]);
+  });
+
+  it("treats contraction residues as stopwords when they arrive on their own", () => {
+    expect(normaliseQuestion("re ve ll budget").terms).toEqual(["budget"]);
+  });
+});

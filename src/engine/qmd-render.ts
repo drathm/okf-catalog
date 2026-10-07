@@ -38,14 +38,15 @@ export function renderDocument(
   return `---\n${stringify({ qmd: { metadata: doc.metadata } })}---\n${body}`;
 }
 
+/** `%`, `\` and `:` are percent-encoded: qmd splits on the backslash and reads a leading `X:` as a Windows drive. */
 function encodeSegment(segment: string): string {
-  const escaped = segment.replace(/%/g, "%25").replace(/\\/g, "%5C");
+  const escaped = segment.replace(/%/g, "%25").replace(/\\/g, "%5C").replace(/:/g, "%3A");
   return SKIPPED_SEGMENTS.has(escaped) || escaped.startsWith("_") ? `_${escaped}` : escaped;
 }
 
 function decodeSegment(segment: string): string {
   const unprefixed = segment.startsWith("_") ? segment.slice(1) : segment;
-  return unprefixed.replace(/%5C/g, "\\").replace(/%25/g, "%");
+  return unprefixed.replace(/%3A/g, ":").replace(/%5C/g, "\\").replace(/%25/g, "%");
 }
 
 /** A bundle path as it is written into the generation tree. */

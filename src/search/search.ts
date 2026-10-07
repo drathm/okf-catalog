@@ -29,9 +29,10 @@ export interface SearchHit {
   staleAfter?: string;
   overdue: boolean;
   replacement?: PagePath;
-  /** Raw BM25, on one scale for both rungs. */
+  /** Raw BM25. On the all-terms rung it includes the type and topic tokens once; on the relaxed rung it is the sum of the content terms' scores. */
   score: number;
   rung: Rung;
+  /** Relaxed rung only: how many informative terms list this page among their best matches (their per-term pool). The first sort key; a term the page holds outside that pool does not count. */
   termsMatched?: number;
 }
 
@@ -42,19 +43,27 @@ export interface SearchResponse {
   reason?: "no-content-terms";
   terms: string[];
   dropped: string[];
+  /** Terms the relaxed rung ignored because the engine scores them at its frequency floor (present in at least half the pages). */
+  floored: string[];
   /** Distinct engine hits examined across every query. */
   considered: number;
   /** Distinct pages the filters removed, per reason. */
   filteredOut: { type: number; topic: number; stale: number; unknown: number };
   /** The pool size the first rung ended with. */
   pool: number;
+  /** Engine queries made and rows they returned, for cost accounting: every row carries its page body. */
+  engineQueries: number;
+  rowsFetched: number;
   /** A topic filter was set, the pool reached its cap, and the answer is still short: the topic may hold more. */
   topicExhausted: boolean;
 }
 
 const POOL_FACTOR = 4;
 const POOL_CAP = 500;
+const LIMIT_CAP = 25;
 const RELAXED_FLOOR = 0.01;
+/** Below this, a term's best BM25 is SQLite's floored inverse document frequency: the term is in at least half the pages. */
+const FREQUENCY_FLOOR = 1e-3;
 const TIE = 1e-9;
 const TRUST_RANK: Record<Trust, number> = {
   "human-reviewed": 0,
@@ -86,6 +95,11 @@ interface CompletedPool {
   exhausted: boolean;
 }
 
+interface QueryCost {
+  queries: number;
+  rows: number;
+}
+
 /**
  * Asks the engine for `pool` rows and completes the tie group at the cut. qmd orders equal scores by insertion
  * order, which differs from one index build to the next, so a pool that cuts inside a group of equal scores
@@ -98,10 +112,13 @@ async function lexComplete(
   engine: Engine,
   terms: readonly string[],
   pool: number,
+  cost: QueryCost,
 ): Promise<CompletedPool> {
   let ask = pool + 1;
   for (;;) {
     const rows = await engine.lex(terms, ask);
+    cost.queries += 1;
+    cost.rows += rows.length;
     if (rows.length <= pool) return { hits: rows, exhausted: true };
     const cut = (rows[pool - 1] as EngineHit).bm25;
     let end = pool;
@@ -128,7 +145,9 @@ export async function search(
   now: Date,
 ): Promise<SearchResponse> {
   const { terms, dropped } = normaliseQuestion(request.question);
-  const limit = Math.max(1, request.limit);
+  const limit = Number.isFinite(request.limit)
+    ? Math.min(LIMIT_CAP, Math.max(1, Math.floor(request.limit)))
+    : 1;
   const removed = {
     type: new Set<PagePath>(),
     topic: new Set<PagePath>(),
@@ -148,12 +167,16 @@ export async function search(
       reason: "no-content-terms",
       terms,
       dropped,
+      floored: [],
       considered: 0,
       filteredOut: filteredOut(),
       pool: 0,
+      engineQueries: 0,
+      rowsFetched: 0,
       topicExhausted: false,
     };
   }
+  const cost: QueryCost = { queries: 0, rows: 0 };
   const prefix = topicPrefix(request.topic);
   const wantedType = request.type?.trim().toLowerCase();
   const extra = [
@@ -186,10 +209,15 @@ export async function search(
   };
 
   // First rung: all terms, widening while short and the engine still had more to give.
-  let pool = limit * POOL_FACTOR;
+  let pool = Math.min(limit * POOL_FACTOR, POOL_CAP);
   let first: Candidate[] = [];
   for (;;) {
-    const { hits: engineHits, exhausted } = await lexComplete(engine, [...terms, ...extra], pool);
+    const { hits: engineHits, exhausted } = await lexComplete(
+      engine,
+      [...terms, ...extra],
+      pool,
+      cost,
+    );
     first = [];
     for (const hit of engineHits) {
       const page = admit(hit);
@@ -206,12 +234,22 @@ export async function search(
   // Relaxed rung: one query per content term, fused by summed BM25, ranked by terms matched then by the sum.
   // The type and topic tokens stay out of these queries: BM25 adds up across terms, so a token present in every
   // candidate would be added once per matched term and move the order within a bucket. The filters still apply.
+  // The per-term pool is `limit × 4`, not the widened pool: every row carries its page body, and twelve terms
+  // at the cap would materialise thousands of them. A term the engine scores at its frequency floor is in at
+  // least half the pages and says nothing about which; it is skipped and named, so the company's own name in
+  // every path cannot vote.
+  const floored: string[] = [];
   if (request.relax !== false && hits.length < limit && terms.length > 1) {
-    const relaxedPool = Math.max(1, Math.min(request.relaxedPool ?? pool, POOL_CAP));
+    const relaxedPool = Math.max(1, Math.min(request.relaxedPool ?? limit * POOL_FACTOR, POOL_CAP));
     const taken = new Set(hits.map((h) => h.path));
     const fused = new Map<PagePath, Candidate>();
     for (const term of terms) {
-      for (const hit of (await lexComplete(engine, [term], relaxedPool)).hits) {
+      const rows = (await lexComplete(engine, [term], relaxedPool, cost)).hits;
+      if (rows.length > 0 && (rows[0] as EngineHit).bm25 < FREQUENCY_FLOOR) {
+        floored.push(term);
+        continue;
+      }
+      for (const hit of rows) {
         if (taken.has(hit.path)) continue;
         const page = admit(hit);
         if (page === undefined) continue;
@@ -237,9 +275,12 @@ export async function search(
     strategy,
     terms,
     dropped,
+    floored,
     considered: considered.size,
     filteredOut: filteredOut(),
     pool,
+    engineQueries: cost.queries,
+    rowsFetched: cost.rows,
     topicExhausted: prefix !== undefined && pool >= POOL_CAP && hits.length < limit,
   };
 }
