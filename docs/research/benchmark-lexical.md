@@ -1,6 +1,6 @@
 # Lexical benchmark, bite 3
 
-Run 2026-10-07 on darwin arm64, Node v24.15.0, qmd 2.8.3, okf-catalog commit `72b71de` (clean tree). Reproduce with `sh bench/fetch-corpus.sh`, `npm run build`, `node bench/run.mjs`, then `node bench/report.mjs` to regenerate this note. The run writes one JSON line per question per configuration and a summary under `bench/results/` (gitignored).
+Run 2026-10-07 on darwin arm64, Node v24.15.0, qmd 2.8.3, okf-catalog commit `93754af` with uncommitted changes (diff hash `6d0f10a15ae0`). Reproduce with `sh bench/fetch-corpus.sh`, `npm run build`, `node bench/run.mjs`, then `node bench/report.mjs` to regenerate this note. The run writes one JSON line per question per configuration and a summary under `bench/results/` (gitignored).
 
 ## Why
 
@@ -21,7 +21,7 @@ The walker found 757 files; with drafts admitted and integrity off, 736 pages we
 
 ## Method
 
-Every question runs in eight configurations: the question text or its keyword form with the relaxed rung on or off; the question text with the gold page's own folder as the topic filter, with its type as the type filter, and with a relaxed per-term pool of 100 instead of the first rung's pool; and the question text through the ladder twenty deep, cut to five for the rank (`question/relaxed@20`, the control for the fusion mode of the modes note, since the ladder's pools grow with its limit). `limit` is 5, overdue pages are included, and the clock is pinned to 2026-10-06T12:00:00.000Z. The gold page's rank in the five hits gives hit@1, hit@3 and MRR@5 (a miss contributes 0). The paired tables count, per question, whether the first configuration moved the gold page's rank up, down or not at all against the second; a miss ranks as 99. The filter configurations use the gold page's own folder and type, which a real caller does not know; they measure what the filters do to the ranking (D25), not how often a caller would guess them.
+Every question runs in 11 configurations: the question text or its keyword form with the relaxed rung on or off; the question text with the gold page's own folder as the topic filter, with its type as the type filter, and with a relaxed per-term pool of 100 instead of the first rung's pool; the question text through the ladder twenty deep, cut to five for the rank (`question/relaxed@20`, the control for the fusion mode of the modes note and for the re-ranked question list, since the ladder's pools grow with its limit); the keyword form twenty deep (`keywords/relaxed@20`, the control for the re-ranked keyword list); and both forms at the production limit of eight, cut to five (`@8`). `limit` is 5, overdue pages are included, and the clock is pinned to 2026-10-06T12:00:00.000Z. The gold page's rank in the five hits gives hit@1, hit@3 and MRR@5 (a miss contributes 0). The paired tables count, per question, whether the first configuration moved the gold page's rank up, down or not at all against the second; a miss ranks as 99. The filter configurations use the gold page's own folder and type, which a real caller does not know; they measure what the filters do to the ranking (D25), not how often a caller would guess them.
 
 ## Results
 
@@ -154,21 +154,21 @@ The first two runs of this benchmark disagreed on one question (B25: rank 1, the
 
 | Measure | Value |
 |---|---|
-| Index time, 736 pages | 708 ms |
-| Database size, 736 pages | 10.8 MiB |
+| Index time, 736 pages | 696 ms |
+| Database size, 736 pages | 10.7 MiB |
 | Documents not indexed | 0 (0 by path collision) |
-| Process RSS after the run | 258 MiB (walked files, catalog and qmd store all resident) |
-| Query latency, question/relaxed | median 10.0 ms, max 27.9 ms |
-| Query latency, question/strict | median 0.4 ms, max 1.5 ms |
-| Query latency, keywords/relaxed | median 2.3 ms, max 11.3 ms |
-| Query latency, keywords/strict | median 0.3 ms, max 1.1 ms |
-| Query latency, question/relaxed+topic | median 10.8 ms, max 24.6 ms |
-| Query latency, question/relaxed+type | median 10.8 ms, max 26.6 ms |
-| Query latency, question/relaxed+pool100 | median 40.8 ms, max 105.7 ms |
-| Query latency, question/relaxed@20 | median 44.5 ms, max 132.4 ms |
-| Query latency, keywords/relaxed@20 | median 12.3 ms, max 43.6 ms |
-| Query latency, question/relaxed@8 | median 17.7 ms, max 36.1 ms |
-| Query latency, keywords/relaxed@8 | median 5.1 ms, max 16.7 ms |
+| Process RSS after the lexical phase | 1340 MiB (walked files, catalog and qmd store resident; 1859 MiB at the end, with the store closed) |
+| Query latency, question/relaxed | median 11.7 ms, max 27.6 ms |
+| Query latency, question/strict | median 0.4 ms, max 1.6 ms |
+| Query latency, keywords/relaxed | median 2.4 ms, max 11.3 ms |
+| Query latency, keywords/strict | median 0.3 ms, max 1.5 ms |
+| Query latency, question/relaxed+topic | median 11.9 ms, max 27.9 ms |
+| Query latency, question/relaxed+type | median 10.1 ms, max 23.7 ms |
+| Query latency, question/relaxed+pool100 | median 43.9 ms, max 100.7 ms |
+| Query latency, question/relaxed@20 | median 45.0 ms, max 79.7 ms |
+| Query latency, keywords/relaxed@20 | median 13.2 ms, max 42.3 ms |
+| Query latency, question/relaxed@8 | median 17.8 ms, max 47.6 ms |
+| Query latency, keywords/relaxed@8 | median 4.5 ms, max 19.1 ms |
 | Rows fetched per search, question/relaxed | median 210, max 515 (every row carries its page body) |
 | Rows fetched per search, question/strict | median 0, max 21 (every row carries its page body) |
 | Rows fetched per search, keywords/relaxed | median 45, max 250 (every row carries its page body) |
@@ -195,4 +195,4 @@ The SQLite file has a floor of about 120 KiB regardless of content.
 
 ## What this does not show
 
-No comparison with qmd's full mode (bite 6, with approval for the model download), so D7's reservation stays open. Twenty-five questions over one corpus, nine tenths of it one bundle, written by the system's author. The keyword form uses terms chosen with the page in view, so its numbers are an upper bound on what a reader who already knows the page can do. The filter rows use the gold page's own folder and type. The metadata block (D30) is not measured until a qmd release reads it.
+qmd's modes are measured in notes of their own, `benchmark-modes.md` (bite 6) and `benchmark-rerank.md` (bite 7); the rows here are the controls those notes pair against. Twenty-five questions over one corpus, nine tenths of it one bundle, written by the system's author. The keyword form uses terms chosen with the page in view, so its numbers are an upper bound on what a reader who already knows the page can do. The filter rows use the gold page's own folder and type. The metadata block (D30) is not measured until a qmd release reads it.

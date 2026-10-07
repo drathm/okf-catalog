@@ -34,6 +34,7 @@ import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { approvalText, MODELS, MODES, missingModels, modelPath, modelsFor } from "./lib/models.mjs";
+import { blendOrder, missingScores, pickChunk, queryTermsOf, scoreOrder } from "./lib/rerank.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, "..");
@@ -145,9 +146,11 @@ if (modes.length > 0) {
     const needed = new Set(modelsFor(modes).map((m) => m.key));
     for (const entry of MODELS) {
       const path = modelPath(MODELS_DIR, entry);
-      // Every model variable is set, so a model no mode asked for resolves to a missing file that throws,
-      // never to qmd's default `hf:` URI, which would download.
-      process.env[entry.variable] = path;
+      // Every model variable is set, so a model no mode asked for resolves to a file that cannot exist and
+      // throws, never to the real file unhashed and never to qmd's default `hf:` URI, which would download.
+      process.env[entry.variable] = needed.has(entry.key)
+        ? path
+        : join(MODELS_DIR, `not-requested-${entry.key}.gguf`);
       if (!needed.has(entry.key)) continue;
       const digest = await sha256File(path);
       if (digest !== entry.sha256) {
@@ -233,6 +236,15 @@ const git = (args, cwd) => {
   }
 };
 const rss = () => process.memoryUsage().rss;
+// The tree's state when the run starts; the end-of-run reading below says whether it changed meanwhile.
+const commitAtStart = git(["rev-parse", "HEAD"], repo);
+const porcelainAtStart = (git(["status", "--porcelain", "--untracked-files=no"], repo) ?? "")
+  .split("\n")
+  .filter(
+    (line) =>
+      line.length > 0 && !/docs\/research\/benchmark-(lexical|modes|rerank)\.md$/.test(line),
+  )
+  .join("\n");
 const memory = { afterLoad: 0, afterIndex: 0, afterLexical: 0, afterEmbed: 0, afterModes: 0 };
 
 // --- load and index ----------------------------------------------------------------------------------------
@@ -630,13 +642,15 @@ if (modes.length > 0) {
     // positions (0.75, 0.60 and 0.40 by rank band), which never displaces the ladder's first result.
     const RERANK_FORMS = ["question", "keywords"];
     const rerankKeys = RERANK_FORMS.flatMap((form) => [`rerank/${form}`, `rerank-blend/${form}`]);
-    const rerankCalls = { count: 0, documents: 0 };
+    const rerankCalls = { count: 0, documents: 0, warmUp: null, last: null };
     if (modes.includes("rerank")) {
       const inner = llm.rerank.bind(llm);
       llm.rerank = async (query, documents, options) => {
         rerankCalls.count += 1;
         rerankCalls.documents += documents.length;
-        return inner(query, documents, options);
+        const result = await inner(query, documents, options);
+        rerankCalls.last = { documents, results: result.results ?? [] };
+        return result;
       };
     }
     const derivedText = (path) => {
@@ -654,74 +668,61 @@ if (modes.length > 0) {
         "regex",
       );
       if (chunks.length === 0) throw new Error(`the chunker returned nothing for ${path}`);
-      let bestIdx = 0;
-      let bestScore = -1;
-      for (let i = 0; i < chunks.length; i += 1) {
-        const lower = chunks[i].text.toLowerCase();
-        const score = queryTerms.reduce((acc, term) => acc + (lower.includes(term) ? 1 : 0), 0);
-        if (score > bestScore) {
-          bestScore = score;
-          bestIdx = i;
-        }
-      }
+      const index = pickChunk(chunks, queryTerms);
       return {
         path,
-        index: bestIdx,
-        length: chunks[bestIdx].text.length,
+        index,
+        length: chunks[index].text.length,
         count: chunks.length,
-        text: chunks[bestIdx].text,
+        text: chunks[index].text,
       };
     };
-    const blendWeight = (rank) => (rank <= 3 ? 0.75 : rank <= 10 ? 0.6 : 0.4);
     const rerankList = async (query, candidates, validate = true) => {
-      const queryTerms = query
-        .toLowerCase()
-        .split(/\s+/)
-        .filter((t) => t.length > 2);
+      if (candidates.length === 0) {
+        // Nothing to score: qmd would not call the model, and neither does the harness.
+        return { scores: [], chunks: [], byScore: [], blended: [], rerankMs: 0 };
+      }
+      const queryTerms = queryTermsOf(query);
       const chunks = [];
       for (const path of candidates) chunks.push(await bestChunk(path, queryTerms));
       const documents = chunks.map((c) => ({ file: c.path, text: c.text }));
       // qmd caches a score by query, model and chunk text and skips the model for a cached chunk, so every pass
       // here starts from an empty cache and is a real scoring pass; identical chunk texts are scored once.
       if (validate) store.internal.clearCache();
-      const distinctTexts = new Set(documents.map((d) => d.text)).size;
-      const before = { ...rerankCalls };
+      const before = { count: rerankCalls.count, documents: rerankCalls.documents };
       const started = performance.now();
       const scored = await store.internal.rerank(query, documents);
       const rerankMs = Math.round((performance.now() - started) * 10) / 10;
       const scoreOf = new Map(scored.map((r) => [r.file, r.score]));
       const scores = candidates.map((path) => scoreOf.get(path));
       if (validate) {
-        // A reranker that never ran, missed a candidate, or scored them all alike (qmd's 0.5 fallback, or a
-        // no-op) would sort the list back into ladder order and look like a result; it fails the run instead.
-        if (
-          rerankCalls.count === before.count ||
-          rerankCalls.documents - before.documents < distinctTexts
-        )
-          throw new Error(`the reranker did not score every candidate of ${JSON.stringify(query)}`);
+        // A reranker that never ran, missed a chunk, or scored them all alike (qmd's 0.5 fallback, or a no-op)
+        // would sort the list back into ladder order and look like a result; it fails the run instead. qmd fills
+        // a missing score with 0, so the hole is found from the texts the model returned, not from the scores.
+        if (rerankCalls.count === before.count)
+          throw new Error(`the reranker was not called for ${JSON.stringify(query)}`);
+        const last = rerankCalls.last;
+        const textByFile = new Map(last.documents.map((d) => [d.file, d.text]));
+        const scoredTexts = new Set(last.results.map((r) => textByFile.get(r.file)));
+        const missing = missingScores(new Map(chunks.map((c) => [c.path, c.text])), scoredTexts);
+        if (missing.length > 0)
+          throw new Error(
+            `the reranker returned no score for ${missing.length} candidate(s) of ${JSON.stringify(query)}: ${missing.join(", ")}`,
+          );
         if (scores.some((x) => typeof x !== "number" || Number.isNaN(x)))
-          throw new Error(`a candidate of ${JSON.stringify(query)} came back without a score`);
+          throw new Error(
+            `a candidate of ${JSON.stringify(query)} came back without a numeric score`,
+          );
         if (scores.length > 1 && new Set(scores).size === 1)
           throw new Error(
             `the reranker scored every candidate of ${JSON.stringify(query)} alike (${scores[0]}): a no-op or qmd's fallback`,
           );
       }
-      const order = (score) =>
-        candidates
-          .map((path, i) => ({ path, i, score: score(i) }))
-          .sort((a, b) => b.score - a.score || a.i - b.i)
-          .map((x) => x.path);
-      const byScore = order((i) => scores[i]);
-      const blended = order((i) => {
-        const rank = i + 1;
-        const w = blendWeight(rank);
-        return w * (1 / rank) + (1 - w) * scores[i];
-      });
       return {
         scores,
         chunks: chunks.map(({ text: _text, ...rest }) => rest),
-        byScore,
-        blended,
+        byScore: scoreOrder(candidates, scores),
+        blended: blendOrder(candidates, scores),
         rerankMs,
       };
     };
@@ -736,9 +737,10 @@ if (modes.length > 0) {
       modeMemory[mode] = { rssBeforeWarmUp: rss() };
       const loadStarted = performance.now();
       if (mode === "vector" || mode === "fused") await vectorPaths("warm up the embedding model");
-      else if (mode === "rerank")
+      else if (mode === "rerank") {
         await rerankList("warm up the reranker", [questions[0].gold], false);
-      else await qmdPipeline("warm up the language models", mode === "hybrid");
+        rerankCalls.warmUp = { count: rerankCalls.count, documents: rerankCalls.documents };
+      } else await qmdPipeline("warm up the language models", mode === "hybrid");
       modeLoad[mode] = Math.round(performance.now() - loadStarted);
       modeMemory[mode].rssAfterWarmUp = rss();
       if (mode === "rerank") {
@@ -770,6 +772,7 @@ if (modes.length > 0) {
                   shared: sharedTerms.get(q.id) ?? null,
                   rank,
                   top5,
+                  order: ordered,
                   candidates: list,
                   goldInCandidates,
                   ...(key.startsWith("rerank/") ? { scores: r.scores, chunks: r.chunks } : {}),
@@ -917,7 +920,11 @@ if (modes.length > 0) {
             contexts: llm.rerankContexts?.length ?? null,
             chunkChars: storeModule.CHUNK_SIZE_CHARS,
             samples: modeSamples("rerank"),
-            calls: rerankCalls,
+            calls: {
+              count: rerankCalls.count,
+              documents: rerankCalls.documents,
+              warmUp: rerankCalls.warmUp,
+            },
             forms: RERANK_FORMS,
           }
         : null,
@@ -1004,6 +1011,10 @@ const meta = {
     branch: git(["rev-parse", "--abbrev-ref", "HEAD"], repo),
     dirty: porcelain.length > 0,
     diffSha256: porcelain.length > 0 ? sha256(git(["diff", "HEAD"], repo) ?? "") : null,
+    commitAtStart,
+    dirtyAtStart: porcelainAtStart.length > 0,
+    changedDuringRun:
+      commitAtStart !== git(["rev-parse", "HEAD"], repo) || porcelainAtStart !== porcelain,
   },
   node: process.version,
   os: `${process.platform} ${process.arch}`,

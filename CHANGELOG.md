@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 
 ### Added
 
-- The benchmark harness measures the ladder re-ranked (`--modes rerank`): the production ladder's twenty candidates, in the question and the keyword form, scored by qmd's reranker as qmd scores them, reported by raw score and by qmd's position blend, with the keyword list twenty deep and the production-limit rows as controls; the report writes `docs/research/benchmark-rerank.md` with a pre-registered bar's verdict. The vector index is built only for the modes that read it.
+- The benchmark harness measures the ladder re-ranked (`--modes rerank`): the production ladder's twenty candidates, in the question and the keyword form, scored by qmd's reranker as qmd scores them, reported by raw score and by qmd's position blend, with the keyword list twenty deep and the production-limit rows as controls; the report writes `docs/research/benchmark-rerank.md` with a pre-registered bar's verdict; `docs/research/benchmark-lexical.md` is written only by a lexical-only run. The vector index is built only for the modes that read it, and a model no mode asked for is pointed at a file that cannot exist.
 
 ## [0.1.3] - 2026-10-07
 

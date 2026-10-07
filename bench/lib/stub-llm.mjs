@@ -1,8 +1,8 @@
 // A deterministic stand-in for qmd's LlamaCpp with an embedding model and nothing else: hashed bag-of-words
 // vectors of a fixed dimension, a whitespace tokeniser, no native binding, no file, no network. It lets the
 // suite exercise the harness's `vector` and `fused` modes (the second store, embed(), the vector search, the
-// decoding and the fusion) and the `rerank` mode (a reranker that prefers the shortest chunk, so that its order
-// is never the ladder's) without a model; the expansion model is not stubbed, so `hybrid` and `full` run only
+// decoding and the fusion) and the `rerank` mode (a reranker that scores the share of the query's terms a chunk
+// carries plus a length bonus, longer first on a tie, so that its order is not the ladder's) without a model; the expansion model is not stubbed, so `hybrid` and `full` run only
 // on a machine with the real files. Installed into qmd's default instance (the tokeniser
 // used for chunking) and into the store's own instance.
 import { createHash } from "node:crypto";
@@ -86,13 +86,31 @@ export async function createStubLlm() {
     async expandQuery() {
       throw new Error("the stub has no expansion model");
     }
-    /** qmd's shape: results keyed by the input `file`, sorted by score; the shortest text scores highest. */
-    async rerank(_query, documents) {
+    /**
+     * qmd's shape: results keyed by the input `file`, sorted by score. The score, in [0, 1], is 0.7 times the
+     * share of the query's terms (qmd's rule: longer than two characters) the text carries plus a length bonus
+     * of at most 0.3 (0.3 at 6 000 characters), so that among equal matches the longer text comes first, the
+     * opposite of the ladder's length normalisation; it depends on the query, so a wrong query shows.
+     * OKF_BENCH_STUB_RERANK=uniform gives every text the same score, the no-op the harness must refuse.
+     */
+    async rerank(query, documents) {
+      const terms = query
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((t) => t.length > 2);
+      const uniform = process.env.OKF_BENCH_STUB_RERANK === "uniform";
       const results = documents
-        .map((d, index) => ({ file: d.file, score: 1 / (1 + d.text.length), index }))
+        .map((d, index) => {
+          const lower = d.text.toLowerCase();
+          const share =
+            terms.length === 0 ? 0 : terms.filter((t) => lower.includes(t)).length / terms.length;
+          const score = uniform ? 0.5 : 0.7 * share + Math.min(0.3, d.text.length / 20_000);
+          return { file: d.file, score, index };
+        })
         .sort((a, b) => b.score - a.score);
-      return { results, model: "stub:shortest-chunk" };
+      return { results, model: uniform ? "stub:uniform" : "stub:term-share-and-length" };
     }
+
     async generate() {
       throw new Error("the stub has no generation model");
     }
