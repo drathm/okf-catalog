@@ -72,6 +72,7 @@ A server reads a `published` branch, which `okf-catalog pack` writes from a bund
 | Document | Holds |
 |---|---|
 | [docs/intent.md](docs/intent.md) | What this is, for whom, what it must do, and how done is judged |
+| [docs/architecture.md](docs/architecture.md) | The layers, the data flow at serve time, the publish loop, and what lives where |
 | [docs/decisions/0001-founding-decisions.md](docs/decisions/0001-founding-decisions.md) | Every decision behind the design, what was rejected and why, and whether it is settled |
 | [docs/research/](docs/research/) | The verified facts the design rests on, with sources and dates |
 
