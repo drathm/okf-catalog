@@ -113,7 +113,7 @@ Record. 0.1.0 was published by the maintainer on 2026-10-07 at 15:07 UTC from a 
 ## The maintainer's list, in order
 
 1. Rule D1 (the licence; `LICENSE` and `NOTICE` are Apache-2.0 as proposed) and D26 (the repository's visibility).
-2. Push the branch so CI runs on Linux (the acceptance gate), then put a reachable commit into the workflow's `OKF_CATALOG_SOURCE` placeholder in `recipes/publish/publish.yml`.
+2. ~~Push the branch so CI runs on Linux (the acceptance gate), then put a reachable commit into the workflow's `OKF_CATALOG_SOURCE` placeholder in `recipes/publish/publish.yml`~~ Done: CI runs on Linux and macOS since the repository went public; the recipe now installs the npm package at its own version, so the placeholder is gone.
 3. Name the repository for item 5, the page to promote first (intent §12 Q3, D10) and the holder of the clean account (Q6).
 4. Update Claude Code to 2.1.221 or later, sign in, and run steps 3 and 12 of the runbook (the bite 4 items), then the scripted items.
 5. ~~Approve the models and run the modes three samples deep~~ Done 2026-10-07: all three models pulled, the modes run, the note rendered (`docs/research/benchmark-modes.md`); the lexical default stands.

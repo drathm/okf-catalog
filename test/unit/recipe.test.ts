@@ -8,6 +8,15 @@ const RECIPE = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "recipe
 const workflow = readFileSync(join(RECIPE, "publish.yml"), "utf8");
 const pack = readFileSync(join(RECIPE, "pack.sh"), "utf8");
 const push = readFileSync(join(RECIPE, "push.sh"), "utf8");
+const readme = readFileSync(join(RECIPE, "README.md"), "utf8");
+const pkg = JSON.parse(readFileSync(join(RECIPE, "..", "..", "package.json"), "utf8")) as {
+  version: string;
+  files: string[];
+  scripts: Record<string, string>;
+};
+const nodeFloor = /MIN_NODE: \[number, number\] = \[(\d+), \d+\]/.exec(
+  readFileSync(join(RECIPE, "..", "..", "src", "cli.ts"), "utf8"),
+)?.[1];
 
 describe("the publish recipe", () => {
   it("runs on a push to the source branch only, never on the published branch, and never on pull_request_target", () => {
@@ -44,11 +53,21 @@ describe("the publish recipe", () => {
     );
   });
 
-  it("never interpolates event text into a shell and installs the server from a pinned source, not a bare name", () => {
+  it("never interpolates event text into a shell and installs this exact version of the server from npm", () => {
     expect(workflow).not.toContain("${{ github.event");
     expect(workflow).toMatch(/npm install --global "\$OKF_CATALOG_SOURCE"/);
-    expect(workflow).toMatch(/OKF_CATALOG_SOURCE: "github:[\w-]+\/okf-catalog#[0-9a-f]{40}"/);
+    // The file a company copies names the version it came from, so the scripts and the lock it finds under
+    // `npm root -g` are the ones this suite tested; the release test keeps the version in step.
+    expect(workflow).toContain(`OKF_CATALOG_SOURCE: "okf-catalog@${pkg.version}"`);
     expect(workflow).toMatch(/SOURCE_COMMIT: \$\{\{ needs\.build\.outputs\.commit \}\}/);
+  });
+
+  it("runs the server on the Node line the CLI requires, and the README tells the truth about the install", () => {
+    expect(nodeFloor, "MIN_NODE in src/cli.ts").toBeDefined();
+    expect(workflow).toContain(`node-version: "${nodeFloor}"`);
+    expect(readme).not.toMatch(/shrinkwrap/i);
+    expect(readme).not.toMatch(/Node 22|"22"/);
+    expect(readme).toMatch(/okf-catalog@/);
   });
 
   it("ships POSIX shell scripts that fail closed and run the checkers before and after pack", () => {
@@ -84,14 +103,9 @@ describe("the publish recipe", () => {
     expect(pack).toMatch(/--strict/);
   });
 
-  it("installs the server from a package that builds itself on install and carries the recipe", () => {
-    const pkg = JSON.parse(readFileSync(join(RECIPE, "..", "..", "package.json"), "utf8")) as {
-      files: string[];
-      scripts: Record<string, string>;
-    };
+  it("installs the server from a package that carries the built code and the recipe", () => {
     expect(pkg.files).toContain("recipes/publish");
     expect(pkg.files).toContain("dist");
-    expect(pkg.scripts.prepare).toMatch(/tsc/);
     expect(workflow).toMatch(
       /NODE_LLAMA_CPP_SKIP_DOWNLOAD=1 npm install --global "\$OKF_CATALOG_SOURCE"/,
     );
