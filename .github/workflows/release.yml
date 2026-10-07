@@ -1,7 +1,7 @@
 # Publishes a tagged release to npm with provenance, after the gates and the suite pass on the tag's commit.
-# One-time setup by the maintainer, after the first manual `npm publish` has created the package: on npmjs.com,
-# under the package's settings, add this repository and this workflow file as a trusted publisher. From then on
-# no npm token is needed; the job authenticates with the OIDC token GitHub mints for it (id-token: write).
+# npmjs.com holds this repository and this workflow file as the package's trusted publisher (added 2026-10-07,
+# direct publishing allowed), so no npm token is needed: the job authenticates with the OIDC token GitHub mints
+# for it (id-token: write). Only repository admins can create `v*` tags (the "release tags" ruleset).
 name: release
 
 on:
