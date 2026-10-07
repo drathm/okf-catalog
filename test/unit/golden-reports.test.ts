@@ -2,9 +2,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { loadBundle } from "../../src/bundle/load.js";
 import { DEFAULT_CAPS } from "../../src/bundle/model.js";
-import { reportToJson } from "../../src/commands/check.js";
+import { loadForCheck, reportToJson } from "../../src/commands/check.js";
 import { NOW, readFixture } from "../helpers/fixtures.js";
 
 /**
@@ -28,7 +27,7 @@ describe("golden reports", () => {
     ["no-manifest", "none"],
   ] as const) {
     it(`${name}: the whole report equals its stored copy`, () => {
-      const { report } = loadBundle(
+      const { report } = loadForCheck(
         name,
         readFixture(name),
         { ...options, admit: [...options.admit], integrity },

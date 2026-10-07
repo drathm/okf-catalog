@@ -82,6 +82,8 @@
     "dist",
     "notes"
   ],
-  "encodedFolders": [],
+  "encodedFolders": [
+    "dist"
+  ],
   "commit": "0000000000000000000000000000000000000000"
 }

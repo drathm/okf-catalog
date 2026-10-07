@@ -109,3 +109,19 @@ describe("manifest: prototype keys (review round 1)", () => {
     ).toThrow(/__proto__/);
   });
 });
+
+describe("verifyManifest: paths the walker left unread (bite 3 build review)", () => {
+  it("treats a path under an unread hidden folder as present, but not one under a refused entry of the same name", () => {
+    const docs = [
+      { path: ".cache/a.md", bytes: Buffer.from("x") },
+      { path: "docs/b.md", bytes: Buffer.from("y") },
+    ];
+    const manifest = buildManifest(docs, META);
+    const missing = (present: { exact: string[]; folders: string[] }) =>
+      verifyManifest(manifest, [], present).map((p) => p.path);
+    expect(missing({ exact: [], folders: [".cache"] })).toEqual(["docs/b.md"]);
+    // A refused symbolic link named `docs` is present itself; the pages the manifest lists beneath it are not.
+    expect(missing({ exact: ["docs"], folders: [".cache"] })).toEqual(["docs/b.md"]);
+    expect(missing({ exact: ["docs/b.md"], folders: [".cache"] })).toEqual([]);
+  });
+});

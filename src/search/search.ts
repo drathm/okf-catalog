@@ -15,6 +15,8 @@ export interface SearchRequest {
   limit: number;
   /** Run the relaxed rung when the first rung leaves the answer short (default true); the benchmark turns it off. */
   relax?: boolean;
+  /** The per-term pool on the relaxed rung; defaults to the pool the first rung ended with. A tuning knob (D31). */
+  relaxedPool?: number;
 }
 
 export interface SearchHit {
@@ -46,6 +48,8 @@ export interface SearchResponse {
   filteredOut: { type: number; topic: number; stale: number; unknown: number };
   /** The pool size the first rung ended with. */
   pool: number;
+  /** A topic filter was set, the pool reached its cap, and the answer is still short: the topic may hold more. */
+  topicExhausted: boolean;
 }
 
 const POOL_FACTOR = 4;
@@ -147,6 +151,7 @@ export async function search(
       considered: 0,
       filteredOut: filteredOut(),
       pool: 0,
+      topicExhausted: false,
     };
   }
   const prefix = topicPrefix(request.topic);
@@ -198,12 +203,15 @@ export async function search(
     .slice(0, limit)
     .map((c) => shape(c.page, c.score, "all-terms", now));
 
-  // Relaxed rung: one query per term, fused by summed BM25, ranked by terms matched then by the sum.
+  // Relaxed rung: one query per content term, fused by summed BM25, ranked by terms matched then by the sum.
+  // The type and topic tokens stay out of these queries: BM25 adds up across terms, so a token present in every
+  // candidate would be added once per matched term and move the order within a bucket. The filters still apply.
   if (request.relax !== false && hits.length < limit && terms.length > 1) {
+    const relaxedPool = Math.max(1, Math.min(request.relaxedPool ?? pool, POOL_CAP));
     const taken = new Set(hits.map((h) => h.path));
     const fused = new Map<PagePath, Candidate>();
     for (const term of terms) {
-      for (const hit of (await lexComplete(engine, [term, ...extra], pool)).hits) {
+      for (const hit of (await lexComplete(engine, [term], relaxedPool)).hits) {
         if (taken.has(hit.path)) continue;
         const page = admit(hit);
         if (page === undefined) continue;
@@ -232,6 +240,7 @@ export async function search(
     considered: considered.size,
     filteredOut: filteredOut(),
     pool,
+    topicExhausted: prefix !== undefined && pool >= POOL_CAP && hits.length < limit,
   };
 }
 

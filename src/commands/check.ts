@@ -1,12 +1,15 @@
 import { parseArgs } from "node:util";
-import { loadBundle } from "../bundle/load.js";
+import { type LoadResult, loadBundle } from "../bundle/load.js";
 import {
+  type BundleFile,
   DEFAULT_CAPS,
   type LoadOptions,
   type Report,
   type SpecText,
   type Status,
 } from "../bundle/model.js";
+import { byCodeUnit } from "../bundle/paths.js";
+import { encodePath } from "../engine/qmd-render.js";
 import { walkBundle } from "../fs/walk.js";
 import { renderReport } from "../report/report.js";
 
@@ -40,6 +43,25 @@ export function clockFrom(env: NodeJS.ProcessEnv): Date {
   const at = new Date(fixed);
   if (Number.isNaN(at.getTime())) throw new Error(`OKF_CATALOG_NOW is not a datetime: ${fixed}`);
   return at;
+}
+
+/**
+ * Loads a bundle the way the server will see it: the core's report, plus the folders the search engine renames,
+ * which only the engine adapter's codec knows. The command and the golden-report test both come through here.
+ */
+export function loadForCheck(
+  company: string,
+  files: BundleFile[],
+  options: LoadOptions,
+  now: Date,
+): LoadResult {
+  const result = loadBundle(company, files, options, now);
+  const renamed = new Set<string>();
+  for (const page of result.catalog.pages.values()) {
+    if (page.folder !== "" && encodePath(page.folder) !== page.folder) renamed.add(page.folder);
+  }
+  result.report.encodedFolders = [...renamed].sort(byCodeUnit);
+  return result;
 }
 
 /** A report as JSON: a format marker, ISO dates, nothing else. */
@@ -112,13 +134,14 @@ export function runCheck(argv: string[], io: CommandIo): number {
     caps: DEFAULT_CAPS,
     walkRefusals: walked.refusals,
     hiddenPaths: walked.hidden,
+    hiddenFolders: walked.hiddenFolders,
   };
   if (parsed.values.types !== undefined)
     options.types = String(parsed.values.types)
       .split(",")
       .map((s) => s.trim());
   if (walked.fatal !== undefined) options.walkFatal = walked.fatal;
-  const { report } = loadBundle("check", walked.files, options, now);
+  const { report } = loadForCheck("check", walked.files, options, now);
   io.stdout(parsed.values.json === true ? reportToJson(report) : renderReport(report));
   return report.fatal !== undefined || report.refusals.length > 0 ? 1 : 0;
 }

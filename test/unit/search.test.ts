@@ -9,7 +9,7 @@ import { search } from "../../src/search/search.js";
 import { NOW, readFixture } from "../helpers/fixtures.js";
 
 /** An in-memory engine with qmd's observable contract: every term must match as a prefix, hits carry a raw score and its qmd mapping, and `limit` is exact. */
-function fakeEngine(catalog: Catalog): Engine & { queries: string[][] } {
+function fakeEngine(catalog: Catalog): Engine & { queries: string[][]; limits: number[] } {
   const texts = new Map<string, string[]>();
   for (const page of catalog.pages.values()) {
     const text = renderDocument(deriveDocument(page)).toLowerCase();
@@ -19,8 +19,10 @@ function fakeEngine(catalog: Catalog): Engine & { queries: string[][] } {
     );
   }
   const queries: string[][] = [];
+  const limits: number[] = [];
   return {
     queries,
+    limits,
     async index(): Promise<IndexResult> {
       return {
         documents: texts.size,
@@ -35,6 +37,7 @@ function fakeEngine(catalog: Catalog): Engine & { queries: string[][] } {
     },
     async lex(terms, limit): Promise<EngineHit[]> {
       queries.push([...terms]);
+      limits.push(limit);
       const hits: EngineHit[] = [];
       for (const [path, words] of texts) {
         let bm25 = 0;
@@ -255,5 +258,75 @@ describe("search: ties at the engine's cut", () => {
     expect([...seen]).toEqual([expected]);
     // The tail row below the tie group is never fetched into the answer, so the group was completed, not the whole index.
     expect(Math.max(...engine.limits)).toBeLessThan(500);
+  });
+});
+
+describe("search: the relaxed rung after the bite 3 build review", () => {
+  it("sends only the content term on each relaxed query, so type and topic tokens cannot inflate the sum", async () => {
+    const engine = fakeEngine(base);
+    const r = await search(base, engine, request("page zzzzunknown", { type: "Note" }), NOW);
+    expect(r.strategy).toBe("relaxed");
+    expect(engine.queries[0]).toEqual(["page", "zzzzunknown", "note"]);
+    for (const q of engine.queries.slice(1)) expect(q).toHaveLength(1);
+    for (const hit of r.hits) {
+      expect(hit.rung).toBe("relaxed");
+      // The fake engine scores a term by its prefix count, so the fused score is the sum of the per-term counts.
+      let sum = 0;
+      for (const term of r.terms) {
+        const row = (await engine.lex([term], 1000)).find((x) => x.path === hit.path);
+        if (row) sum += row.bm25;
+      }
+      expect(hit.score).toBeCloseTo(sum, 9);
+    }
+  });
+
+  it("uses the relaxed pool it is given for the per-term queries", async () => {
+    const engine = fakeEngine(base);
+    await search(base, engine, request("alpha zzzzunknown", { relaxedPool: 100 }), NOW);
+    expect(engine.limits.slice(1).every((l) => l === 101)).toBe(true);
+  });
+
+  it("says when a topic was exhausted at the cap without filling the answer", async () => {
+    const files = [];
+    for (let i = 0; i < 510; i++) {
+      files.push({
+        path: `a/p${String(i).padStart(3, "0")}.md`,
+        bytes: Buffer.from(`---\ntype: Note\ntitle: Common ${i}\n---\n\ncommon word\n`),
+      });
+    }
+    for (let i = 0; i < 10; i++) {
+      files.push({
+        path: `b/q${i}.md`,
+        bytes: Buffer.from(`---\ntype: Note\ntitle: Rare ${i}\n---\n\ncommon word\n`),
+      });
+    }
+    const big = loadBundle(
+      "big",
+      files,
+      {
+        admit: ["stable"],
+        dev: false,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    ).catalog;
+    expect(big.pages.size).toBe(520);
+    const r = await search(
+      big,
+      fakeEngine(big),
+      request("common word", { topic: "b", limit: 20 }),
+      NOW,
+    );
+    expect(r.pool).toBe(500);
+    expect(r.topicExhausted).toBe(true);
+    const small = await search(
+      big,
+      fakeEngine(big),
+      request("rare", { topic: "b", limit: 20 }),
+      NOW,
+    );
+    expect(small.topicExhausted).toBe(false);
   });
 });

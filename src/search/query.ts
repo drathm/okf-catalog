@@ -32,10 +32,14 @@ function pairs(run: string): string[] {
   return out;
 }
 
-/** Lower-cased content tokens in question order; CJK runs become overlapping pairs; nothing shorter than two code points. */
+/**
+ * Lower-cased content tokens in question order; CJK runs become overlapping pairs; nothing shorter than two code
+ * points. A run of two or more hyphens separates tokens like any other punctuation. Digits are split exactly as
+ * the engine's tokenizer splits them, so `1,000` becomes `1` (dropped) and `000`, which is what the index holds.
+ */
 export function tokenize(question: string): string[] {
   const tokens: string[] = [];
-  for (const raw of question.toLowerCase().split(/[^\p{L}\p{N}-]+/u)) {
+  for (const raw of question.toLowerCase().split(/[^\p{L}\p{N}-]+|-{2,}/u)) {
     const trimmed = raw.replace(/^-+|-+$/g, "");
     if (trimmed.length === 0) continue;
     if (CJK.test(trimmed)) {
@@ -62,5 +66,7 @@ export function normaliseQuestion(question: string): { terms: string[]; dropped:
     if (terms.includes(token)) continue;
     terms.push(token);
   }
+  // Terms past the twelfth are not sent; they are reported as dropped so a cut question never looks complete.
+  dropped.push(...terms.slice(MAX_TERMS));
   return { terms: terms.slice(0, MAX_TERMS), dropped };
 }

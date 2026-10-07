@@ -37,6 +37,13 @@ describe("okf-catalog check", () => {
     expect(bad.stderr).toContain("usage");
   });
 
+  it("names the folders the search engine would rename, so the report says what the engine will index", async () => {
+    const json = await runCli(["check", join(FIXTURES, "behaviours"), "--json"]);
+    expect(JSON.parse(json.stdout).encodedFolders).toEqual(["dist"]);
+    const text = await runCli(["check", join(FIXTURES, "behaviours")]);
+    expect(text.stdout).toContain("Folders renamed for the search engine: dist");
+  });
+
   it("prints the report as JSON with ISO dates when asked, and admits drafts under --dev", async () => {
     const run = await runCli([
       "check",

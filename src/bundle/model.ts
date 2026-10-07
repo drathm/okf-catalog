@@ -105,6 +105,7 @@ export type RefusalRule =
   | "gitlink"
   | "path-escape"
   | "special-file"
+  | "unreadable"
   | "engine-config"
   | "hash-mismatch"
   | "size-mismatch"
@@ -185,6 +186,8 @@ export interface LoadOptions {
   walkRefusals?: Refusal[];
   /** Dot-leading paths the walker found and never read; counted, present for the manifest, refused when they are the engine's. */
   hiddenPaths?: string[];
+  /** The hidden paths that are folders: a manifest entry beneath one is present even though no file arrived. */
+  hiddenFolders?: string[];
   /** The walker's own bundle-level refusal, when the caps stopped it. */
   walkFatal?: Refusal;
 }

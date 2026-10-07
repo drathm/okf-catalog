@@ -1,6 +1,7 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readdirSync, readlinkSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createStore } from "@tobilu/qmd";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { loadBundle } from "../../src/bundle/load.js";
 import { DEFAULT_CAPS } from "../../src/bundle/model.js";
@@ -69,11 +70,13 @@ describe("QmdEngine", () => {
     expect((await engine.lex(["zebra-backslash-marker"], 5))[0]?.path).toBe("odd/back\\slash.md");
   });
 
-  it("drops a removed document on re-index and keeps one old generation at most", async () => {
+  it("drops a removed document on re-index and leaves only the live generation, linked by its base name", async () => {
     const result = await engine.index(docs);
     expect(result.documents).toBe(docs.length);
     expect(await engine.lex(["zebra-backslash-marker"], 5)).toEqual([]);
-    expect(readdirSync(work).filter((n) => n.startsWith("gen-")).length).toBeLessThanOrEqual(2);
+    const generations = readdirSync(work).filter((n) => n.startsWith("gen-"));
+    expect(generations).toHaveLength(1);
+    expect(readlinkSync(join(work, "derived"))).toBe(generations[0]);
   });
 
   it("answers the keyword and sentence questions through search, recording the rung", async () => {
@@ -121,7 +124,10 @@ describe("QmdEngine", () => {
     expect(rungs).toContain("relaxed");
   });
 
-  it("never lets a concurrent search see a half-updated index", async () => {
+  it("never lets a search at a macrotask boundary see a half-updated index", async () => {
+    // Pins qmd's write loop: it must not yield to the event loop between documents (decision D28). A sampler
+    // that runs at every macrotask boundary while `index()` is in flight may see the old count or the new one,
+    // never anything between. A qmd that starts awaiting real I/O per file makes this fail.
     const many: DerivedDocument[] = Array.from({ length: 400 }, (_, i) => ({
       path: `bulk/p${i}.md`,
       title: `Bulk ${i}`,
@@ -132,8 +138,128 @@ describe("QmdEngine", () => {
     }));
     await engine.index(many);
     const changed = many.map((d) => ({ ...d, body: `versiontwo body ${d.path}\n` }));
-    const [, during] = await Promise.all([engine.index(changed), engine.lex(["versionone"], 1000)]);
-    expect([0, 400]).toContain(during.length);
+    const seen = new Set<number>();
+    let stop = false;
+    const sample = async (): Promise<void> => {
+      if (stop) return;
+      seen.add((await engine.lex(["versionone"], 1000)).length);
+      setImmediate(() => void sample());
+    };
+    setImmediate(() => void sample());
+    await engine.index(changed);
+    stop = true;
+    seen.add((await engine.lex(["versionone"], 1000)).length);
+    expect([...seen]).toContain(400);
+    expect([...seen]).toContain(0);
+    expect([...seen].every((n) => n === 0 || n === 400)).toBe(true);
     expect((await engine.lex(["versiontwo"], 1000)).length).toBe(400);
+  });
+});
+
+describe("QmdEngine: directories, generations and other companies (bite 3 build review)", () => {
+  const note = (path: string, title: string, body: string): DerivedDocument => ({
+    path,
+    title,
+    type: "Note",
+    tags: [],
+    metadata: {},
+    body,
+  });
+
+  it("works from a relative directory and links the live generation by its base name", async () => {
+    const base = mkdtempSync(join(tmpdir(), "okf-catalog-rel-"));
+    const previous = process.cwd();
+    process.chdir(base);
+    try {
+      const e = await QmdEngine.open({ company: "rel", dir: join("cache", "rel") });
+      const r = await e.index([note("a.md", "Alpha", "alpha body text")]);
+      expect(r.documents).toBe(1);
+      expect(r.notIndexed).toEqual([]);
+      expect(readlinkSync(join("cache", "rel", "derived"))).toMatch(/^gen-\d+-1$/);
+      expect((await e.lex(["alpha"], 5))[0]?.path).toBe("a.md");
+      await e.close();
+    } finally {
+      process.chdir(previous);
+      rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a second index while one is running; the composition layer keeps refreshes single-flight", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "okf-catalog-reent-"));
+    const e = await QmdEngine.open({ company: "re", dir });
+    const first = e.index([note("a.md", "A", "one")]);
+    await expect(e.index([note("b.md", "B", "two")])).rejects.toThrow(/already running/);
+    await first;
+    expect((await e.status()).documents).toBe(1);
+    await e.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("rejects a document whose path would leave the generation folder", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "okf-catalog-unsafe-"));
+    const e = await QmdEngine.open({ company: "un", dir });
+    await expect(e.index([note("../escape.md", "E", "x")])).rejects.toThrow(
+      /not a safe bundle path/,
+    );
+    await expect(e.index([note("/abs.md", "E", "x")])).rejects.toThrow(/not a safe bundle path/);
+    expect((await e.status()).documents).toBe(0);
+    await e.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("resets an index that holds another company's rows when it opens, and counts only its own collection", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "okf-catalog-shared-"));
+    const a = await QmdEngine.open({ company: "aaa", dir });
+    expect(a.resetOnOpen).toBeUndefined();
+    await a.index([
+      note("x.md", "Shared", "zebra zebra zebra"),
+      note("y.md", "Other", "zebra once"),
+    ]);
+    await a.close();
+    const b = await QmdEngine.open({ company: "bbb", dir });
+    expect(b.resetOnOpen).toMatch(/aaa/);
+    const r = await b.index([note("z.md", "Mine", "zebra here")]);
+    expect(r.documents).toBe(1);
+    expect((await b.status()).documents).toBe(1);
+    expect((await b.lex(["zebra"], 1)).map((h) => h.path)).toEqual(["z.md"]);
+    await b.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("pins qmd's title rule for a page titled Notes: the next second-level heading becomes the title", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "okf-catalog-notes-"));
+    const e = await QmdEngine.open({ company: "nt", dir });
+    await e.index([
+      note("notes.md", "Notes", "An introduction.\n\n## Real heading\n\nMore text.\n"),
+    ]);
+    await e.close();
+    const raw = await createStore({
+      dbPath: join(dir, "index.sqlite"),
+      config: { collections: { nt: { path: join(dir, "derived"), pattern: "**/*.md" } } },
+    });
+    const listed = await raw.multiGet("nt/**");
+    expect(listed.docs.map((d) => (d.doc as { title?: string }).title)).toEqual(["Real heading"]);
+    await raw.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("sums the per-term scores on the relaxed rung without the type token inflating them", async () => {
+    await engine.index(docs);
+    const r = await search(
+      catalog,
+      engine,
+      { question: "alpha dist zzzzunknown", type: "Term", includeStale: true, limit: 8 },
+      NOW,
+    );
+    const relaxed = r.hits.filter((h) => h.rung === "relaxed");
+    expect(relaxed.length).toBeGreaterThan(0);
+    for (const hit of relaxed) {
+      let sum = 0;
+      for (const term of r.terms) {
+        const row = (await engine.lex([term], 500)).find((x) => x.path === hit.path);
+        if (row) sum += row.bm25;
+      }
+      expect(hit.score, hit.path).toBeCloseTo(sum, 6);
+    }
   });
 });

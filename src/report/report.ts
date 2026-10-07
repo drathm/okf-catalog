@@ -40,6 +40,9 @@ export function renderReport(report: Report): string {
   }
   if (report.missingOnDisk.length > 0)
     lines.push(`Listed in the manifest but missing: ${report.missingOnDisk.join(", ")}`);
+  if (report.encodedFolders.length > 0) {
+    lines.push(`Folders renamed for the search engine: ${report.encodedFolders.join(", ")}`);
+  }
   if (report.foldersWithoutIndex.length > 0) {
     lines.push(
       `Folders without an index (generated): ${report.foldersWithoutIndex.map((f) => f || "(root)").join(", ")}`,

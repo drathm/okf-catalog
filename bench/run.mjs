@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // The lexical benchmark. Loads the public corpus as one bundle, indexes it through the qmd adapter, and runs the
-// questions in four configurations: the question text or its keyword form, with the relaxed rung on or off.
-// Writes one JSON line per question per configuration, a per-style summary, the paired relaxed-versus-strict
-// outcome, and the run's metadata under bench/results/ (gitignored). Build first: npm run build.
+// questions in seven configurations: the question text or its keyword form with the relaxed rung on or off, and
+// the question text with the gold page's topic as the filter, with its type as the filter, and with a relaxed
+// per-term pool of 100. Writes one JSON line per question per configuration, a per-style summary, paired
+// comparisons, and the run's metadata under bench/results/ (gitignored). Build first: npm run build.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -10,6 +11,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { loadBundle } from "../dist/bundle/load.js";
 import { DEFAULT_CAPS } from "../dist/bundle/model.js";
+import { folderOf } from "../dist/bundle/paths.js";
 import { deriveDocument } from "../dist/derive/derived-document.js";
 import { QmdEngine } from "../dist/engine/qmd.js";
 import { walkBundle } from "../dist/fs/walk.js";
@@ -18,6 +20,7 @@ import { search } from "../dist/search/search.js";
 
 process.env.NODE_LLAMA_CPP_SKIP_DOWNLOAD = "1";
 const here = dirname(fileURLToPath(import.meta.url));
+const repo = join(here, "..");
 const corpus = join(here, "corpus");
 if (!existsSync(corpus)) {
   process.stderr.write("no corpus: run bench/fetch-corpus.sh first\n");
@@ -31,17 +34,15 @@ mkdirSync(work, { recursive: true });
 
 const NOW = new Date("2026-10-06T12:00:00Z");
 const CORPUS_REPOS = ["okf-skills", "okf-agent-memory", "cole-medin", "superops-okf"];
-const FORMS = ["question", "keywords"];
 const questions = JSON.parse(readFileSync(join(here, "questions.json"), "utf8"));
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
-const gitHead = (cwd) => {
+const git = (args, cwd) => {
   try {
-    return execFileSync("git", ["rev-parse", "HEAD"], { cwd, encoding: "utf8" }).trim();
+    return execFileSync("git", args, { cwd, encoding: "utf8" }).trim();
   } catch {
-    return "unknown";
+    return undefined;
   }
 };
-const configKey = (form, relax) => `${form}/${relax ? "relaxed" : "strict"}`;
 
 const caps = { ...DEFAULT_CAPS, files: 50_000 };
 const walked = walkBundle(corpus, caps);
@@ -53,6 +54,7 @@ const options = {
   caps,
   walkRefusals: walked.refusals,
   hiddenPaths: walked.hidden,
+  hiddenFolders: walked.hiddenFolders,
 };
 if (walked.fatal !== undefined) options.walkFatal = walked.fatal;
 const { catalog, report } = loadBundle("bench", walked.files, options, NOW);
@@ -62,47 +64,80 @@ const indexStarted = performance.now();
 const indexed = await engine.index(docs);
 const indexMs = Math.round(performance.now() - indexStarted);
 
+// Each configuration: the request built from a question, and the text form it uses.
+const CONFIGS = [
+  { key: "question/relaxed", form: "question", request: () => ({ relax: true }) },
+  { key: "question/strict", form: "question", request: () => ({ relax: false }) },
+  { key: "keywords/relaxed", form: "keywords", request: () => ({ relax: true }) },
+  { key: "keywords/strict", form: "keywords", request: () => ({ relax: false }) },
+  {
+    key: "question/relaxed+topic",
+    form: "question",
+    request: (q) => ({ relax: true, topic: folderOf(q.gold) }),
+  },
+  {
+    key: "question/relaxed+type",
+    form: "question",
+    request: (q) => ({ relax: true, type: catalog.pages.get(q.gold)?.type }),
+  },
+  {
+    key: "question/relaxed+pool100",
+    form: "question",
+    request: () => ({ relax: true, relaxedPool: 100 }),
+  },
+];
+
 const lines = [];
-const byConfig = new Map();
-for (const form of FORMS) {
-  for (const relax of [true, false]) {
-    const key = configKey(form, relax);
-    const outcomes = new Map();
-    byConfig.set(key, outcomes);
-    for (const q of questions) {
-      const text = form === "question" ? q.question : q.keywords.join(" ");
-      const started = performance.now();
-      const r = await search(
-        catalog,
-        engine,
-        { question: text, includeStale: true, limit: 5, relax },
-        NOW,
-      );
-      const ms = Math.round((performance.now() - started) * 10) / 10;
-      const position = r.hits.findIndex((h) => h.path === q.gold);
-      const rank = position === -1 ? null : position + 1;
-      outcomes.set(q.id, rank);
-      lines.push(
-        JSON.stringify({
-          config: key,
-          id: q.id,
-          style: q.style,
-          terms: r.terms,
-          dropped: r.dropped,
-          rung: r.strategy,
-          rank,
-          top5: r.hits.map((h) => h.path),
-          considered: r.considered,
-          pool: r.pool,
-          ms,
-        }),
-      );
-    }
+const ranks = new Map();
+for (const config of CONFIGS) {
+  const outcomes = new Map();
+  ranks.set(config.key, outcomes);
+  for (const q of questions) {
+    const text = config.form === "question" ? q.question : q.keywords.join(" ");
+    const extra = config.request(q);
+    const started = performance.now();
+    const r = await search(
+      catalog,
+      engine,
+      { question: text, includeStale: true, limit: 5, ...extra },
+      NOW,
+    );
+    const ms = Math.round((performance.now() - started) * 10) / 10;
+    const position = r.hits.findIndex((h) => h.path === q.gold);
+    const rank = position === -1 ? null : position + 1;
+    outcomes.set(q.id, rank);
+    lines.push(
+      JSON.stringify({
+        config: config.key,
+        id: q.id,
+        style: q.style,
+        filter: {
+          topic: extra.topic ?? null,
+          type: extra.type ?? null,
+          relaxedPool: extra.relaxedPool ?? null,
+        },
+        terms: r.terms,
+        dropped: r.dropped,
+        rung: r.strategy,
+        rank,
+        top5: r.hits.map((h) => h.path),
+        considered: r.considered,
+        pool: r.pool,
+        topicExhausted: r.topicExhausted,
+        ms,
+      }),
+    );
   }
 }
 
+const row = (s) => ({
+  n: s.n,
+  "hit@1": s.hit1,
+  "hit@3": s.hit3,
+  "MRR@5": Math.round((s.rr / s.n) * 1000) / 1000,
+});
 const summary = {};
-for (const [key, outcomes] of byConfig) {
+for (const [key, outcomes] of ranks) {
   const styles = {};
   for (const q of questions) {
     const rank = outcomes.get(q.id);
@@ -122,50 +157,72 @@ for (const [key, outcomes] of byConfig) {
     }),
     { n: 0, hit1: 0, hit3: 0, rr: 0 },
   );
-  const row = (s) => ({
-    n: s.n,
-    "hit@1": s.hit1,
-    "hit@3": s.hit3,
-    "MRR@5": Math.round((s.rr / s.n) * 1000) / 1000,
-  });
   summary[key] = {
     all: row(all),
     ...Object.fromEntries(Object.entries(styles).map(([k, s]) => [k, row(s)])),
   };
 }
 
-// Relaxation on versus off, per form, paired by question on the gold rank (a miss ranks as 99).
-const paired = {};
-for (const form of FORMS) {
-  const on = byConfig.get(configKey(form, true));
-  const off = byConfig.get(configKey(form, false));
-  const tally = { relaxedWins: 0, relaxedLosses: 0, ties: 0, changed: [] };
+// Paired by question on the gold rank (a miss ranks as 99): the first configuration against the second.
+const pair = (a, b) => {
+  const tally = { better: 0, worse: 0, same: 0, changed: [] };
   for (const q of questions) {
-    const a = on.get(q.id) ?? 99;
-    const b = off.get(q.id) ?? 99;
-    if (a < b) tally.relaxedWins += 1;
-    else if (a > b) tally.relaxedLosses += 1;
-    else tally.ties += 1;
-    if (a !== b) tally.changed.push({ id: q.id, relaxed: on.get(q.id), strict: off.get(q.id) });
+    const x = ranks.get(a).get(q.id) ?? 99;
+    const y = ranks.get(b).get(q.id) ?? 99;
+    if (x < y) tally.better += 1;
+    else if (x > y) tally.worse += 1;
+    else tally.same += 1;
+    if (x !== y)
+      tally.changed.push({ id: q.id, [a]: ranks.get(a).get(q.id), [b]: ranks.get(b).get(q.id) });
   }
-  paired[form] = tally;
-}
+  return tally;
+};
+const paired = {
+  "question: relaxed vs strict": pair("question/relaxed", "question/strict"),
+  "keywords: relaxed vs strict": pair("keywords/relaxed", "keywords/strict"),
+  "question: topic filter vs none": pair("question/relaxed+topic", "question/relaxed"),
+  "question: type filter vs none": pair("question/relaxed+type", "question/relaxed"),
+  "question: relaxed pool 100 vs the first rung's pool": pair(
+    "question/relaxed+pool100",
+    "question/relaxed",
+  ),
+};
 
+const byBundle = {};
+for (const f of walked.files) {
+  const top = f.path.split("/")[0];
+  byBundle[top] = byBundle[top] ?? { walked: 0, admitted: 0, questions: 0 };
+  byBundle[top].walked += 1;
+}
+for (const path of catalog.pages.keys()) byBundle[path.split("/")[0]].admitted += 1;
+for (const q of questions) byBundle[q.gold.split("/")[0]].questions += 1;
+
+// Dirty means tracked files differ from HEAD. Untracked files are ignored, and so is the rendered note, which
+// `bench/report.mjs` rewrites from this run and which is therefore never the code that produced it.
+const porcelain = (git(["status", "--porcelain", "--untracked-files=no"], repo) ?? "")
+  .split("\n")
+  .filter((line) => line.length > 0 && !line.endsWith("docs/research/benchmark-lexical.md"))
+  .join("\n");
 const meta = {
   ran: new Date().toISOString(),
   clock: NOW.toISOString(),
   request: { includeStale: true, limit: 5 },
   load: { admit: options.admit, dev: true, integrity: "none", specText: options.specText },
-  okfCatalogCommit: gitHead(here),
+  okfCatalog: {
+    commit: git(["rev-parse", "HEAD"], repo),
+    branch: git(["rev-parse", "--abbrev-ref", "HEAD"], repo),
+    dirty: porcelain.length > 0,
+    diffSha256: porcelain.length > 0 ? sha256(git(["diff", "HEAD"], repo) ?? "") : null,
+  },
   node: process.version,
   os: `${process.platform} ${process.arch}`,
   qmd: JSON.parse(
-    readFileSync(join(here, "..", "node_modules", "@tobilu", "qmd", "package.json"), "utf8"),
+    readFileSync(join(repo, "node_modules", "@tobilu", "qmd", "package.json"), "utf8"),
   ).version,
   questionsSha256: sha256(readFileSync(join(here, "questions.json"))),
   stopwordsSha256: sha256([...STOPWORDS].sort().join(" ")),
   corpus: Object.fromEntries(
-    CORPUS_REPOS.map((name) => [name, gitHead(join(here, "clones", name))]),
+    CORPUS_REPOS.map((name) => [name, git(["rev-parse", "HEAD"], join(here, "clones", name))]),
   ),
   pages: {
     walked: walked.files.length,
@@ -173,6 +230,7 @@ const meta = {
     refused: report.refusals.length,
     goldAdmitted: questions.filter((q) => catalog.pages.has(q.gold)).length,
     questions: questions.length,
+    byBundle,
   },
   index: {
     documents: indexed.documents,
@@ -181,10 +239,10 @@ const meta = {
     ms: indexMs,
     dbBytes: statSync(join(work, "index.sqlite")).size,
   },
-};
-meta.memory = {
-  rssAfterBytes: process.memoryUsage().rss,
-  heapUsedBytes: process.memoryUsage().heapUsed,
+  memory: {
+    rssAfterBytes: process.memoryUsage().rss,
+    heapUsedBytes: process.memoryUsage().heapUsed,
+  },
 };
 const result = { meta, summary, paired };
 writeFileSync(join(resultsDir, `${stamp}.jsonl`), `${lines.join("\n")}\n`);

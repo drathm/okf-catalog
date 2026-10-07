@@ -15,7 +15,12 @@ const options = (patch: Partial<LoadOptions> = {}): LoadOptions => ({
 describe("loadBundle with the walker's inputs", () => {
   it("counts hidden paths the walker did not read, refuses the engine folder among them, and treats them as present for the manifest", () => {
     const files = readFixture("refused").filter((f) => !f.path.startsWith(".qmd/"));
-    const { report } = loadBundle("r", files, options({ hiddenPaths: [".qmd", ".git"] }), NOW);
+    const { report } = loadBundle(
+      "r",
+      files,
+      options({ hiddenPaths: [".qmd", ".git"], hiddenFolders: [".qmd", ".git"] }),
+      NOW,
+    );
     expect(report.hidden).toBe(2);
     expect(report.refusals.map((r) => [r.path, r.rule])).toContainEqual([".qmd", "engine-config"]);
     expect(report.missingOnDisk).toEqual([]);

@@ -81,10 +81,10 @@ export function loadBundle(
       });
     }
   }
-  const presentButUnread = [
-    ...(options.hiddenPaths ?? []),
-    ...(options.walkRefusals ?? []).map((r) => r.path),
-  ];
+  const presentButUnread = {
+    exact: [...(options.hiddenPaths ?? []), ...(options.walkRefusals ?? []).map((r) => r.path)],
+    folders: [...(options.hiddenFolders ?? [])],
+  };
 
   // Paths first: a path that is not a safe bundle path is refused before anything reads it.
   const sorted: BundleFile[] = [];

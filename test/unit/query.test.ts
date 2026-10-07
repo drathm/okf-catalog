@@ -63,3 +63,23 @@ describe("normaliseQuestion", () => {
     ]);
   });
 });
+
+describe("tokenize and normaliseQuestion: after the bite 3 build review", () => {
+  it("splits a run of hyphens instead of dropping the token", () => {
+    expect(tokenize("foo--bar baz---qux")).toEqual(["foo", "bar", "baz", "qux"]);
+  });
+
+  it("reads a number with a thousands separator the way the engine indexes it: the digit groups apart", () => {
+    // FTS5's tokenizer splits "1,000" into "1" and "000"; a query token "1000" would match nothing (probed against qmd 2.8.3).
+    expect(tokenize("1,000 concepts")).toEqual(["000", "concepts"]);
+  });
+
+  it("reports the terms beyond the twelfth as dropped, so a cut question does not look complete", () => {
+    const words = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi".split(
+      " ",
+    );
+    const r = normaliseQuestion(words.join(" "));
+    expect(r.terms).toEqual(words.slice(0, 12));
+    expect(r.dropped).toEqual(["nu", "xi"]);
+  });
+});

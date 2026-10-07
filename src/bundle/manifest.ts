@@ -86,14 +86,20 @@ export type ManifestProblem = {
   problem: "hash-mismatch" | "size-mismatch" | "not-in-manifest" | "missing-on-disk";
 };
 
+/** Paths that are on disk but were never read: `exact` entries stand for themselves, `folders` for everything beneath them. */
+export interface PresentUnread {
+  exact: readonly string[];
+  folders: readonly string[];
+}
+
 /** Compares files against a manifest. One problem per path; a size difference is reported before a hash difference. */
 export function verifyManifest(
   manifest: Manifest,
   files: BundleFile[],
-  alsoPresent: Iterable<string> = [],
+  alsoPresent: PresentUnread = { exact: [], folders: [] },
 ): ManifestProblem[] {
   const problems: ManifestProblem[] = [];
-  const seen = new Set<string>(alsoPresent);
+  const seen = new Set<string>(alsoPresent.exact);
   for (const file of files) {
     if (file.path === MANIFEST_NAME) continue;
     seen.add(file.path);
@@ -108,12 +114,12 @@ export function verifyManifest(
     else if (entry.sha256 !== sha256Hex(file.bytes))
       problems.push({ path: file.path, problem: "hash-mismatch" });
   }
-  // A path under a folder the walker left unread (a hidden folder) is present even though no file arrived.
-  const present = [...alsoPresent];
-  const underPresent = (path: string): boolean =>
-    present.some((p) => path === p || path.startsWith(`${p}/`));
+  // A path under a hidden folder the walker never entered is present even though no file arrived. A refused
+  // entry (a symbolic link, a pipe, an unreadable file) stands only for itself: nothing beneath it is known.
+  const underFolder = (path: string): boolean =>
+    alsoPresent.folders.some((f) => path === f || path.startsWith(`${f}/`));
   for (const path of Object.keys(manifest.files)) {
-    if (!seen.has(path) && !underPresent(path)) problems.push({ path, problem: "missing-on-disk" });
+    if (!seen.has(path) && !underFolder(path)) problems.push({ path, problem: "missing-on-disk" });
   }
   return problems;
 }

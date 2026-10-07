@@ -239,7 +239,7 @@ interface DerivedDocument {
 }
 
 // search/engine.ts
-interface EngineHit { path: PagePath; score: number; snippet?: string; }
+interface EngineHit { path: PagePath; score: number; bm25: number; }   // qmd's score and the raw BM25 recovered from it; snippets are the core's (bite 4)
 interface Engine {
   index(documents: DerivedDocument[]): Promise<{ indexed: number; removed: number }>;
   lex(terms: string[], limit: number): Promise<EngineHit[]>;
@@ -249,17 +249,17 @@ interface Engine {
 // Full mode (qmd's hybrid pipeline) is version 1 and adds a method then; nothing in version 0 carries its types.
 
 // search/search.ts
-interface SearchRequest  { question: string; type?: string; topic?: string; includeStale: boolean; limit: number; }
+interface SearchRequest  { question: string; type?: string; topic?: string; includeStale: boolean; limit: number; relax?: boolean; relaxedPool?: number; }   // the last two are benchmark and tuning knobs (D31)
 interface SearchHit {
   path: PagePath; title: string; description?: string; type: string; status: Status; trust: Trust;
   staleAfter?: string; overdue: boolean; replacement?: PagePath; snippet?: string; score: number;
 }
 interface SearchResponse {
-  hits: SearchHit[];
-  strategy: 'all-terms' | 'relaxed';
-  terms: string[]; dropped: string[];          // the content terms used and the stopwords removed
-  considered: number; filteredOut: { type: number; topic: number; stale: number };
-  topicExhausted: boolean;                     // every candidate was outside the topic: the pool was too small
+  hits: SearchHit[];                           // each hit carries its rung ('all-terms' | 'relaxed') and raw BM25
+  strategy: 'all-terms' | 'relaxed' | 'none';  // the rung of the first hit; 'none' with reason 'no-content-terms' when the question had none
+  terms: string[]; dropped: string[];          // the content terms sent, and the stopwords and the terms past the twelfth that were not
+  considered: number; filteredOut: { type: number; topic: number; stale: number; unknown: number }; pool: number;
+  topicExhausted: boolean;                     // a topic filter was set, the pool reached its cap, and the answer is still short
 }
 
 // source/source.ts
@@ -505,13 +505,13 @@ Proposed here; each becomes a row in the decisions file once ruled. D20 to D27 w
 | D22 | Tooling set | npm, Biome, Vitest with Vite pinned, dependency-cruiser through tsconfig | Fewer tools, or ESLint and Prettier | §2.7 |
 | D23 | Cache location | XDG cache or the platform cache folder, per company, ownership checked | Inside the project | A project cannot pre-seed it; one copy per company per machine |
 | D24 | Configuration | One YAML file per company; `--config`, then `OKF_CATALOG_CONFIG`, then `./okf-catalog.yaml`; `company` restricted to one safe path segment; `dev` only with a local source | Flags only; or a config folder | The plugin's `userConfig` needs an environment variable; a file keeps the plugin generic; the name is a path segment and a collection name |
-| D25 | Engine collections and topic filtering | One qmd collection per company and no collection filter on queries. One query carries the content terms plus the topic's path segments and the type value, at a pool of `limit × 4`; while fewer than `limit` survive the filters and the rung returned a full pool, the pool widens fourfold up to 500; the exact filters are kept. Revised after the bite 3 plan review | A fixed pool with a one-time widening (draft 2): a page that is best inside its topic but outside the overall top stayed invisible. One collection per folder: a single-folder query re-enters qmd's ten-times fetch, a list re-enters its merge | Proposed |
+| D25 | Engine collections and topic filtering | One qmd collection per company and no collection filter on queries. One query carries the content terms plus the topic's path segments and the type value, at a pool of `limit × 4`; while fewer than `limit` survive the filters and the rung returned a full pool, the pool widens fourfold up to 500; the exact filters are kept. Revised after the bite 3 plan review. Refined by the bite 3 build review: the relaxed rung's per-term queries carry the content term alone, because BM25 adds up across terms and a type or topic token would be added once per matched term; the all-terms query keeps the tokens, added once, with a residual skew by column weight. Measured on the public corpus: the gold page's own folder as topic lifts hit@1 from 17 to 20 of 25 and never lowers a rank; its type likewise | A fixed pool with a one-time widening (draft 2): a page that is best inside its topic but outside the overall top stayed invisible. One collection per folder: a single-folder query re-enters qmd's ten-times fetch, a list re-enters its merge | Proposed |
 | D26 | Repository visibility at start | The maintainer's call | | Public from the first commit matches "open and useful"; private until version 0 passes avoids showing scaffolding |
 | D27 | How the plugin launches the server | `node` on a path from `userConfig` in version 0; `npx okf-catalog@<exact version>` only after publication, and never for the offline acceptance item | A setup hook installing into `${CLAUDE_PLUGIN_DATA}` | A cold `npx` needs the registry and can print to stdout; the data-folder install is the version 1 answer if start-up or offline use demands it |
 | D28 | Index updates while serving | No lock in the adapter. The refresh is single-flight in the composition layer, and the catalog and index references are swapped together right after `index()` resolves; `close()` waits for a refresh in flight. A test pins that qmd's write loop never yields to the event loop, so a qmd that starts yielding fails the suite, at which point the fallback is a lock taken before a handler reads the catalog. Revised after the bite 3 plan review, which probed the write loop | A read-write lock in the adapter (draft 2): unnecessary on qmd 2.8.3, and it let a request see a catalog older than its index. A second database file built aside: a full re-index on every pull | Proposed |
 | D29 | `stale_after` semantics | Both forms read, each by its own rule: a date by UTC calendar day, a datetime by instant; `spec_text` defaults to the 15 August text and names which form is expected; the other form is reported as a degradation and still judged | One rule for both forms (draft 1): wrong by up to a day; or refusing the unexpected form: forbidden by §11 | The two texts define different instants; D9 says the server reads both |
 | D30 | The qmd metadata block (refinement of D19) | Not rendered in version 0; the derived document carries the metadata as a map, and the adapter renders the block only when a qmd release reads it, behind a flag measured by the benchmark | Render it now as draft 1 and the intent text said | qmd 2.8.3 ignores it; rendering it adds body tokens to every page and puts YAML lines ahead of the title qmd extracts |
-| D31 | The lexical contract | Keywords. Tokens are letters and digits with internal hyphens, two or more characters, English stopwords and question words dropped, Chinese, Japanese and Korean runs split into overlapping pairs, twelve terms at most. A relaxation ladder: all terms as one query; when fewer than `limit` survive, one query per term, fused by summed BM25 recovered from qmd's score, ranked by terms matched then score, with a one-percent floor. Both rungs report the raw BM25 scale, the rung on every hit, and a question with no content terms answers with none and says why. Revised after the bite 3 plan review | Passing the question through unchanged: qmd ANDs every word. Reciprocal-rank fusion (draft 2): a term present in every page, such as the collection name in the path column, votes as loudly as a real one because SQLite floors its inverse document frequency | Proposed |
+| D31 | The lexical contract | Keywords. Tokens are letters and digits with internal hyphens, two or more characters, English stopwords and question words dropped, Chinese, Japanese and Korean runs split into overlapping pairs, twelve terms at most. A relaxation ladder: all terms as one query; when fewer than `limit` survive, one query per term, fused by summed BM25 recovered from qmd's score, ranked by terms matched then score, with a one-percent floor. Both rungs report the raw BM25 scale, the rung on every hit, and a question with no content terms answers with none and says why. Revised after the bite 3 plan review. Refined by the bite 3 build: every engine query completes the tie group at its cut, because qmd orders equal scores by insertion order; a run of hyphens separates tokens; terms past the twelfth are reported as dropped; the relaxed per-term pool is the first rung's (a pool of 100 moved three questions up and three down) and stays adjustable through `relaxedPool` | Passing the question through unchanged: qmd ANDs every word. Reciprocal-rank fusion (draft 2): a term present in every page, such as the collection name in the path column, votes as loudly as a real one because SQLite floors its inverse document frequency | Proposed |
 | D32 | Two servers for one company | One process per company, enforced: an exclusive lock file in the company's cache folder holding the process id, stale when that process is gone; a process that cannot take it serves from a private per-process folder removed at exit. From the bite 3 plan review | Nothing (draft 2): a second Claude Code window on the same company could silently empty the first one's index | Proposed |
 
 ## 5. Risks to retire early
