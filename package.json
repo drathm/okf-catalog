@@ -1,6 +1,6 @@
 {
   "name": "okf-catalog",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "An MCP server that serves a company's Open Knowledge Format (OKF) bundle to AI agents, with citations, provenance and a publish loop: qmd done right for OKF.",
   "keywords": [
     "okf",

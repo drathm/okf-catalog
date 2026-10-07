@@ -1,12 +1,14 @@
 # okf-catalog
 
+[![npm](https://img.shields.io/npm/v/okf-catalog)](https://www.npmjs.com/package/okf-catalog)
+
 A small-company hosted knowledge catalog for AI agents.
 
 okf-catalog is an MCP server that serves a company's [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format) bundle to agents. It runs on a developer's machine today and from a cheap cloud recipe later, so that local coding agents (Claude Code, Codex, Grok Build) and the web versions of Claude and ChatGPT answer from the same cited knowledge.
 
 What it adds: **qmd done right for OKF.** [qmd](https://github.com/tobi/qmd) is the best Markdown search engine there is. okf-catalog makes it understand OKF's fields: titles, descriptions and tags ranked as they should be, status and recheck dates respected, trust and provenance returned with every answer, deprecated pages pointing to their replacements.
 
-**Status: version 0 (0.1.1) on npm, not yet accepted.** Every item of the version 0 acceptance list that a test can prove is proven on every run; the items that need a person on a clean account (a signed-in Claude Code answering from a bundle, a real publish, the network off) are pending, with their runbook in [docs/acceptance/version-0.md](docs/acceptance/version-0.md). The package is public on npm as `okf-catalog` (0.1.0 published 2026-10-07; 0.1.1 removes a shipped lock file that made the install 3 GB); the licence is Apache-2.0 (decision D1). Start with [docs/intent.md](docs/intent.md); the implementation plan and its execution record are under [docs/plans/](docs/plans/).
+**Status: version 0 (0.1.2) on npm, not yet accepted.** Every item of the version 0 acceptance list that a test can prove is proven on every run; the items that need a person on a clean account (a signed-in Claude Code answering from a bundle, a real publish, the network off) are pending, with their runbook in [docs/acceptance/version-0.md](docs/acceptance/version-0.md). The package is public on npm as `okf-catalog`; releases are tagged `v<version>` and published by the repository's release workflow through npm's trusted publishing, each with a provenance statement, and `CHANGELOG.md` has the entries. The licence is Apache-2.0 (decision D1). Start with [docs/intent.md](docs/intent.md); the implementation plan and its execution record are under [docs/plans/](docs/plans/).
 
 ## Quickstart
 
@@ -23,7 +25,7 @@ git clone https://github.com/drathm/okf-catalog.git && cd okf-catalog
 NODE_LLAMA_CPP_SKIP_DOWNLOAD=1 npm ci
 ```
 
-`npm ci` builds `dist/` on its way out (the `prepare` script), and the flag keeps qmd's native dependency from downloading or compiling anything: lexical mode needs no model. Check the install and a bundle (`node dist/cli.js` in a checkout stands in for `okf-catalog`, or `npm install -g .` puts the command on PATH):
+`npm ci` builds `dist/` on its way out (the `prepare` script), and the flag keeps qmd's native dependency from downloading or compiling anything: lexical mode needs no model. Either install pulls about 230 MB of dependencies, most of it qmd's search engine and its native packages. Check the install and a bundle (`node dist/cli.js` in a checkout stands in for `okf-catalog`, or `npm install -g .` puts the command on PATH):
 
 ```bash
 okf-catalog --version
