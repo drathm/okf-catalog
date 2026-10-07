@@ -13,10 +13,12 @@
   },
   "files": [
     "dist",
+    "recipes/publish",
     "NOTICE"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "prepare": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "lint": "biome ci .",
     "format": "biome check --write .",

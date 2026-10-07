@@ -106,11 +106,24 @@ describe("the publish loop", { timeout: 120_000 }, () => {
     const root = mkdtempSync(join(tmpdir(), "okf-catalog-loop-"));
     dirs.push(root);
     const { bin, log } = stubCheckers(root);
+    // The person's own git configuration converts line endings and runs a clean filter: push.sh must not let it.
+    const home = join(root, "home");
+    mkdirSync(home);
+    writeFileSync(
+      join(home, ".gitconfig"),
+      '[core]\n\tautocrlf = input\n\tattributesfile = ~/.gitattributes\n[filter "shout"]\n\tclean = tr a-z A-Z\n\tsmudge = cat\n',
+    );
+    writeFileSync(join(home, ".gitattributes"), "* text=auto\n*.html filter=shout\n");
+    writeFileSync(join(root, "okf-base.yaml"), "name: loop\n");
     const env = {
       ...GIT_ENV,
+      HOME: home,
+      GIT_CONFIG_GLOBAL: join(home, ".gitconfig"),
       PATH: `${bin}:${process.env.PATH ?? ""}`,
       OKF_CATALOG_BIN: `${process.execPath} ${join(REPO, "dist", "cli.js")}`,
       OKF_CATALOG_NOW: NOW_ISO,
+      OKFLINT_MANIFEST: join(root, "okf-base.yaml"),
+      OKF_SCHEMA: "1",
     };
     const script = (name: string, args: string[], extra: Record<string, string> = {}) =>
       spawnSync("sh", [join(RECIPE, name), ...args], {
@@ -123,6 +136,7 @@ describe("the publish loop", { timeout: 120_000 }, () => {
     mkdirSync(join(src, "kb"), { recursive: true });
     writeFileSync(join(src, "kb", "alpha.md"), PAGE("Alpha", "alpha one"));
     writeFileSync(join(src, "kb", "beta.md"), PAGE("Beta", "beta body"));
+    writeFileSync(join(src, "kb", "crlf.html"), "<p>line one</p>\r\n<p>two</p>\r\n");
     writeFileSync(join(src, "okf-catalog.yaml"), "company: loop\nsource:\n  local: ./kb\n");
     git(src, "init", "-q", "-b", "main");
     git(src, "add", "-A");
@@ -130,9 +144,12 @@ describe("the publish loop", { timeout: 120_000 }, () => {
     const sha1 = git(src, "rev-parse", "HEAD");
     const origin = join(root, "origin.git");
     git(root, "init", "-q", "--bare", origin);
+    // The workflow's checkout: shallow, of the source branch, with the remote the token lives on.
+    git(root, "init", "-q", "--bare", join(root, "source.git"));
+    git(src, "push", "-q", "--", join(root, "source.git"), "main:main");
     const clone = join(root, "clone");
-    git(root, "init", "-q", clone);
-    git(clone, "remote", "add", "origin", origin);
+    git(root, "clone", "-q", "--depth", "1", "--", `file://${join(root, "source.git")}`, clone);
+    git(clone, "remote", "set-url", "origin", origin);
 
     // pack.sh: checkers, pack, checkers; it prints the commit it recorded.
     const packed1 = join(root, "packed1");
@@ -149,9 +166,9 @@ describe("the publish loop", { timeout: 120_000 }, () => {
     expect(pack1.status, pack1.stderr).toBe(0);
     expect(pack1.stdout.trim()).toBe(sha1);
     expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([
-      `okflint validate ${join(src, "kb")}`,
+      `okflint validate --manifest ${join(root, "okf-base.yaml")} ${join(src, "kb")}`,
       `okf-schema validate --path ${join(src, "kb")}`,
-      `okflint validate ${packed1}`,
+      `okflint validate --manifest ${join(root, "okf-base.yaml")} ${packed1}`,
       `okf-schema validate --path ${packed1}`,
     ]);
     expect(JSON.parse(readFileSync(join(packed1, "manifest.json"), "utf8")).commit).toBe(sha1);
@@ -161,6 +178,17 @@ describe("the publish loop", { timeout: 120_000 }, () => {
     expect(push1.status, push1.stderr).toBe(0);
     const tip1 = git(origin, "rev-parse", "published");
     expect(git(origin, "rev-list", "--count", "published")).toBe("1");
+    // The bytes on the branch are the bytes pack hashed: no line-ending conversion, no clean filter.
+    expect(git(origin, "cat-file", "-p", "published:crlf.html")).toBe(
+      "<p>line one</p>\r\n<p>two</p>",
+    );
+    expect(
+      (
+        JSON.parse(git(origin, "cat-file", "-p", "published:manifest.json")) as {
+          files: Record<string, { bytes: number }>;
+        }
+      ).files["crlf.html"]?.bytes,
+    ).toBe(29);
     expect(git(origin, "log", "-1", "--format=%s", "published")).toBe(`publish ${sha1}`);
 
     // The server side, in process: the git source over file://, the runtime, the poller driven by tick().
@@ -196,7 +224,7 @@ describe("the publish loop", { timeout: 120_000 }, () => {
     });
     const poller = createPoller({
       runtime,
-      source,
+      source: () => source,
       intervalMs: 60_000,
       log: quiet,
       clock: () => NOW,
@@ -249,6 +277,26 @@ describe("the publish loop", { timeout: 120_000 }, () => {
 
     // A checker that fails after pack stops the publish: nothing new reaches the branch.
     const packed3 = join(root, "packed3");
+    // Without an okflint manifest, okflint is left out and okf-schema still runs.
+    writeFileSync(log, "");
+    const packed4 = join(root, "packed4");
+    const noLint = script(
+      "pack.sh",
+      [
+        "--config",
+        join(src, "okf-catalog.yaml"),
+        "--source",
+        join(src, "kb"),
+        "--out",
+        packed4,
+        "--commit",
+        sha2,
+      ],
+      { OKFLINT_MANIFEST: "" },
+    );
+    expect(noLint.status, noLint.stderr).toBe(0);
+    expect(readFileSync(log, "utf8")).not.toMatch(/okflint/);
+    expect(readFileSync(log, "utf8")).toMatch(/okf-schema validate --path/);
     const failing = script(
       "pack.sh",
       [

@@ -201,6 +201,8 @@ export async function runServe(argv: string[]): Promise<number> {
   let privateWork: string | undefined;
   let poller: Poller | undefined;
   let closing: Promise<void> | undefined;
+  /** Ends any git in flight and refuses new ones; set once a repository source's runner exists (bite 5 review M2). */
+  let abortTransport: () => void = () => undefined;
 
   if ("error" in found) {
     runtime = refusingRuntime(found.error, log);
@@ -224,6 +226,7 @@ export async function runServe(argv: string[]): Promise<number> {
           : redactCredentials(configured.repository);
       // A repository source is built inside prepare(), once the lock has decided the work folder (D47).
       let gitSource: GitSource | undefined;
+      let gitRunner: GitRunner | undefined;
       const placeholder: Source = {
         kind: "git",
         load: async () => {
@@ -288,12 +291,14 @@ export async function runServe(argv: string[]): Promise<number> {
           };
           if (configured.kind === "git") {
             const binary = await gitBinary(root.root);
+            gitRunner?.abort();
             const runner = createGitRunner({
               binary,
               allowProtocols: `https:ssh${process.env.OKF_CATALOG_GIT_PROTOCOLS === "file" ? ":file" : ""}`,
               cacheRoot: root.root,
               env: process.env,
             });
+            gitRunner = runner;
             await requireGitVersion(runner, work);
             gitSource = createGitSource({
               repository: configured.repository,
@@ -331,22 +336,25 @@ export async function runServe(argv: string[]): Promise<number> {
       const startPoller = (): void => {
         if (pollerStarted || configured.kind !== "git") return;
         pollerStarted = true;
+        // The poller exists once the first load settles, whatever its outcome, with the source resolved lazily,
+        // so a failed prepare() (git missing, the cache unusable) is retried by its ticks (bite 5 review M4).
         void serving
           .ready()
           .catch(() => undefined)
           .then(() => {
-            if (closing !== undefined || gitSource === undefined) return;
+            if (closing !== undefined) return;
             poller = createPoller({
               runtime: serving,
-              source: gitSource,
+              source: () => gitSource,
               intervalMs: config.serve.pullIntervalMs,
               log,
               clock,
-              immediate: gitSource.startedFromDisk(),
+              immediate: gitSource?.startedFromDisk() ?? false,
             });
             poller.start();
           });
       };
+      abortTransport = () => gitRunner?.abort();
       runtime = {
         ...serving,
         start: () => {
@@ -392,6 +400,7 @@ export async function runServe(argv: string[]): Promise<number> {
       log.info("serve.shutdown", { reason });
       try {
         await poller?.stop();
+        abortTransport();
         await runtime.shutdown();
       } catch (error) {
         log.error("transport.error", { error: (error as Error).message });
@@ -403,22 +412,28 @@ export async function runServe(argv: string[]): Promise<number> {
     return closing;
   };
   /** A signal ends the process: the drain gets a deadline, and a second signal ends it at once. */
-  const onSignal = (signal: string): void => {
-    signals += 1;
-    if (signals > 1) {
-      cleanup();
-      process.exit(130);
-    }
+  /** A shutdown with a deadline: the drain gets its time, then the process ends anyway, git included. */
+  const shutdownAndExit = (reason: string): void => {
     const deadline = setTimeout(() => {
-      log.error("serve.shutdown", { reason: `${signal}: the drain did not finish in time` });
+      log.error("serve.shutdown", { reason: `${reason}: the drain did not finish in time` });
+      abortTransport();
       cleanup();
       process.exit(0);
     }, SHUTDOWN_DEADLINE_MS);
     deadline.unref();
-    void shutdown(signal).then(() => {
+    void shutdown(reason).then(() => {
       clearTimeout(deadline);
       process.exit(0);
     });
+  };
+  const onSignal = (signal: string): void => {
+    signals += 1;
+    if (signals > 1) {
+      abortTransport();
+      cleanup();
+      process.exit(130);
+    }
+    shutdownAndExit(signal);
   };
   onTransportFailure = (error) => {
     const code = (error as NodeJS.ErrnoException).code ?? "";
@@ -426,8 +441,8 @@ export async function runServe(argv: string[]): Promise<number> {
       void shutdown(`the client stopped reading (${code})`).then(() => process.exit(0));
     }
   };
-  process.stdin.on("end", () => void shutdown("stdin ended").then(() => process.exit(0)));
-  process.stdin.on("close", () => void shutdown("stdin closed").then(() => process.exit(0)));
+  process.stdin.on("end", () => shutdownAndExit("stdin ended"));
+  process.stdin.on("close", () => shutdownAndExit("stdin closed"));
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
     process.on(signal, () => onSignal(signal));
   }

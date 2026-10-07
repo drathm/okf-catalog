@@ -469,4 +469,47 @@ describe("createRuntime (bite 5: a source that fails, falls back and reports)", 
     });
     await runtime.shutdown();
   });
+
+  it("logs the detail a failing load carries on refresh.failed, beside the one-line message", async () => {
+    const records: Array<{ event: string; fields: Record<string, unknown> }> = [];
+    const log = {
+      error: (event: string, fields: Record<string, unknown> = {}) =>
+        void records.push({ event, fields }),
+      warn() {},
+      info() {},
+      debug() {},
+    };
+    const files = readFixture("behaviours");
+    let failing = false;
+    const source: Source = {
+      kind: "git",
+      load: async () => {
+        if (failing) {
+          const error = new Error(
+            "the repository r could not be fetched; the log has git's message",
+          ) as Error & { detail?: string };
+          error.detail = "fatal: unable to access 'https://host/r.git/': HTTP 401";
+          throw error;
+        }
+        return { walk: { files, hidden: [], hiddenFolders: [], refusals: [] } };
+      },
+      describe: () => "r",
+    };
+    const runtime = createRuntime({
+      company: "b",
+      source,
+      prepare: async () => ({ engine: countingEngine(), lock: "exclusive" as const }),
+      load: options,
+      clock: () => NOW,
+      log,
+    });
+    runtime.start();
+    await runtime.ready();
+    failing = true;
+    expect((await runtime.refresh()).outcome).toBe("failed");
+    const record = records.find((r) => r.event === "refresh.failed");
+    expect(record?.fields.error).toMatch(/could not be fetched/);
+    expect(record?.fields.detail).toMatch(/HTTP 401/);
+    await runtime.shutdown();
+  });
 });

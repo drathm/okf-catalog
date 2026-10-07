@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -537,13 +537,10 @@ process.exit(0);
       const exit = await run.end(10_000);
       expect(exit.code).toBe(0);
       await new Promise((r) => setTimeout(r, 400));
-      let alive = false;
-      try {
-        alive = execFileSync("pgrep", ["-f", marker], { encoding: "utf8" }).trim().length > 0;
-      } catch {
-        alive = false;
-      }
-      expect(alive).toBe(false);
+      const probe = spawnSync("pgrep", ["-f", marker], { encoding: "utf8" });
+      if (probe.status !== 0 && probe.status !== 1)
+        throw new Error(`pgrep failed: ${probe.stderr}`);
+      expect(probe.status).toBe(1);
       expect(run.stderr()).toMatch(/"event":"serve.shutdown"/);
     } finally {
       rmSync(standIn, { recursive: true, force: true });

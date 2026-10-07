@@ -18,6 +18,10 @@ env:
   BUNDLE_PATH: kb
   CONFIG_PATH: okf-catalog.yaml
   PUBLISHED_BRANCH: published
+  # The checkers are your gates: okflint needs its own manifest file (unset leaves it out); OKF_SCHEMA is 1, or
+  # strict to fail on warnings, or empty to leave okf-schema out.
+  OKFLINT_MANIFEST: okf-base.yaml
+  OKF_SCHEMA: "1"
   # The server package from a pinned commit of its repository, never a bare package name (the npm name is unclaimed).
   OKF_CATALOG_SOURCE: "github:drathm/okf-catalog#0000000000000000000000000000000000000000"
 
@@ -36,22 +40,31 @@ jobs:
         with:
           node-version: "22"
       - uses: astral-sh/setup-uv@0c5e2b8115b80b4c7c5ddf6ffdd634974642d182 # v5.4.1
-      - name: install the checkers, pinned
+        with:
+          version: "0.11.19"
+      - name: install the server package from its pinned source, then the checkers from its lock
         run: |
-          uv venv "$RUNNER_TEMP/checkers"
-          uv pip install --python "$RUNNER_TEMP/checkers/bin/python" --require-hashes -r recipes/publish/checkers.lock
+          # The server package carries the recipe's scripts and the hash-pinned checker lock; this file is the
+          # only thing a company copies. The package builds itself on install (its `prepare` script).
+          NODE_LLAMA_CPP_SKIP_DOWNLOAD=1 npm install --global "$OKF_CATALOG_SOURCE"
+          RECIPE="$(npm root -g)/okf-catalog/recipes/publish"
+          echo "RECIPE=$RECIPE" >> "$GITHUB_ENV"
+          uv venv --python 3.12 "$RUNNER_TEMP/checkers"
+          uv pip install --python "$RUNNER_TEMP/checkers/bin/python" --require-hashes -r "$RECIPE/checkers.lock"
           echo "$RUNNER_TEMP/checkers/bin" >> "$GITHUB_PATH"
-      - name: install the server package from its pinned source
-        run: npm install --global "$OKF_CATALOG_SOURCE"
       - name: check, pack, check
         id: pack
         run: |
-          commit=$(sh recipes/publish/pack.sh --config "$CONFIG_PATH" --source "$BUNDLE_PATH" --out "$RUNNER_TEMP/bundle" --commit "$GITHUB_SHA")
+          commit=$(sh "$RECIPE/pack.sh" --config "$CONFIG_PATH" --source "$BUNDLE_PATH" --out "$RUNNER_TEMP/bundle" --commit "$GITHUB_SHA")
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          # One archive, so file names the artifact store would refuse (quotes, colons, stars) travel untouched;
+          # push.sh rides along, so the publish job installs nothing and runs git alone.
+          cp "$RECIPE/push.sh" "$RUNNER_TEMP/push.sh"
+          tar -C "$RUNNER_TEMP" -cf "$RUNNER_TEMP/bundle.tar" bundle push.sh
       - uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: bundle
-          path: ${{ runner.temp }}/bundle
+          path: ${{ runner.temp }}/bundle.tar
           if-no-files-found: error
 
   publish:
@@ -66,8 +79,10 @@ jobs:
       - uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
           name: bundle
-          path: ${{ runner.temp }}/bundle
+          path: ${{ runner.temp }}
       - name: commit the bundle onto the published branch and push
         env:
           SOURCE_COMMIT: ${{ needs.build.outputs.commit }}
-        run: sh recipes/publish/push.sh --repo "$GITHUB_WORKSPACE" --bundle "$RUNNER_TEMP/bundle" --commit "$SOURCE_COMMIT" --branch "$PUBLISHED_BRANCH"
+        run: |
+          tar -C "$RUNNER_TEMP" -xf "$RUNNER_TEMP/bundle.tar"
+          sh "$RUNNER_TEMP/push.sh" --repo "$GITHUB_WORKSPACE" --bundle "$RUNNER_TEMP/bundle" --commit "$SOURCE_COMMIT" --branch "$PUBLISHED_BRANCH"

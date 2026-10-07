@@ -60,16 +60,27 @@ describe("the publish recipe", () => {
       expect(text, name).toMatch(/\nset -eu\n/);
       expect(() => execFileSync("sh", ["-n", join(RECIPE, name)]), name).not.toThrow();
     }
+    // okflint 0.5.0 needs its manifest (`--manifest`; exit 2 without one) and okf-schema 0.12.0 fails the spec's
+    // own example on its log.md: both are the company's gates, run when their setting is given.
     const order = [
-      'okflint validate "$SOURCE"',
+      'okflint validate --manifest "$OKFLINT_MANIFEST" "$SOURCE"',
       'okf-schema validate --path "$SOURCE"',
       "pack --config",
-      'okflint validate "$OUT"',
+      'okflint validate --manifest "$OKFLINT_MANIFEST" "$OUT"',
       'okf-schema validate --path "$OUT"',
     ].map((s) => pack.indexOf(s));
     expect(order.every((i) => i >= 0)).toBe(true);
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(push).not.toMatch(/push .*--force|--force-with-lease/);
     expect(push).toMatch(/MESSAGE="publish \$COMMIT"/);
+  });
+
+  it("pins the interpreter the checker lock was built for, and names the checkers' settings", () => {
+    expect(workflow).toMatch(/uv venv --python 3\.12/);
+    expect(workflow).toMatch(/--require-hashes -r "\$RECIPE\/checkers\.lock"/);
+    expect(workflow).toMatch(/OKFLINT_MANIFEST: /);
+    expect(workflow).toMatch(/OKF_SCHEMA: /);
+    expect(pack).toMatch(/OKF_SCHEMA/);
+    expect(pack).toMatch(/--strict/);
   });
 });

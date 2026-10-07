@@ -58,9 +58,11 @@ const HFS_IGNORABLE = /[‌-‏‪-‮⁪-⁯﻿]/gu;
 
 /** Whether a path segment is `.git`, or one of the spellings a file system would fold onto it. */
 export function isDotGitSegment(segment: string): boolean {
-  const lowered = segment.normalize("NFC").toLowerCase();
+  // NTFS reads a name up to its first colon (a stream name follows), and ignores trailing dots and spaces.
+  const colon = segment.indexOf(":");
+  const lowered = (colon === -1 ? segment : segment.slice(0, colon)).normalize("NFC").toLowerCase();
   if (/^\.git[. ]*$/.test(lowered)) return true;
-  if (lowered === "git~1") return true;
+  if (/^git~1[. ]*$/.test(lowered)) return true;
   return lowered.replace(HFS_IGNORABLE, "") === ".git";
 }
 

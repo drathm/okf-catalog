@@ -13,7 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_CAPS } from "../../src/bundle/model.js";
-import { createGitSource } from "../../src/source/git.js";
+import { createGitSource, isStaleLockMessage, sshBatchSetting } from "../../src/source/git.js";
 import { createGitRunner, type GitRunner } from "../../src/source/git-runner.js";
 
 const NOW = new Date("2026-10-07T10:00:00Z");
@@ -73,7 +73,10 @@ const PAGE = (title: string) =>
 const trees = (work: string): string[] => readdirSync(work).filter((n) => n.startsWith("tree-"));
 
 /** A runner that also counts the git subcommands it ran. */
-function countingRunner(cacheRoot: string): GitRunner & { commands: string[] } {
+function countingRunner(cacheRoot: string): GitRunner & {
+  commands: string[];
+  calls: Array<{ args: readonly string[]; extraConfig: readonly string[] }>;
+} {
   const inner = createGitRunner({
     binary: execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(),
     allowProtocols: "https:ssh:file",
@@ -81,10 +84,14 @@ function countingRunner(cacheRoot: string): GitRunner & { commands: string[] } {
     env: GIT_ENV,
   });
   const commands: string[] = [];
+  const calls: Array<{ args: readonly string[]; extraConfig: readonly string[] }> = [];
   return {
     commands,
+    calls,
+    env: inner.env,
     run: (args, options) => {
       commands.push(args[0] ?? "");
+      calls.push({ args, extraConfig: options.extraConfig ?? [] });
       return inner.run(args, options);
     },
     abort: () => inner.abort(),
@@ -138,7 +145,14 @@ describe("createGitSource", { timeout: 60_000 }, () => {
       extracted: r.first,
       fetchedAt: NOW.toISOString(),
     });
-    expect(runner.commands).toEqual(["clone", "fetch", "rev-parse", "ls-tree", "cat-file"]);
+    expect(runner.commands).toEqual([
+      "config",
+      "clone",
+      "fetch",
+      "rev-parse",
+      "ls-tree",
+      "cat-file",
+    ]);
     expect(src.describe()).toBe(r.url);
   });
 
@@ -150,7 +164,7 @@ describe("createGitSource", { timeout: 60_000 }, () => {
     runner.commands.length = 0;
     const again = await src.load();
     expect(again.published?.commit).toBe(r.first);
-    expect(runner.commands).toEqual(["fetch", "rev-parse"]);
+    expect(runner.commands).toEqual(["config", "fetch", "rev-parse"]);
     expect(trees(join(work, "source"))).toHaveLength(1);
   });
 
@@ -308,5 +322,89 @@ describe("createGitSource", { timeout: 60_000 }, () => {
     const { src } = source("https://alice:secret@host.example/o/r.git", work);
     expect(src.describe()).toBe("https://***@host.example/o/r.git");
     await expect(src.load()).rejects.toThrow(/symbolic link/);
+  });
+
+  it("tells the poller the remote moved until the runtime has served the fetched commit, and stays quiet on a refused one", async () => {
+    const r = remote({ "a.md": PAGE("A") });
+    const work = temp();
+    const { src } = source(r.url, work);
+    const one = (await src.load()).published?.commit ?? "";
+    src.served(one);
+    expect(await src.changed()).toBe("same");
+    r.write({ "a.md": PAGE("A2") });
+    const two = r.commit("two");
+    r.push();
+    expect(await src.changed()).toBe("moved");
+    // Fetched and extracted, but the runtime never swapped it in (its index failed): still moved.
+    expect((await src.load()).published?.commit).toBe(two);
+    expect(await src.changed()).toBe("moved");
+    src.served(two);
+    expect(await src.changed()).toBe("same");
+    // A refused commit is remembered as attempted, so it is not fetched again every tick.
+    symlinkSync("a.md", join(r.src, "link.md"));
+    r.commit("link");
+    r.push();
+    expect((await src.load()).walk.fatal?.rule).toBe("symlink");
+    expect(await src.changed()).toBe("same");
+  });
+
+  it("adds BatchMode to ssh only when neither variable nor configuration names an ssh command", async () => {
+    expect(sshBatchSetting({}, undefined)).toEqual(["core.sshCommand=ssh -o BatchMode=yes"]);
+    expect(sshBatchSetting({ GIT_SSH_COMMAND: "ssh -i key" }, undefined)).toEqual([]);
+    expect(sshBatchSetting({ GIT_SSH: "/usr/bin/myssh" }, undefined)).toEqual([]);
+    expect(sshBatchSetting({}, "ssh -o IdentitiesOnly=yes")).toEqual([]);
+    const r = remote({ "a.md": PAGE("A") });
+    const work = temp();
+    const { src, runner } = source(r.url, work);
+    await src.load();
+    const transport = runner.calls.filter((c) =>
+      ["clone", "fetch", "ls-remote"].includes(c.args[0] ?? ""),
+    );
+    expect(transport.length).toBeGreaterThan(0);
+    for (const call of transport)
+      expect(call.extraConfig).toContain("core.sshCommand=ssh -o BatchMode=yes");
+    expect(
+      runner.calls.some((c) => c.args[0] === "config" && c.args.includes("core.sshCommand")),
+    ).toBe(true);
+  });
+
+  it("ignores a state file whose commits are not hashes and a tree folder that is a link", async () => {
+    const r = remote({ "a.md": PAGE("A") });
+    const work = temp();
+    const { src } = source(r.url, work);
+    const one = (await src.load()).published?.commit ?? "";
+    src.served(one);
+    const statePath = join(work, "source", "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, string>;
+    writeFileSync(
+      statePath,
+      JSON.stringify({ ...state, served: "ab/../../elsewhere", extracted: "../x" }),
+    );
+    expect(await src.loadServed()).toBeUndefined();
+    writeFileSync(statePath, JSON.stringify(state));
+    rmSync(join(work, "source", `tree-${one}`), { recursive: true, force: true });
+    const elsewhere = temp();
+    writeFileSync(join(elsewhere, "a.md"), PAGE("Planted"));
+    symlinkSync(elsewhere, join(work, "source", `tree-${one}`));
+    expect(await src.loadServed()).toBeUndefined();
+  });
+
+  it("recognises git's stale-lock sentence and nothing else", () => {
+    expect(
+      isStaleLockMessage("fatal: Unable to create '/x/repo.git/shallow.lock': File exists.\\u000a"),
+    ).toBe(true);
+    expect(
+      isStaleLockMessage(
+        "error: cannot lock ref 'refs/remotes/origin/published': Unable to create '/x/repo.git/refs/remotes/origin/published.lock': File exists.",
+      ),
+    ).toBe(true);
+    expect(
+      isStaleLockMessage(
+        "fatal: unable to access 'https://host/repo.lock/': Could not resolve host",
+      ),
+    ).toBe(false);
+    expect(
+      isStaleLockMessage("fatal: could not read from remote repository; File exists elsewhere"),
+    ).toBe(false);
   });
 });

@@ -33,6 +33,7 @@ function fakes(initial: { loaded?: boolean; refusing?: string } = {}) {
   let changes: RemoteChange[] = [];
   let changeError: string | undefined;
   let refreshDelayMs = 0;
+  let changeDelayMs = 0;
   let refreshOutcome: RefreshOutcome = { outcome: "swapped", generation: {} as Generation };
   const runtime: Runtime = {
     async ready() {
@@ -62,7 +63,12 @@ function fakes(initial: { loaded?: boolean; refusing?: string } = {}) {
       throw new Error("unused");
     },
     changed: async () => {
-      if (changeError !== undefined) throw new Error(changeError);
+      if (changeDelayMs > 0) await new Promise((r) => setTimeout(r, changeDelayMs));
+      if (changeError !== undefined) {
+        const error = new Error(changeError) as Error & { detail?: string };
+        error.detail = "fatal: could not read from the remote (stub detail)";
+        throw error;
+      }
       return changes.shift() ?? "same";
     },
     describe: () => "git@h:o/r.git",
@@ -85,6 +91,9 @@ function fakes(initial: { loaded?: boolean; refusing?: string } = {}) {
     slowRefresh: (ms: number) => {
       refreshDelayMs = ms;
     },
+    slowChange: (ms: number) => {
+      changeDelayMs = ms;
+    },
     setRefreshOutcome: (o: RefreshOutcome) => {
       refreshOutcome = o;
     },
@@ -94,7 +103,12 @@ function fakes(initial: { loaded?: boolean; refusing?: string } = {}) {
 describe("createPoller", () => {
   it("refreshes only when the remote moved, and says so in its state and its one log record per tick", async () => {
     const f = fakes();
-    const poller = createPoller({ ...f, intervalMs: 60_000, clock: () => NOW });
+    const poller = createPoller({
+      ...f,
+      source: () => f.source,
+      intervalMs: 60_000,
+      clock: () => NOW,
+    });
     f.setChanges(["same", "moved", "same"]);
     expect(await poller.tick()).toBe("unchanged");
     expect(await poller.tick()).toBe("refreshed");
@@ -108,7 +122,12 @@ describe("createPoller", () => {
 
   it("refreshes without asking the remote while the first load has not succeeded or the server is refusing", async () => {
     const f = fakes({ loaded: false, refusing: "the repository could not be fetched" });
-    const poller = createPoller({ ...f, intervalMs: 60_000, clock: () => NOW });
+    const poller = createPoller({
+      ...f,
+      source: () => f.source,
+      intervalMs: 60_000,
+      clock: () => NOW,
+    });
     f.setRefreshOutcome({ outcome: "failed", error: "still down" });
     expect(await poller.tick()).toBe("failed");
     f.setRefreshOutcome({ outcome: "swapped", generation: {} as Generation });
@@ -122,7 +141,12 @@ describe("createPoller", () => {
 
   it("logs a branch that is gone once at warn level, then quietly, and never refreshes for it", async () => {
     const f = fakes();
-    const poller = createPoller({ ...f, intervalMs: 60_000, clock: () => NOW });
+    const poller = createPoller({
+      ...f,
+      source: () => f.source,
+      intervalMs: 60_000,
+      clock: () => NOW,
+    });
     f.setChanges(["gone", "gone", "gone"]);
     for (let i = 0; i < 3; i++) expect(await poller.tick()).toBe("gone");
     expect(f.state.refreshes).toBe(0);
@@ -134,7 +158,12 @@ describe("createPoller", () => {
     const f = fakes();
     f.slowRefresh(100);
     f.setChanges(["moved"]);
-    const poller = createPoller({ ...f, intervalMs: 60_000, clock: () => NOW });
+    const poller = createPoller({
+      ...f,
+      source: () => f.source,
+      intervalMs: 60_000,
+      clock: () => NOW,
+    });
     const first = poller.tick();
     expect(await poller.tick()).toBe("skipped");
     expect(await first).toBe("refreshed");
@@ -143,7 +172,12 @@ describe("createPoller", () => {
 
   it("treats a failing remote check as a failed tick and runs the next tick normally", async () => {
     const f = fakes();
-    const poller = createPoller({ ...f, intervalMs: 60_000, clock: () => NOW });
+    const poller = createPoller({
+      ...f,
+      source: () => f.source,
+      intervalMs: 60_000,
+      clock: () => NOW,
+    });
     f.failChanges("the repository could not be asked; the log has git's message");
     expect(await poller.tick()).toBe("failed");
     f.failChanges(undefined);
@@ -154,7 +188,13 @@ describe("createPoller", () => {
   it("runs on a chained timer that does not keep the process alive, at once when asked, and stops cleanly", async () => {
     const f = fakes();
     f.setChanges(["same", "same", "same", "same"]);
-    const poller = createPoller({ ...f, intervalMs: 30, clock: () => NOW, immediate: true });
+    const poller = createPoller({
+      ...f,
+      source: () => f.source,
+      intervalMs: 30,
+      clock: () => NOW,
+      immediate: true,
+    });
     poller.start();
     await new Promise((r) => setTimeout(r, 110));
     const before = f.records.filter((r) => r.event === "poller.tick").length;
@@ -170,15 +210,77 @@ describe("createPoller", () => {
     const f = fakes();
     f.slowRefresh(80);
     f.setChanges(["moved"]);
-    const poller = createPoller({ ...f, intervalMs: 60_000, clock: () => NOW });
+    const poller = createPoller({
+      ...f,
+      source: () => f.source,
+      intervalMs: 60_000,
+      clock: () => NOW,
+    });
     const inFlight = poller.tick();
-    const stopped = poller.stop();
-    expect(await inFlight).toBe("refreshed");
+    // The remote check has answered and the refresh is in flight when stop() arrives: it is awaited, not cut.
+    await new Promise((r) => setTimeout(r, 20));
+    const order: string[] = [];
+    const stopped = poller.stop().then(() => void order.push("stopped"));
+    const outcome = await inFlight.then((o) => {
+      order.push("tick");
+      return o;
+    });
+    expect(outcome).toBe("refreshed");
     await stopped;
+    expect(order).toEqual(["tick", "stopped"]);
     const g = fakes({ loaded: false });
     g.state.closed = true;
-    const late = createPoller({ ...g, intervalMs: 60_000, clock: () => NOW });
+    const late = createPoller({
+      ...g,
+      source: () => g.source,
+      intervalMs: 60_000,
+      clock: () => NOW,
+    });
     expect(await late.tick()).toBe("failed");
     expect(g.records.find((r) => r.event === "poller.tick")?.fields.error).toMatch(/shut down/);
+  });
+
+  it("refreshes through the runtime when no source exists yet (a failed prepare), so the retry runs", async () => {
+    const f = fakes({ loaded: false, refusing: "git was not found on PATH" });
+    const poller = createPoller({
+      ...f,
+      source: () => undefined,
+      intervalMs: 60_000,
+      clock: () => NOW,
+    });
+    expect(await poller.tick()).toBe("refreshed");
+    expect(f.state.refreshes).toBe(1);
+  });
+
+  it("starts no refresh once stopped, even when the remote check in flight says the branch moved", async () => {
+    const f = fakes();
+    f.slowChange(80);
+    f.setChanges(["moved"]);
+    const poller = createPoller({
+      ...f,
+      source: () => f.source,
+      intervalMs: 60_000,
+      clock: () => NOW,
+    });
+    const tick = poller.tick();
+    await new Promise((r) => setTimeout(r, 20));
+    const stopped = poller.stop();
+    expect(await tick).toBe("skipped");
+    await stopped;
+    expect(f.state.refreshes).toBe(0);
+  });
+
+  it("logs the detail a failing remote check carries, beside the one-line message", async () => {
+    const f = fakes();
+    f.failChanges("the repository could not be asked; the log has git's message");
+    const poller = createPoller({
+      ...f,
+      source: () => f.source,
+      intervalMs: 60_000,
+      clock: () => NOW,
+    });
+    expect(await poller.tick()).toBe("failed");
+    const record = f.records.find((r) => r.event === "poller.tick");
+    expect(record?.fields.detail).toMatch(/stub detail/);
   });
 });

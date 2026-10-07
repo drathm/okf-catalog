@@ -208,6 +208,8 @@ describe("git source grammars (bite 5)", () => {
       "ext::sh -c touch%20/tmp/x",
       "-x",
       "host.example/org/repo.git",
+      "https://host.example/org/repo.git?token=s3cret",
+      "https://host.example/org/repo.git#frag",
     ])
       expect(git(`  repository: "${bad}"`).join(" "), bad).toMatch(/source\.repository:/);
     // The suite's own setting: a file:// repository is accepted only when asked for, and a local path never.

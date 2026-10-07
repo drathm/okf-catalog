@@ -24,6 +24,8 @@ const KEEP = [
   "HTTPS_PROXY",
   "ALL_PROXY",
   "NO_PROXY",
+  "all_proxy",
+  "no_proxy",
   "SSL_CERT_FILE",
   "SSL_CERT_DIR",
   "CURL_CA_BUNDLE",
@@ -121,9 +123,11 @@ export interface RunResult {
 
 export interface GitRunner {
   run(args: readonly string[], options: RunOptions): Promise<RunResult>;
-  /** Kills every running command, with its whole process group. */
+  /** Kills every running command, with its whole process group, and refuses every command after it. */
   abort(): void;
   readonly running: number;
+  /** The environment every command runs with, for callers that must know what git will see. */
+  readonly env: NodeJS.ProcessEnv;
 }
 
 export interface RunnerOptions {
@@ -163,11 +167,16 @@ const killGroup = (child: ChildProcess, signal: NodeJS.Signals): void => {
 export function createGitRunner(options: RunnerOptions): GitRunner {
   const env = gitEnvironment(options.env, options.allowProtocols, options.cacheRoot);
   const live = new Set<ChildProcess>();
+  let closed = false;
   const configArgs = (extra: readonly string[] = []): string[] =>
     [...GIT_FIXED_CONFIG, ...extra].flatMap((pair) => ["-c", pair]);
 
   function run(args: readonly string[], run: RunOptions): Promise<RunResult> {
     return new Promise<RunResult>((resolve, reject) => {
+      if (closed) {
+        reject(new GitError("git was aborted by shutdown", { aborted: true }));
+        return;
+      }
       const argv = [
         ...configArgs(run.extraConfig),
         ...(run.gitDir === undefined ? [] : [`--git-dir=${run.gitDir}`]),
@@ -263,10 +272,13 @@ export function createGitRunner(options: RunnerOptions): GitRunner {
   return {
     run,
     abort: () => {
+      // Once aborted, no command starts again: a shutdown must not race a tick into a fresh fetch.
+      closed = true;
       for (const child of live) (child as ChildProcess & { okfAbort?: () => void }).okfAbort?.();
     },
     get running() {
       return live.size;
     },
+    env,
   };
 }

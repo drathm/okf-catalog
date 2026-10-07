@@ -25,6 +25,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "${REPO:-}" ] && [ -n "${BUNDLE:-}" ] && [ -n "${COMMIT:-}" ] || usage
+BUNDLE=$(cd "$BUNDLE" && pwd)
 
 GIT_DIR=$(git -C "$REPO" rev-parse --absolute-git-dir)
 export GIT_DIR
@@ -42,8 +43,13 @@ if git fetch -q "$REMOTE" "refs/heads/$BRANCH" 2>/dev/null; then
   PARENT=$(git rev-parse --verify -q "FETCH_HEAD^{commit}")
 fi
 
-# Stage the packed folder into the private index, as the whole tree, ignore rules included.
-(cd "$BUNDLE" && git --work-tree="$BUNDLE" add -A -f .)
+# Stage every file of the packed folder into the private index as a plain blob, with no filter, no line-ending
+# rule and no ignore rule (git add would apply the person's configuration and change the bytes pack hashed).
+(cd "$BUNDLE" && find . -type f | sed 's|^\./||' | LC_ALL=C sort) > "$TMP/files"
+while IFS= read -r file; do
+  blob=$(git hash-object -w --no-filters -- "$BUNDLE/$file")
+  git update-index --add --cacheinfo "100644,$blob,$file"
+done < "$TMP/files"
 TREE=$(git write-tree)
 
 # The message carries the source commit through a variable, never text from an event.

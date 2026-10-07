@@ -362,7 +362,11 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
       } catch (error) {
         const message = (error as Error).message;
         lastAttempt = { at: deps.clock(), outcome: "failed" };
-        deps.log.error("refresh.failed", { error: message });
+        const detail = (error as { detail?: unknown }).detail;
+        deps.log.error("refresh.failed", {
+          error: message,
+          ...(typeof detail === "string" ? { detail } : {}),
+        });
         return { outcome: "failed", error: message };
       } finally {
         refreshing = undefined;

@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,12 +49,12 @@ const calls = (dir: string) =>
     .trim()
     .split("\n")
     .map((l) => JSON.parse(l) as { argv: string[]; env: Record<string, string>; cwd: string });
+/** Whether a process with the marker runs; pgrep's exit 1 means none, anything else is a broken probe. */
 const alive = (marker: string): boolean => {
-  try {
-    return execSync(`pgrep -f ${marker}`, { encoding: "utf8" }).trim().length > 0;
-  } catch {
-    return false;
-  }
+  const probe = spawnSync("pgrep", ["-f", marker], { encoding: "utf8" });
+  if (probe.status === 0) return probe.stdout.trim().length > 0;
+  if (probe.status === 1) return false;
+  throw new Error(`pgrep failed: ${probe.error?.message ?? probe.stderr}`);
 };
 
 const dirs: string[] = [];
@@ -86,6 +86,8 @@ describe("gitEnvironment", () => {
         SSH_AUTH_SOCK: "/tmp/agent",
         GIT_SSH_COMMAND: "ssh -i key",
         HTTPS_PROXY: "http://proxy:3128",
+        all_proxy: "socks5://proxy:1080",
+        no_proxy: "localhost",
         XDG_CONFIG_HOME: "/home/me/.config",
         DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/bus",
         GIT_DIR: "/evil/.git",
@@ -110,6 +112,8 @@ describe("gitEnvironment", () => {
       SSH_AUTH_SOCK: "/tmp/agent",
       GIT_SSH_COMMAND: "ssh -i key",
       HTTPS_PROXY: "http://proxy:3128",
+      all_proxy: "socks5://proxy:1080",
+      no_proxy: "localhost",
       XDG_CONFIG_HOME: "/home/me/.config",
       DBUS_SESSION_BUS_ADDRESS: "unix:path=/run/bus",
       GIT_TERMINAL_PROMPT: "0",
@@ -166,6 +170,8 @@ describe("createGitRunner", () => {
     expect(call?.env.SSH_AUTH_SOCK).toBe("/tmp/sock");
     expect(call?.env.GIT_ALLOW_PROTOCOL).toBe("https:ssh:file");
     expect(call?.env.GIT_TERMINAL_PROMPT).toBe("0");
+    expect(git.env.GIT_ALLOW_PROTOCOL).toBe("https:ssh:file");
+    expect(git.env.GIT_DIR).toBeUndefined();
     expect(realpathSync(call?.cwd ?? "")).toBe(realpathSync(dir));
   });
 

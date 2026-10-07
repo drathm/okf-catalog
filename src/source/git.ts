@@ -9,6 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
+import { createBatchReader } from "../bundle/cat-file.js";
 import { parseLsTree, type TreeEntry, validateTree } from "../bundle/git-tree.js";
 import type { Caps, Refusal } from "../bundle/model.js";
 import { type WalkResult, walkBundle } from "../fs/walk.js";
@@ -63,6 +64,22 @@ interface State {
 const REPO = "repo.git";
 const STATE = "state.json";
 const TREE_NAME = /^tree-[0-9a-f]{40,64}$/;
+const COMMIT = /^[0-9a-f]{40,64}$/;
+const BATCH_MODE = "core.sshCommand=ssh -o BatchMode=yes";
+
+/** Git's own words for a lock file left behind by a killed process; nothing else triggers a fresh clone. */
+export const isStaleLockMessage = (stderr: string): boolean =>
+  /Unable to create '[^']*\.lock': File exists/.test(stderr);
+
+/**
+ * The ssh setting a transport command carries: BatchMode, so a passphrase prompt cannot hang a stdio server,
+ * unless the person's own `GIT_SSH_COMMAND`, `GIT_SSH` or configured `core.sshCommand` is in charge.
+ */
+export function sshBatchSetting(env: NodeJS.ProcessEnv, configured: string | undefined): string[] {
+  if (env.GIT_SSH_COMMAND !== undefined || env.GIT_SSH !== undefined) return [];
+  if (configured !== undefined && configured.length > 0) return [];
+  return [BATCH_MODE];
+}
 const TIMEOUT_MS = {
   clone: 300_000,
   fetch: 300_000,
@@ -70,8 +87,6 @@ const TIMEOUT_MS = {
   list: 300_000,
   extract: 300_000,
 };
-const HEADER = /^([0-9a-f]{40,64}) (\S+)(?: (\d+))?$/;
-
 const emptyWalk = (fatal: Refusal): WalkResult => ({
   files: [],
   hidden: [],
@@ -99,11 +114,34 @@ export function createGitSource(options: GitSourceOptions): GitSource {
   function readState(): State | undefined {
     try {
       const parsed = JSON.parse(readFileSync(statePath, "utf8")) as State;
-      if (typeof parsed.repository === "string" && typeof parsed.branch === "string") return parsed;
+      if (typeof parsed.repository !== "string" || typeof parsed.branch !== "string")
+        return undefined;
+      // A commit field that is not a hash is dropped: a name could point outside the work folder.
+      const hex = (value: unknown): string | undefined =>
+        typeof value === "string" && COMMIT.test(value) ? value : undefined;
+      const state: State = { repository: parsed.repository, branch: parsed.branch };
+      const extracted = hex(parsed.extracted);
+      const served = hex(parsed.served);
+      const lastAttempted = hex(parsed.lastAttempted);
+      if (extracted !== undefined) state.extracted = extracted;
+      if (served !== undefined) state.served = served;
+      if (lastAttempted !== undefined) state.lastAttempted = lastAttempted;
+      if (typeof parsed.fetchedAt === "string") state.fetchedAt = parsed.fetchedAt;
+      return state;
     } catch {
       // no state, or not ours to read
     }
     return undefined;
+  }
+
+  /** An extracted tree is a real folder of the work folder, never a link. */
+  function treeExists(commit: string): boolean {
+    try {
+      const stat = lstatSync(treeDir(commit));
+      return stat.isDirectory() && !stat.isSymbolicLink();
+    } catch {
+      return false;
+    }
   }
   const writeState = (state: State): void => {
     const tmp = `${statePath}.${process.pid}.tmp`;
@@ -135,7 +173,23 @@ export function createGitSource(options: GitSourceOptions): GitSource {
     );
   };
   const staleLock = (error: unknown): boolean =>
-    error instanceof GitError && /\.lock\b|File exists|Unable to create/.test(error.stderr);
+    error instanceof GitError && isStaleLockMessage(error.stderr);
+
+  /** The person's configured `core.sshCommand`, read where git would read it (includes count); nothing when unset. */
+  async function configuredSshCommand(): Promise<string | undefined> {
+    try {
+      const result = await runner.run(["config", "--get", "core.sshCommand"], {
+        cwd: workDir,
+        ...(existsSync(join(repoDir, "HEAD")) ? { gitDir: repoDir } : {}),
+        timeoutMs: TIMEOUT_MS.lsRemote,
+      });
+      const value = result.stdout.toString("utf8").trim();
+      return value.length > 0 ? value : undefined;
+    } catch {
+      return undefined;
+    }
+  }
+  let transportConfig: string[] = [];
 
   const clone = (): Promise<unknown> =>
     runner.run(
@@ -151,12 +205,12 @@ export function createGitSource(options: GitSourceOptions): GitSource {
         repository,
         REPO,
       ],
-      { cwd: workDir, timeoutMs: TIMEOUT_MS.clone },
+      { cwd: workDir, timeoutMs: TIMEOUT_MS.clone, extraConfig: transportConfig },
     );
   const fetch = (): Promise<unknown> =>
     runner.run(
       ["fetch", "--depth=1", "--", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`],
-      { cwd: workDir, gitDir: repoDir, timeoutMs: TIMEOUT_MS.fetch },
+      { cwd: workDir, gitDir: repoDir, timeoutMs: TIMEOUT_MS.fetch, extraConfig: transportConfig },
     );
   const resolveCommit = async (): Promise<string> => {
     const result = await runner.run(
@@ -200,52 +254,18 @@ export function createGitSource(options: GitSourceOptions): GitSource {
 
   /** Writes every blob of the listing, in order, into a fresh folder; raw bytes through `cat-file --batch`. */
   async function extract(commit: string, entries: readonly TreeEntry[]): Promise<void> {
-    const blobs = entries.filter((e) => e.type === "blob");
+    const blobs = entries
+      .filter((e) => e.type === "blob")
+      .map((e) => ({ sha: e.sha, size: e.size ?? 0, path: e.path }));
     const partial = join(workDir, `tree-${commit}.partial-${process.pid}`);
     rmSync(partial, { recursive: true, force: true });
     mkdirSync(partial, { recursive: true, mode: 0o700 });
-    const queue = [...blobs];
-    let pending: Buffer = Buffer.alloc(0);
-    let current: { entry: TreeEntry; size: number; got: Buffer[]; gotLength: number } | undefined;
-    let awaitingNewline = false;
     let problem: Error | undefined;
-    const consume = (chunk: Buffer): "continue" | "stop" => {
-      pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
-      for (;;) {
-        if (awaitingNewline) {
-          if (pending.length === 0) return "continue";
-          if (pending[0] !== 0x0a)
-            throw new Error("cat-file printed an unexpected byte after a blob");
-          pending = pending.subarray(1);
-          awaitingNewline = false;
-        }
-        if (current === undefined) {
-          const newline = pending.indexOf(0x0a);
-          if (newline === -1) return "continue";
-          const header = pending.subarray(0, newline).toString("utf8");
-          pending = pending.subarray(newline + 1);
-          const match = HEADER.exec(header);
-          const next = queue.shift();
-          if (match === null || next === undefined)
-            throw new Error(`cat-file printed a header this reader cannot parse`);
-          if (match[2] !== "blob" || match[1] !== next.sha)
-            throw new Error(`cat-file answered ${match[2]} for ${next.path}`);
-          current = { entry: next, size: Number(match[3] ?? 0), got: [], gotLength: 0 };
-        }
-        const take = Math.min(current.size - current.gotLength, pending.length);
-        if (take > 0) {
-          current.got.push(pending.subarray(0, take));
-          current.gotLength += take;
-          pending = pending.subarray(take);
-        }
-        if (current.gotLength < current.size) return "continue";
-        const target = join(partial, current.entry.path);
-        mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-        writeFileSync(target, Buffer.concat(current.got), { mode: 0o600 });
-        current = undefined;
-        awaitingNewline = true;
-      }
-    };
+    const reader = createBatchReader(blobs, (entry, bytes) => {
+      const target = join(partial, entry.path);
+      mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+      writeFileSync(target, bytes, { mode: 0o600 });
+    });
     try {
       if (blobs.length > 0) {
         await runner.run(["cat-file", "--batch"], {
@@ -255,7 +275,8 @@ export function createGitSource(options: GitSourceOptions): GitSource {
           input: `${blobs.map((b) => b.sha).join("\n")}\n`,
           onStdout: (chunk) => {
             try {
-              return consume(chunk);
+              reader.feed(chunk);
+              return "continue";
             } catch (error) {
               problem = error as Error;
               return "stop";
@@ -264,8 +285,7 @@ export function createGitSource(options: GitSourceOptions): GitSource {
         });
       }
       if (problem !== undefined) throw problem;
-      if (queue.length > 0 || current !== undefined)
-        throw new Error("cat-file ended before every blob arrived");
+      reader.finish();
       rmSync(treeDir(commit), { recursive: true, force: true });
       renameSync(partial, treeDir(commit));
     } catch (error) {
@@ -293,7 +313,7 @@ export function createGitSource(options: GitSourceOptions): GitSource {
   }
 
   function servedOnDisk(state: State | undefined): Loaded | undefined {
-    if (state?.served === undefined || !existsSync(treeDir(state.served))) return undefined;
+    if (state?.served === undefined || !treeExists(state.served)) return undefined;
     const fetchedAt = state.fetchedAt === undefined ? clock() : new Date(state.fetchedAt);
     return walkTree(state.served, Number.isNaN(fetchedAt.getTime()) ? clock() : fetchedAt);
   }
@@ -328,6 +348,7 @@ export function createGitSource(options: GitSourceOptions): GitSource {
         return onDisk;
       }
     }
+    transportConfig = sshBatchSetting(runner.env, await configuredSshCommand());
     if (!existsSync(join(repoDir, "HEAD"))) {
       rmSync(repoDir, { recursive: true, force: true });
       try {
@@ -356,8 +377,10 @@ export function createGitSource(options: GitSourceOptions): GitSource {
     }
     const fetchedAt = clock();
     const base: State = { repository, branch, ...(state ?? {}) };
-    if (state?.extracted === commit && existsSync(treeDir(commit))) {
-      writeState({ ...base, lastAttempted: commit, fetchedAt: fetchedAt.toISOString() });
+    // What was attempted is recorded when a commit is refused or served, never here (bite 5 review M1): a
+    // commit the runtime fails to index must look moved to the poller until it is served.
+    if (state?.extracted === commit && treeExists(commit)) {
+      writeState({ ...base, fetchedAt: fetchedAt.toISOString() });
       return walkTree(commit, fetchedAt);
     }
     const listing = await list(commit).catch((error: unknown) => {
@@ -371,12 +394,7 @@ export function createGitSource(options: GitSourceOptions): GitSource {
     const refusal = validateTree(listing.entries, caps, bundlePath);
     if (refusal !== undefined) return refused(refusal);
     await extract(commit, listing.entries);
-    writeState({
-      ...base,
-      extracted: commit,
-      lastAttempted: commit,
-      fetchedAt: fetchedAt.toISOString(),
-    });
+    writeState({ ...base, extracted: commit, fetchedAt: fetchedAt.toISOString() });
     return walkTree(commit, fetchedAt);
   }
 
@@ -385,7 +403,13 @@ export function createGitSource(options: GitSourceOptions): GitSource {
     load,
     loadServed: async () => servedOnDisk(readState()),
     served: (commit) => {
-      const state: State = { repository, branch, ...(readState() ?? {}), served: commit };
+      const state: State = {
+        repository,
+        branch,
+        ...(readState() ?? {}),
+        served: commit,
+        lastAttempted: commit,
+      };
       writeState(state);
       prune(state);
     },
@@ -397,6 +421,7 @@ export function createGitSource(options: GitSourceOptions): GitSource {
           cwd: workDir,
           gitDir: repoDir,
           timeoutMs: TIMEOUT_MS.lsRemote,
+          extraConfig: transportConfig,
         });
       } catch (error) {
         throw failure("asked", error);

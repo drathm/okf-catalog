@@ -93,6 +93,9 @@ describe("validateTree", () => {
       ".g‌it/x",
       ".git./x",
       ".git /x",
+      ".git::$DATA/x",
+      "git~1 /x",
+      "git~1./x",
       `${"a".repeat(256)}/x`,
       "café.md",
     ])

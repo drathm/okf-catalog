@@ -4,7 +4,8 @@ import type { Source } from "../source/source.js";
 
 export interface PollerDeps {
   runtime: Runtime;
-  source: Source;
+  /** The source, once `prepare()` has built it; undefined until then, when every tick is a retry through the runtime. */
+  source: () => Source | undefined;
   intervalMs: number;
   log: Log;
   clock: () => Date;
@@ -38,14 +39,17 @@ export function createPoller(deps: PollerDeps): Poller {
     const started = performance.now();
     let outcome: PollerOutcome = "failed";
     let error: string | undefined;
+    let detail: string | undefined;
     try {
       const status = deps.runtime.status();
-      let shouldRefresh = !status.loaded || status.refusing !== undefined;
-      if (!shouldRefresh && deps.source.changed !== undefined) {
-        const change = await deps.source.changed();
+      const source = deps.source();
+      let shouldRefresh = !status.loaded || status.refusing !== undefined || source === undefined;
+      if (!shouldRefresh && source?.changed !== undefined) {
+        const change = await source.changed();
         if (change === "gone") outcome = "gone";
         else shouldRefresh = change === "moved";
       }
+      if (stopped) return "skipped";
       if (outcome !== "gone") {
         if (shouldRefresh) {
           const result = await deps.runtime.refresh();
@@ -57,6 +61,8 @@ export function createPoller(deps: PollerDeps): Poller {
     } catch (caught) {
       outcome = "failed";
       error = (caught as Error).message;
+      const carried = (caught as { detail?: unknown }).detail;
+      if (typeof carried === "string") detail = carried;
     }
     lastTick = deps.clock();
     lastOutcome = outcome;
@@ -64,6 +70,7 @@ export function createPoller(deps: PollerDeps): Poller {
       outcome,
       ms: Math.round(performance.now() - started),
       ...(error === undefined ? {} : { error }),
+      ...(detail === undefined ? {} : { detail }),
     };
     if (outcome === "gone") {
       if (goneLogged) deps.log.debug("poller.tick", fields);
@@ -103,7 +110,7 @@ export function createPoller(deps: PollerDeps): Poller {
       stopped = true;
       if (timer !== undefined) clearTimeout(timer);
       timer = undefined;
-      deps.source.abort?.();
+      deps.source()?.abort?.();
       if (inFlight !== undefined) await inFlight.catch(() => undefined);
     },
     tick,

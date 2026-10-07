@@ -47,6 +47,8 @@ export function repositoryProblem(value: string, options: ParseOptions = {}): st
     return "must be an https:// or ssh:// URL, or user@host:path (a local path or another scheme is not fetched)";
   if (url.hostname.length === 0) return "must name a host";
   if (url.password.length > 0) return "must not carry a password; use a credential helper";
+  if (url.search.length > 0 || url.hash.length > 0)
+    return "must not carry a query or a fragment (a token in a URL would reach the log)";
   if (url.protocol === "https:" && url.username.length > 0)
     return "must not carry a user name over https; use a credential helper";
   return undefined;
