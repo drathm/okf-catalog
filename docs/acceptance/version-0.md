@@ -52,6 +52,10 @@ The acceptance list from the implementation plan, with the evidence for each ite
 | The workflow runs on the source branch only, pins every action, keeps the write token in a job that runs git alone, and installs the server from a pinned source | `test/unit/recipe.test.ts` | automated |
 | A store that is not a database is rebuilt once with its sidecars and `status` says why; another failure is not a rebuild | `test/integration/qmd-engine-rebuild.test.ts` | automated |
 | The configuration accepts https and ssh repositories without a password and the `user@host:path` form, a plain branch name and a safe bundle path, and refuses the rest | `test/unit/company-config.test.ts` | automated |
+| The runner survives a git that exits without reading its input, refuses every command once aborted, and kills a group member that ignores SIGTERM | `test/unit/git-runner.test.ts` | automated |
+| A restart retries a commit an older configuration refused; a reused tree the loader refuses is extracted again; a clone whose configuration is gone is recreated | `test/unit/git-source.test.ts` | automated |
+| An unusable lock database puts the server in the refusing mode with a sentence naming the fix, never SQLite's words or the path | `test/integration/stdio.test.ts` ("names the fix, not SQLite's words…") | automated |
+| `pack` refuses two names the server's key folds together, and an output folder that is a link | `test/unit/pack.test.ts` | automated |
 | The recorded publish loop through a Claude Code session: publish a change, see the next answer reflect it | the same session as the bite 4 pending items, with `recipes/publish/pack.sh` and `push.sh` against the maintainer's repository | pending: needs a signed-in Claude Code and a repository the maintainer names |
 | The workflow runs on a real repository and the server picks up its push | copy `recipes/publish/publish.yml` into the repository, set its four values, push to the source branch | pending (manual): needs the maintainer's repository |
 
