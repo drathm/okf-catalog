@@ -2,6 +2,12 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in `package.json` names the release. 0.1.0 was published on 2026-10-07, before the clean-account run of the acceptance list in `docs/acceptance/version-0.md`, by the maintainer's choice; what that run finds goes into a later patch release.
 
+## [Unreleased]
+
+### Added
+
+- The benchmark harness measures the ladder re-ranked (`--modes rerank`): the production ladder's twenty candidates, in the question and the keyword form, scored by qmd's reranker as qmd scores them, reported by raw score and by qmd's position blend, with the keyword list twenty deep and the production-limit rows as controls; the report writes `docs/research/benchmark-rerank.md` with a pre-registered bar's verdict. The vector index is built only for the modes that read it.
+
 ## [0.1.3] - 2026-10-07
 
 ### Fixed
