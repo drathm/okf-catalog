@@ -210,6 +210,8 @@ describe("git source grammars (bite 5)", () => {
       "host.example/org/repo.git",
       "https://host.example/org/repo.git?token=s3cret",
       "https://host.example/org/repo.git#frag",
+      "-oProxyCommand=touch /tmp/x@host.example:org/repo.git",
+      "ssh://-oProxyCommand=x@host.example/org/repo.git",
     ])
       expect(git(`  repository: "${bad}"`).join(" "), bad).toMatch(/source\.repository:/);
     // The suite's own setting: a file:// repository is accepted only when asked for, and a local path never.
@@ -236,6 +238,8 @@ describe("git source grammars (bite 5)", () => {
     for (const ok of ["published", "release/2026-10", "v1.2_x-y"])
       expect(branch(ok), ok).toEqual([]);
     for (const bad of [
+      "HEAD",
+      "a.lock/b",
       "-x",
       "a..b",
       "a:refs/heads/b",

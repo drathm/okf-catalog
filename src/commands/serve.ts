@@ -1,7 +1,7 @@
 import { accessSync, constants, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { Writable } from "node:stream";
 import { parseArgs } from "node:util";
 import { RESULT_BUDGET } from "../catalog/outputs.js";
@@ -64,7 +64,12 @@ function reserveStdout(): Writable {
   return protocol;
 }
 
-/** The minimum git this server runs (D50): `--end-of-options`, `protocol.allow`, `maintenance.auto` and the rest are older. */
+/**
+ * The minimum git this server runs (D50): `--end-of-options`, `protocol.allow` and `maintenance.auto` are older.
+ * Two of the fixed settings are best effort below newer versions and silently ignored before them:
+ * `transfer.credentialsInUrl` (2.37) and `credential.interactive` (2.47); the configuration grammar and the
+ * detached process (no terminal) cover what they would.
+ */
 const MIN_GIT: [number, number] = [2, 30];
 
 /** `git` on PATH, resolved once; never read from a variable of its own. */
@@ -72,7 +77,7 @@ async function gitBinary(cacheRoot: string): Promise<string> {
   void cacheRoot;
   for (const folder of (process.env.PATH ?? "").split(delimiter)) {
     if (folder.length === 0) continue;
-    const candidate = join(folder, "git");
+    const candidate = resolve(folder, "git");
     try {
       accessSync(candidate, constants.X_OK);
       return candidate;
@@ -270,7 +275,17 @@ export async function runServe(argv: string[]): Promise<number> {
             throw described;
           }
           sweepPrivate(dir, processAlive);
-          const lock = lockHandle ?? acquireLock(dir, clock());
+          let lock: Lock;
+          try {
+            lock = lockHandle ?? acquireLock(dir, clock());
+          } catch (error) {
+            // A lock database that cannot be opened: the fix is named, SQLite's words and the path go to the log.
+            const described = new Error(
+              "the company lock database in the cache folder is unusable; remove it and start again (the log names it)",
+            ) as Error & { detail?: string };
+            described.detail = `${join(dir, "lock.sqlite")}: ${(error as Error).message}`;
+            throw described;
+          }
           let work = dir;
           if (lock.kind === "exclusive") lockHandle = lock;
           else {
@@ -290,6 +305,16 @@ export async function runServe(argv: string[]): Promise<number> {
             ...(engine.resetOnOpen === undefined ? {} : { resetOnOpen: engine.resetOnOpen }),
           };
           if (configured.kind === "git") {
+            try {
+              await prepareGit();
+            } catch (error) {
+              await engine.close().catch(() => undefined);
+              throw error;
+            }
+          }
+          return result;
+          async function prepareGit(): Promise<void> {
+            if (configured.kind !== "git") return;
             const binary = await gitBinary(root.root);
             gitRunner?.abort();
             const runner = createGitRunner({
@@ -308,10 +333,10 @@ export async function runServe(argv: string[]): Promise<number> {
               caps: config.caps,
               runner,
               clock,
+              log,
             });
             result = { ...result, source: gitSource };
           }
-          return result;
         },
         load: {
           admit: config.serve.admit,

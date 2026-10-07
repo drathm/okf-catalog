@@ -4,6 +4,8 @@ import type { WalkResult } from "../fs/walk.js";
 export interface Loaded {
   walk: WalkResult;
   published?: { commit: string; fetchedAt: Date };
+  /** Whether the tree was extracted by this load, or reused from disk (a reused tree the loader refuses is discarded). */
+  fresh?: boolean;
 }
 
 export type RemoteChange = "same" | "moved" | "gone";
@@ -19,6 +21,8 @@ export interface Source {
   loadServed?(): Promise<Loaded | undefined>;
   /** Told after each swap which commit is served, so older trees can go. */
   served?(commit: string): void;
+  /** Removes an extracted tree the loader refused, so the next load extracts it again. */
+  discard?(commit: string): void;
   /** Whether the remote moved since the last attempted commit; throws when it cannot be asked. */
   changed?(): Promise<RemoteChange>;
   /** The source as configured, never a resolved or cache path, never a credential. */

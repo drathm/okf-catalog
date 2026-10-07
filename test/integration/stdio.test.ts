@@ -496,6 +496,7 @@ describe("okf-catalog serve over stdio with a repository source", { timeout: 90_
         alive: true,
       });
       expect(other.structuredContent.admitted).toBe(1);
+      expect((other.structuredContent as unknown as { poller: unknown }).poller).not.toBeNull();
       expect(other.content[0]?.text).toMatch(/lock private \(held by pid \d+ since .*, alive\)/);
       const privateSources = readdirSync(join(companyDir(b), "private")).map((pid) =>
         existsSync(join(companyDir(b), "private", pid, "source", "repo.git", "HEAD")),
@@ -545,5 +546,30 @@ process.exit(0);
     } finally {
       rmSync(standIn, { recursive: true, force: true });
     }
+  });
+
+  it("names the fix, not SQLite's words, when the company lock database is unusable", async () => {
+    const b = box();
+    mkdirSync(companyDir(b), { recursive: true, mode: 0o700 });
+    writeFileSync(join(companyDir(b), "lock.sqlite"), "not a database at all");
+    const run = rawServer(b);
+    run.send(INITIALIZE);
+    await run.waitFor(1);
+    run.send(INITIALIZED);
+    run.send({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "status", arguments: {} },
+    });
+    const r = (await run.waitFor(2)).result as {
+      isError?: boolean;
+      content: Array<{ text: string }>;
+    };
+    expect(r.isError).toBe(true);
+    expect(r.content[0]?.text).toMatch(/lock database/);
+    expect(r.content[0]?.text).not.toMatch(/not a database/);
+    expect(r.content[0]?.text).not.toContain(companyDir(b));
+    expect((await run.end()).code).toBe(0);
   });
 });

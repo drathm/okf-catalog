@@ -70,17 +70,25 @@ export class QmdEngine implements Engine {
     };
     let reset: string | undefined;
     let store: Awaited<ReturnType<typeof createStore>>;
+    let status: Awaited<ReturnType<Awaited<ReturnType<typeof createStore>>["getStatus"]>>;
     try {
       store = await createStore({ dbPath: join(dir, DB), config });
+      try {
+        status = await store.getStatus();
+      } catch (error) {
+        await store.close().catch(() => undefined);
+        throw error;
+      }
     } catch (error) {
-      // A derived store that is not a database any more is rebuilt once (D48); any other failure is a failure.
-      const code = (error as { code?: string }).code;
-      if (code !== "SQLITE_NOTADB" && code !== "SQLITE_CORRUPT") throw error;
+      // A derived store that is not a database any more, at open or at its first read, is rebuilt once (D48);
+      // any other failure is a failure and the file stays as it was.
+      const code = String((error as { code?: string }).code ?? "");
+      if (code !== "SQLITE_NOTADB" && !code.startsWith("SQLITE_CORRUPT")) throw error;
       QmdEngine.removeStore(dir);
       reset = `the store could not be opened (${code}: ${(error as Error).message}); it was rebuilt`;
       store = await createStore({ dbPath: join(dir, DB), config });
+      status = await store.getStatus();
     }
-    const status = await store.getStatus();
     const own = status.collections.find((c) => c.name === options.company)?.documents ?? 0;
     const others = status.collections.filter((c) => c.name !== options.company).map((c) => c.name);
     if (others.length > 0 || status.totalDocuments !== own) {

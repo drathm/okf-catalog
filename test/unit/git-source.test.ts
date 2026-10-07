@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -76,6 +77,7 @@ const trees = (work: string): string[] => readdirSync(work).filter((n) => n.star
 function countingRunner(cacheRoot: string): GitRunner & {
   commands: string[];
   calls: Array<{ args: readonly string[]; extraConfig: readonly string[] }>;
+  stops: string[];
 } {
   const inner = createGitRunner({
     binary: execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim(),
@@ -85,14 +87,28 @@ function countingRunner(cacheRoot: string): GitRunner & {
   });
   const commands: string[] = [];
   const calls: Array<{ args: readonly string[]; extraConfig: readonly string[] }> = [];
+  const stops: string[] = [];
   return {
     commands,
     calls,
+    stops,
     env: inner.env,
     run: (args, options) => {
       commands.push(args[0] ?? "");
       calls.push({ args, extraConfig: options.extraConfig ?? [] });
-      return inner.run(args, options);
+      const onStdout = options.onStdout;
+      const wrapped =
+        onStdout === undefined
+          ? options
+          : {
+              ...options,
+              onStdout: (chunk: Buffer) => {
+                const answer = onStdout(chunk);
+                if (answer === "stop") stops.push(args[0] ?? "");
+                return answer;
+              },
+            };
+      return inner.run(args, wrapped);
     },
     abort: () => inner.abort(),
     get running() {
@@ -406,5 +422,149 @@ describe("createGitSource", { timeout: 60_000 }, () => {
     expect(
       isStaleLockMessage("fatal: could not read from remote repository; File exists elsewhere"),
     ).toBe(false);
+  });
+
+  it("retries after a restart a commit that was refused under the old configuration", async () => {
+    const r = remote({ "a.md": PAGE("A") });
+    const work = temp();
+    const small = source(r.url, work, { caps: { ...DEFAULT_CAPS, fileBytes: 2000 } });
+    const one = (await small.src.load()).published?.commit ?? "";
+    small.src.served(one);
+    r.write({ "big.bin": Buffer.alloc(3000, 1) });
+    r.commit("big");
+    r.push();
+    expect((await small.src.load()).walk.fatal?.rule).toBe("oversize");
+    expect(await small.src.changed()).toBe("same");
+    // The operator raises the cap and restarts: what was attempted lives in memory, seeded from what is served.
+    const bigger = source(r.url, work);
+    expect(await bigger.src.changed()).toBe("moved");
+    expect((await bigger.src.load()).published?.commit).toBe(one); // from disk, as a fresh process starts
+    const loaded = await bigger.src.load();
+    expect(loaded.walk.fatal).toBeUndefined();
+    expect(loaded.walk.files.map((f) => f.path)).toEqual(["a.md", "big.bin"]);
+  });
+
+  it("says whether a load extracted its tree afresh, and discards a tree on request so the next load extracts again", async () => {
+    const r = remote({ "a.md": PAGE("A") });
+    const work = temp();
+    const { src, runner } = source(r.url, work);
+    const first = await src.load();
+    expect(first.fresh).toBe(true);
+    const again = await src.load();
+    expect(again.fresh).toBe(false);
+    src.discard(first.published?.commit ?? "");
+    expect(trees(join(work, "source"))).toEqual([]);
+    runner.commands.length = 0;
+    const third = await src.load();
+    expect(third.fresh).toBe(true);
+    expect(runner.commands).toContain("cat-file");
+  });
+
+  it("recreates a clone it cannot read, saying so in the log, and reports a branch that is gone", async () => {
+    const r = remote({ "a.md": PAGE("A") });
+    const work = temp();
+    const records: Array<{ event: string; fields: Record<string, unknown> }> = [];
+    const log = {
+      error() {},
+      warn: (event: string, fields: Record<string, unknown> = {}) =>
+        void records.push({ event, fields }),
+      info() {},
+      debug() {},
+    };
+    const { src } = source(r.url, work, { log });
+    await src.load();
+    rmSync(join(work, "source", "repo.git", "config"));
+    expect((await src.load()).published?.commit).toBe(r.first);
+    expect(records.find((x) => x.event === "source.recloned")?.fields.reason).toMatch(/read|fetch/);
+    git(r.bare, "update-ref", "-d", "refs/heads/published");
+    expect(await src.changed()).toBe("gone");
+  });
+
+  it("fails while the remote does not exist and succeeds once it appears", async () => {
+    const root = temp();
+    const bare = join(root, "later.git");
+    const work = temp();
+    const { src } = source(`file://${bare}`, work);
+    await expect(src.load()).rejects.toThrow(/could not be cloned/);
+    const r = remote({ "a.md": PAGE("A") });
+    git(root, "clone", "-q", "--bare", "--", r.src, bare);
+    expect((await src.load()).walk.files.map((f) => f.path)).toEqual(["a.md"]);
+  });
+
+  it("names the repository, never the work folder, when the extracted tree cannot be walked or the folder cannot be written", async () => {
+    const r = remote({ "kb/a.md": PAGE("A") });
+    const work = temp();
+    const { src } = source(r.url, work, { bundlePath: "kb" });
+    const loaded = await src.load();
+    const treeKb = join(work, "source", `tree-${loaded.published?.commit}`, "kb");
+    chmodSync(treeKb, 0o000);
+    try {
+      const error = (await src.load().then(
+        () => undefined,
+        (e: unknown) => e,
+      )) as (Error & { detail?: string }) | undefined;
+      expect(error?.message).toContain(r.url);
+      expect(error?.message).not.toContain(work);
+      expect(error?.detail).toContain(work);
+    } finally {
+      chmodSync(treeKb, 0o700);
+    }
+    const sealed = temp();
+    chmodSync(sealed, 0o500);
+    try {
+      const blocked = source(r.url, join(sealed, "work"));
+      const error = (await blocked.src.load().then(
+        () => undefined,
+        (e: unknown) => e,
+      )) as (Error & { detail?: string }) | undefined;
+      expect(error?.message).toMatch(/could not be (written|created)/);
+      expect(error?.message).not.toContain(sealed);
+      expect(error?.detail).toContain(sealed);
+    } finally {
+      chmodSync(sealed, 0o700);
+    }
+  });
+
+  it("keeps the served tree's own fetch time when a later fetch was refused", async () => {
+    const r = remote({ "a.md": PAGE("A") });
+    const work = temp();
+    let now = new Date("2026-10-07T10:00:00Z");
+    const { src } = source(r.url, work, { clock: () => now });
+    const one = (await src.load()).published?.commit ?? "";
+    src.served(one);
+    now = new Date("2026-10-07T11:00:00Z");
+    symlinkSync("a.md", join(r.src, "link.md"));
+    r.commit("link");
+    r.push();
+    expect((await src.load()).walk.fatal?.rule).toBe("symlink");
+    const fresh = source(r.url, work, { clock: () => now });
+    const served = await fresh.src.loadServed();
+    expect(served?.published?.commit).toBe(one);
+    expect(served?.published?.fetchedAt).toEqual(new Date("2026-10-07T10:00:00Z"));
+  });
+
+  it("stops the listing one entry past the file cap and keeps at most the served tree and the newest", async () => {
+    const r = remote({
+      "a.md": PAGE("A"),
+      "b.md": PAGE("B"),
+      "c.md": PAGE("C"),
+      "d.md": PAGE("D"),
+    });
+    const work = temp();
+    const { src, runner } = source(r.url, work, { caps: { ...DEFAULT_CAPS, files: 2 } });
+    expect((await src.load()).walk.fatal?.rule).toBe("too-many-files");
+    expect(runner.stops).toContain("ls-tree");
+    const roomy = source(r.url, temp());
+    const one = (await roomy.src.load()).published?.commit ?? "";
+    roomy.src.served(one);
+    for (const n of [1, 2, 3]) {
+      r.write({ "bad.md": `no frontmatter ${n}\n` });
+      r.commit(`bad ${n}`);
+      r.push();
+      expect((await roomy.src.load()).fresh).toBe(true);
+    }
+    const left = trees(join(roomy.src.workDir, ""));
+    expect(left.length).toBeLessThanOrEqual(2);
+    expect(left).toContain(`tree-${one}`);
   });
 });

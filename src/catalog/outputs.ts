@@ -204,6 +204,15 @@ export const StatusOutputSchema = z.strictObject({
   lastAttempt: z
     .strictObject({ at: z.string(), outcome: z.enum(["swapped", "fatal", "failed"]) })
     .nullable(),
+  /** The last load the loader refused: the commit when there is one, the rule, the path and the detail. */
+  lastRefusal: z
+    .strictObject({
+      commit: z.string().nullable(),
+      rule: z.string(),
+      path: z.string(),
+      detail: z.string(),
+    })
+    .nullable(),
   refusing: z.string().nullable(),
 });
 export type StatusOutput = z.infer<typeof StatusOutputSchema>;
@@ -446,6 +455,15 @@ export function projectStatus(
       runtime.lastAttempt === undefined
         ? null
         : { at: runtime.lastAttempt.at.toISOString(), outcome: runtime.lastAttempt.outcome },
+    lastRefusal:
+      runtime.lastRefusal === undefined
+        ? null
+        : {
+            commit: runtime.lastRefusal.commit ?? null,
+            rule: safe(runtime.lastRefusal.rule),
+            path: safe(runtime.lastRefusal.path),
+            detail: safe(runtime.lastRefusal.detail),
+          },
     refusing: runtime.refusing === undefined ? null : refusingText(runtime.refusing),
   });
 }
@@ -457,8 +475,10 @@ export function statusSummary(out: StatusOutput): string {
     `${out.company}: ${out.admitted} pages admitted, ${out.excludedByStatus} excluded by status, ${n(out.overdue, "overdue page")}, ${n(out.refusals.count, "refusal")}, ${n(out.degradations.count, "degradation")}`,
     `integrity ${out.integrity}`,
     `${out.engine.documents} documents indexed, ${out.engine.notIndexed} not indexed, ${n(out.engine.collisions, "collision")}`,
-    out.lock === "private" && out.lockOwner !== null
-      ? `lock private (held by pid ${out.lockOwner.pid} since ${out.lockOwner.startedAt}, ${out.lockOwner.alive ? "alive" : "not alive"})`
+    out.lock === "private"
+      ? out.lockOwner === null
+        ? "lock private (holder unreadable)"
+        : `lock private (held by pid ${out.lockOwner.pid} since ${out.lockOwner.startedAt}, ${out.lockOwner.alive ? "alive" : "not alive"})`
       : `lock ${out.lock}`,
     `loaded ${out.loadedAt}`,
     ...(out.published === null
@@ -476,6 +496,10 @@ export function statusSummary(out: StatusOutput): string {
   ];
   if (out.lastAttempt !== null)
     parts.push(`last attempt ${out.lastAttempt.outcome} at ${out.lastAttempt.at}`);
+  if (out.lastRefusal !== null)
+    parts.push(
+      `last refusal ${out.lastRefusal.commit === null ? "" : `${out.lastRefusal.commit.slice(0, 12)} `}${out.lastRefusal.rule}${out.lastRefusal.path ? ` (${out.lastRefusal.path})` : ""}`,
+    );
   if (out.fatal !== null) {
     parts.push(
       `FATAL ${safe(out.fatal.rule)}${out.fatal.path ? ` (${safe(out.fatal.path)})` : ""}: ${safe(out.fatal.detail)}`,

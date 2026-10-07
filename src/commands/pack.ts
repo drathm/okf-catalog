@@ -11,6 +11,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { buildManifest, MANIFEST_NAME } from "../bundle/manifest.js";
 import type { BundleFile, LoadOptions, Status } from "../bundle/model.js";
+import { findCollision } from "../bundle/paths.js";
 import { reservedKind } from "../bundle/reserved.js";
 import { readCompanyConfig } from "../config/company-config.js";
 import { cacheOverlapsBundle } from "../fs/cache-dir.js";
@@ -117,6 +118,11 @@ export function runPack(argv: string[], io: CommandIo): number {
     io.stderr(`the bundle folder ${from} does not exist or is not a folder\n`);
     return 2;
   }
+  const outStat = lstatSync(outPath, { throwIfNoEntry: false });
+  if (outStat?.isSymbolicLink()) {
+    io.stderr(`the output folder ${out} is a link; pack writes a fresh folder only\n`);
+    return 2;
+  }
   if (existsSync(outPath)) {
     if (!lstatSync(outPath).isDirectory() || readdirSync(outPath).length > 0) {
       io.stderr(
@@ -180,6 +186,14 @@ export function runPack(argv: string[], io: CommandIo): number {
   const files: BundleFile[] = [...output.entries()]
     .map(([path, bytes]) => ({ path, bytes }))
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  // Two names a case-folding file system or the server's key would treat as one cannot be published together.
+  const collision = findCollision(files.map((f) => f.path));
+  if (collision !== undefined) {
+    io.stderr(
+      `${collision[1]} and ${collision[0]} collide under case folding or normalisation; rename one of them\n`,
+    );
+    return 1;
+  }
   const manifest = buildManifest(files, {
     commit: commit ?? ZERO_COMMIT,
     publishedAt: publishedAt(now),

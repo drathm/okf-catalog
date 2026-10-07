@@ -203,7 +203,8 @@ export function createGitRunner(options: RunnerOptions): GitRunner {
       const end = (): void => {
         if (!settled) return;
         clearTimeout(timer);
-        if (killTimer !== undefined) clearTimeout(killTimer);
+        // The SIGKILL after the grace is kept even once git itself has exited: a group member that ignored
+        // SIGTERM (a stuck ssh) still gets it (bite 5 review BR10).
         live.delete(child);
       };
       const terminate = (): void => {
@@ -265,6 +266,9 @@ export function createGitRunner(options: RunnerOptions): GitRunner {
           reject(new GitError(`git exited with ${code}: ${stderr}`, { code, stderr }));
         else resolve({ stdout: Buffer.concat(out), stderr, code, stopped: false });
       });
+      // A git that exits without reading its input makes the pending write fail with EPIPE; that is not an event
+      // this process should die on (bite 5 review BR3).
+      child.stdin?.on("error", () => undefined);
       if (run.input !== undefined) child.stdin?.end(run.input);
     });
   }

@@ -6,11 +6,13 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { findCollision } from "../../src/bundle/paths.js";
 import { PACK_USAGE, runPack } from "../../src/commands/pack.js";
 import { FIXTURES } from "../helpers/fixtures.js";
 
@@ -184,5 +186,38 @@ describe("okf-catalog pack", () => {
     expect(
       (JSON.parse(readFileSync(join(plain, "manifest.json"), "utf8")) as { commit: string }).commit,
     ).toBe("0".repeat(40));
+  });
+
+  it("refuses two pages a case-folding file system or the server would treat as one, and an output path that is a link", () => {
+    const work = temp();
+    const cfg = config(work);
+    const from = join(work, "kb");
+    mkdirSync(from);
+    expect(findCollision(["a.md", "stra\u00DFe.md", "STRASSE.md"])).toEqual([
+      "stra\u00DFe.md",
+      "STRASSE.md",
+    ]);
+    expect(findCollision(["a.md", "b.md"])).toBeUndefined();
+    writeFileSync(join(from, "Alpha.md"), PAGE("Alpha"));
+    writeFileSync(join(from, "alpha.md"), PAGE("alpha"));
+    // A case-folding file system (APFS here) keeps one file of the two; a case-sensitive one keeps both and pack refuses.
+    if (readdirSync(from).length === 2) {
+      const run = io();
+      expect(runPack(["--config", cfg, "--from", from, "--out", join(work, "out")], run.io)).toBe(
+        1,
+      );
+      expect(run.stderr()).toMatch(/collid/i);
+      expect(existsSync(join(work, "out"))).toBe(false);
+    }
+    for (const name of readdirSync(from))
+      if (name.toLowerCase() === "alpha.md" && name !== "Alpha.md") rmSync(join(from, name));
+    const elsewhere = join(work, "elsewhere");
+    mkdirSync(elsewhere);
+    symlinkSync(elsewhere, join(work, "linked"));
+    const linked = io();
+    expect(
+      runPack(["--config", cfg, "--from", from, "--out", join(work, "linked")], linked.io),
+    ).toBe(2);
+    expect(linked.stderr()).toMatch(/link/);
   });
 });

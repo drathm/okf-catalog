@@ -297,20 +297,12 @@ describe("the publish loop", { timeout: 120_000 }, () => {
     expect(noLint.status, noLint.stderr).toBe(0);
     expect(readFileSync(log, "utf8")).not.toMatch(/okflint/);
     expect(readFileSync(log, "utf8")).toMatch(/okf-schema validate --path/);
-    const failing = script(
-      "pack.sh",
-      [
-        "--config",
-        join(src, "okf-catalog.yaml"),
-        "--source",
-        join(src, "kb"),
-        "--out",
-        packed3,
-        "--commit",
-        sha2,
-      ],
-      { FAIL_CHECK_ON: packed3 },
-    );
+    // Chained as the workflow's jobs are: a check that fails after pack stops everything that would push.
+    const chain = `sh ${JSON.stringify(join(RECIPE, "pack.sh"))} --config ${JSON.stringify(join(src, "okf-catalog.yaml"))} --source ${JSON.stringify(join(src, "kb"))} --out ${JSON.stringify(packed3)} --commit ${sha2} && sh ${JSON.stringify(join(RECIPE, "push.sh"))} --repo ${JSON.stringify(clone)} --bundle ${JSON.stringify(packed3)} --commit ${sha2}`;
+    const failing = spawnSync("sh", ["-c", chain], {
+      env: { ...env, FAIL_CHECK_ON: packed3 },
+      encoding: "utf8",
+    });
     expect(failing.status).not.toBe(0);
     expect(failing.stderr).toMatch(/stub failing/);
     expect(git(origin, "rev-parse", "published")).toBe(tip2);

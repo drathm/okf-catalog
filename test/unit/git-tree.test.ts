@@ -103,7 +103,14 @@ describe("validateTree", () => {
         rule: "path-escape",
       });
   });
+  it("refuses a whole path over the platform limit", () => {
+    const long = Array.from({ length: 12 }, () => "s".repeat(100)).join("/");
+    expect(validateTree([blob(`${long}/x.md`)], caps, ".")).toMatchObject({ rule: "path-escape" });
+  });
   it("refuses two paths that collide under the engine's key", () => {
+    expect(validateTree([blob("straße.md"), blob("STRASSE.md")], caps, ".")?.rule).toBe(
+      "path-escape",
+    );
     const byCase = validateTree([blob("A.md"), blob("a.md")], caps, ".");
     expect(byCase?.rule).toBe("path-escape");
     expect(byCase?.detail).toMatch(/A\.md/);

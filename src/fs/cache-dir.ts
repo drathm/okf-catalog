@@ -56,7 +56,8 @@ export function judgeFolder(stat: FolderStat, uid: number, isRoot: boolean): str
 export function cacheOverlapsBundle(cacheDir: string, bundleDir: string): boolean {
   const inside = (inner: string, outer: string): boolean => {
     const rel = relative(resolve(outer), resolve(inner));
-    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+    // A sibling named "..out" is outside; only ".." itself or a "../" prefix leaves the folder.
+    return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
   };
   return inside(cacheDir, bundleDir) || inside(bundleDir, cacheDir);
 }

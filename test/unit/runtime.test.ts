@@ -512,4 +512,54 @@ describe("createRuntime (bite 5: a source that fails, falls back and reports)", 
     expect(record?.fields.detail).toMatch(/HTTP 401/);
     await runtime.shutdown();
   });
+
+  it("says in status which commit was refused and why, discards a reused tree the loader refused, and flags a refusal it serves", async () => {
+    const files = readFixture("behaviours");
+    const refused: Loaded = {
+      walk: {
+        files: [],
+        hidden: [],
+        hiddenFolders: [],
+        refusals: [],
+        fatal: {
+          path: "link.md",
+          rule: "symlink",
+          detail: "a symbolic link in the published tree",
+        },
+      },
+      published: { commit: "b".repeat(40), fetchedAt: NOW },
+      fresh: false,
+    };
+    const good: Loaded = {
+      walk: { files, hidden: [], hiddenFolders: [], refusals: [] },
+      published: { commit: "a".repeat(40), fetchedAt: NOW },
+      fresh: false,
+    };
+    const discarded: string[] = [];
+    const source: Source = {
+      kind: "git",
+      load: async () => refused,
+      loadServed: async () => good,
+      served: () => undefined,
+      discard: (commit) => void discarded.push(commit),
+      describe: () => "git@h:o/r.git",
+    };
+    const { runtime } = build(source as ReturnType<typeof memorySource>, countingEngine());
+    runtime.start();
+    await runtime.ready();
+    expect(runtime.status().lastRefusal).toMatchObject({
+      commit: "b".repeat(40),
+      rule: "symlink",
+      path: "link.md",
+    });
+    expect(runtime.status().fatal).toBe(false);
+    expect(discarded).toEqual(["b".repeat(40)]);
+    await runtime.shutdown();
+    const nothingServed: Source = { ...source, loadServed: async () => undefined };
+    const bare = build(nothingServed as ReturnType<typeof memorySource>, countingEngine());
+    bare.runtime.start();
+    await bare.runtime.ready();
+    expect(bare.runtime.status()).toMatchObject({ loaded: true, fatal: true });
+    await bare.runtime.shutdown();
+  });
 });

@@ -1,4 +1,12 @@
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  truncateSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -50,11 +58,30 @@ describe("QmdEngine.open on a damaged store (D48)", () => {
     }
   });
 
-  it("does not rebuild for a failure that is not corruption", async () => {
+  it("does not rebuild for a failure that is not corruption: the store file is left as it was", async () => {
     const dir = temp();
-    chmodSync(dir, 0o500);
+    const planted = Buffer.from("planted, unreadable, not corruption");
+    writeFileSync(join(dir, "index.sqlite"), planted, { mode: 0o000 });
     await expect(QmdEngine.open({ company: "acme", dir })).rejects.toThrow();
-    chmodSync(dir, 0o700);
-    expect(existsSync(join(dir, "index.sqlite"))).toBe(false);
+    chmodSync(join(dir, "index.sqlite"), 0o600);
+    expect(readFileSync(join(dir, "index.sqlite")).equals(planted)).toBe(true);
+  });
+
+  it("rebuilds a store whose header is sound but whose pages are gone, which surfaces after the open", async () => {
+    const dir = temp();
+    const { default: Database } = await import("better-sqlite3");
+    const db = new Database(join(dir, "index.sqlite"));
+    db.exec("CREATE TABLE filler (body TEXT)");
+    const insert = db.prepare("INSERT INTO filler VALUES (?)");
+    for (let i = 0; i < 400; i++) insert.run("x".repeat(200));
+    db.close();
+    truncateSync(join(dir, "index.sqlite"), 4096 + 512);
+    const engine = await QmdEngine.open({ company: "acme", dir });
+    try {
+      expect(engine.resetOnOpen).toMatch(/rebuilt/);
+      expect((await engine.index([])).documents).toBe(0);
+    } finally {
+      await engine.close();
+    }
   });
 });

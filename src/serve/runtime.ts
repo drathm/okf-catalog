@@ -3,6 +3,7 @@ import type { LoadOptions, Report } from "../bundle/model.js";
 import type { Catalog } from "../catalog/model.js";
 import type {
   Generation,
+  LastRefusal,
   PublishedInfo,
   RefreshOutcome,
   Runtime,
@@ -60,8 +61,17 @@ type Prepared =
       docs: DerivedDocument[];
       now: Date;
       published?: PublishedInfo;
+      /** False when the tree was reused from disk (the first-load fallback), which keeps a refusal visible. */
+      fresh?: boolean;
     }
-  | { kind: "fatal"; catalog: Catalog; report: Report; now: Date; published?: PublishedInfo };
+  | {
+      kind: "fatal";
+      catalog: Catalog;
+      report: Report;
+      now: Date;
+      published?: PublishedInfo;
+      fresh?: boolean;
+    };
 
 /**
  * The serving runtime (decisions D28, D38, D39). The first load begins on `start()` or the first `ready()`,
@@ -87,6 +97,7 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
   let closed = false;
   let refusing: string | undefined;
   let lastAttempt: RuntimeStatus["lastAttempt"];
+  let lastRefusal: LastRefusal | undefined;
   /** Leases requested but not yet reading (waiting for the first load or the gate): shutdown waits for them. */
   let requested = 0;
   /** Leases reading the current generation: a swap waits for them. */
@@ -130,7 +141,25 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
 
   /** Walk, load and derive, yielding between the phases; the engine is not touched here. */
   async function prepareDocs(): Promise<Prepared> {
-    return prepareFrom(await source.load());
+    const loaded = await source.load();
+    const prepared = await prepareFrom(loaded);
+    if (prepared.kind === "fatal") noteRefusal(prepared, loaded);
+    return prepared;
+  }
+
+  /** A refusal is kept for `status`; a tree reused from disk that the loader refuses is discarded, so the next load extracts it again. */
+  function noteRefusal(prepared: Prepared & { kind: "fatal" }, loaded: Loaded): void {
+    const fatal = prepared.report.fatal;
+    if (fatal !== undefined) {
+      lastRefusal = {
+        rule: fatal.rule,
+        path: fatal.path,
+        detail: fatal.detail,
+        ...(prepared.published === undefined ? {} : { commit: prepared.published.commit }),
+      };
+    }
+    if (loaded.fresh === false && loaded.published !== undefined)
+      source.discard?.(loaded.published.commit);
   }
 
   async function prepareFrom(loaded: Loaded): Promise<Prepared> {
@@ -147,7 +176,10 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
     const now = deps.clock();
     const { catalog, report } = loadBundle(deps.company, walked.files, options, now);
     await yieldToLoop();
-    const withPublished = published === undefined ? {} : { published };
+    const withPublished = {
+      ...(published === undefined ? {} : { published }),
+      ...(loaded.fresh === undefined ? {} : { fresh: loaded.fresh }),
+    };
     if (report.fatal !== undefined)
       return { kind: "fatal", catalog, report, now, ...withPublished };
     const docs = [...catalog.pages.values()].map(deriveDocument);
@@ -204,6 +236,8 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
         ...(prepared.published === undefined ? {} : { published: prepared.published }),
       };
       current = generation;
+      // A tree reused from disk (the first-load fallback) does not answer the refusal that made it necessary.
+      if (prepared.fresh !== false) lastRefusal = undefined;
       if (generation.published !== undefined) source.served?.(generation.published.commit);
       return generation;
     } finally {
@@ -379,9 +413,11 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
     const result: RuntimeStatus = {
       lock,
       loaded: current !== undefined,
+      fatal: current?.report.fatal !== undefined,
       ...(deps.extra?.() ?? {}),
     };
     if (lastAttempt !== undefined) result.lastAttempt = lastAttempt;
+    if (lastRefusal !== undefined) result.lastRefusal = lastRefusal;
     if (refusing !== undefined) result.refusing = refusing;
     if (resetOnOpen !== undefined) result.resetOnOpen = resetOnOpen;
     return result;

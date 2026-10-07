@@ -11,7 +11,7 @@ import type { RemoteChange, Source } from "../../src/source/source.js";
 
 const NOW = new Date("2026-10-07T10:00:00Z");
 
-function fakes(initial: { loaded?: boolean; refusing?: string } = {}) {
+function fakes(initial: { loaded?: boolean; refusing?: string; fatal?: boolean } = {}) {
   const records: Array<{ level: string; event: string; fields: Fields }> = [];
   const log = {
     error: (event: string, fields: Fields = {}) =>
@@ -25,6 +25,7 @@ function fakes(initial: { loaded?: boolean; refusing?: string } = {}) {
   };
   const state = {
     loaded: initial.loaded ?? true,
+    fatal: initial.fatal ?? false,
     refusing: initial.refusing,
     refreshes: 0,
     aborts: 0,
@@ -51,6 +52,7 @@ function fakes(initial: { loaded?: boolean; refusing?: string } = {}) {
     status: (): RuntimeStatus => ({
       lock: "exclusive",
       loaded: state.loaded,
+      fatal: state.fatal,
       ...(state.refusing === undefined ? {} : { refusing: state.refusing }),
     }),
     async shutdown() {
@@ -282,5 +284,31 @@ describe("createPoller", () => {
     expect(await poller.tick()).toBe("failed");
     const record = f.records.find((r) => r.event === "poller.tick");
     expect(record?.fields.detail).toMatch(/stub detail/);
+  });
+
+  it("keeps the process free to exit: its timer holds no reference", async () => {
+    const f = fakes();
+    const poller = createPoller({
+      ...f,
+      source: () => f.source,
+      intervalMs: 60_000,
+      clock: () => NOW,
+    });
+    expect(poller.timerHasRef()).toBeUndefined();
+    poller.start();
+    expect(poller.timerHasRef()).toBe(false);
+    await poller.stop();
+  });
+
+  it("refreshes while the served generation is a refusal, so a fixed publish is picked up", async () => {
+    const f = fakes({ loaded: true, fatal: true });
+    const poller = createPoller({
+      ...f,
+      source: () => f.source,
+      intervalMs: 60_000,
+      clock: () => NOW,
+    });
+    expect(await poller.tick()).toBe("refreshed");
+    expect(f.state.refreshes).toBe(1);
   });
 });

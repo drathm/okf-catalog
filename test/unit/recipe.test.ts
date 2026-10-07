@@ -83,4 +83,18 @@ describe("the publish recipe", () => {
     expect(pack).toMatch(/OKF_SCHEMA/);
     expect(pack).toMatch(/--strict/);
   });
+
+  it("installs the server from a package that builds itself on install and carries the recipe", () => {
+    const pkg = JSON.parse(readFileSync(join(RECIPE, "..", "..", "package.json"), "utf8")) as {
+      files: string[];
+      scripts: Record<string, string>;
+    };
+    expect(pkg.files).toContain("recipes/publish");
+    expect(pkg.files).toContain("dist");
+    expect(pkg.scripts.prepare).toMatch(/tsc/);
+    expect(workflow).toMatch(
+      /NODE_LLAMA_CPP_SKIP_DOWNLOAD=1 npm install --global "\$OKF_CATALOG_SOURCE"/,
+    );
+    expect(workflow).toMatch(/npm root -g/);
+  });
 });

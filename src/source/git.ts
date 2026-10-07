@@ -13,6 +13,7 @@ import { createBatchReader } from "../bundle/cat-file.js";
 import { parseLsTree, type TreeEntry, validateTree } from "../bundle/git-tree.js";
 import type { Caps, Refusal } from "../bundle/model.js";
 import { type WalkResult, walkBundle } from "../fs/walk.js";
+import type { Log } from "../log.js";
 import { GitError, type GitRunner, redactCredentials } from "./git-runner.js";
 import type { Loaded, RemoteChange, Source } from "./source.js";
 
@@ -26,12 +27,15 @@ export interface GitSourceOptions {
   caps: Caps;
   runner: GitRunner;
   clock: () => Date;
+  log?: Log;
 }
 
 export interface GitSource extends Source {
   readonly kind: "git";
+  readonly workDir: string;
   loadServed(): Promise<Loaded | undefined>;
   served(commit: string): void;
+  discard(commit: string): void;
   changed(): Promise<RemoteChange>;
   abort(): void;
   /** Whether the first load answered from the tree on disk, so the poller should fetch at once. */
@@ -51,12 +55,12 @@ export class SourceError extends Error {
 interface State {
   repository: string;
   branch: string;
-  /** The commit whose tree is extracted and complete. */
+  /** The commit whose tree is extracted and complete, and when it was fetched. */
   extracted?: string;
-  /** The commit the runtime last swapped in. */
+  extractedAt?: string;
+  /** The commit the runtime last swapped in, and when that one was fetched. */
   served?: string;
-  /** The commit last fetched, extracted or refused; what `changed()` compares against. */
-  lastAttempted?: string;
+  servedFetchedAt?: string;
   /** When the last fetch succeeded. */
   fetchedAt?: string;
 }
@@ -102,12 +106,29 @@ const emptyWalk = (fatal: Refusal): WalkResult => ({
  * line-ending rule can touch the bytes.
  */
 export function createGitSource(options: GitSourceOptions): GitSource {
-  const { repository, branch, bundlePath, workDir, caps, runner, clock } = options;
+  const { repository, branch, bundlePath, workDir, caps, runner, clock, log } = options;
   const repoDir = join(workDir, REPO);
   const statePath = join(workDir, STATE);
   const described = redactCredentials(repository);
   let firstLoad = true;
   let fromDisk = false;
+  /**
+   * The commit last refused or served, what `changed()` compares with: kept in memory only and seeded from the
+   * served commit, so a restart tries a commit again that an older configuration refused (bite 5 review BR2).
+   */
+  let attempted: string | undefined;
+  let attemptedSeeded = false;
+  const seedAttempted = (state: State | undefined): void => {
+    if (attemptedSeeded) return;
+    attemptedSeeded = true;
+    attempted = state?.served;
+  };
+  /** A file-system failure as the model may see it: a fixed sentence; the path travels as detail for the log. */
+  const fsFailure = (verb: string, error: unknown): SourceError =>
+    new SourceError(
+      `the source folder under the cache could not be ${verb}; the log has the detail`,
+      (error as Error).message,
+    );
 
   const treeDir = (commit: string): string => join(workDir, `tree-${commit}`);
 
@@ -122,11 +143,12 @@ export function createGitSource(options: GitSourceOptions): GitSource {
       const state: State = { repository: parsed.repository, branch: parsed.branch };
       const extracted = hex(parsed.extracted);
       const served = hex(parsed.served);
-      const lastAttempted = hex(parsed.lastAttempted);
       if (extracted !== undefined) state.extracted = extracted;
       if (served !== undefined) state.served = served;
-      if (lastAttempted !== undefined) state.lastAttempted = lastAttempted;
-      if (typeof parsed.fetchedAt === "string") state.fetchedAt = parsed.fetchedAt;
+      for (const key of ["fetchedAt", "extractedAt", "servedFetchedAt"] as const) {
+        const value = parsed[key];
+        if (typeof value === "string") state[key] = value;
+      }
       return state;
     } catch {
       // no state, or not ours to read
@@ -144,22 +166,48 @@ export function createGitSource(options: GitSourceOptions): GitSource {
     }
   }
   const writeState = (state: State): void => {
-    const tmp = `${statePath}.${process.pid}.tmp`;
-    writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-    renameSync(tmp, statePath);
+    try {
+      const tmp = `${statePath}.${process.pid}.tmp`;
+      writeFileSync(tmp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
+      renameSync(tmp, statePath);
+    } catch (error) {
+      throw fsFailure("written", error);
+    }
   };
 
   function ensureWorkDir(): void {
-    mkdirSync(workDir, { recursive: true, mode: 0o700 });
+    try {
+      mkdirSync(workDir, { recursive: true, mode: 0o700 });
+    } catch (error) {
+      throw fsFailure("created", error);
+    }
     if (lstatSync(workDir).isSymbolicLink())
       throw new SourceError(
         "the source folder under the cache is a symbolic link; remove it so the server can create its own",
       );
   }
   /** Everything here is derived: when the repository or branch changed, start over. */
-  function resetWorkDir(): void {
+  function resetWorkDir(reason: string): void {
+    log?.warn("source.recloned", { reason });
     for (const name of readdirSync(workDir))
       rmSync(join(workDir, name), { recursive: true, force: true });
+  }
+  function recloneRepo(reason: string): void {
+    log?.warn("source.recloned", { reason });
+    rmSync(repoDir, { recursive: true, force: true });
+  }
+  /** Whether git can still read the clone: its configuration must name the remote (a clone with it gone cannot be fetched into). */
+  async function cloneReadable(): Promise<boolean> {
+    try {
+      const result = await runner.run(["config", "--get", "remote.origin.url"], {
+        cwd: workDir,
+        gitDir: repoDir,
+        timeoutMs: TIMEOUT_MS.lsRemote,
+      });
+      return result.stdout.toString("utf8").trim() === repository;
+    } catch {
+      return false;
+    }
   }
 
   const failure = (verb: string, error: unknown): SourceError => {
@@ -263,8 +311,12 @@ export function createGitSource(options: GitSourceOptions): GitSource {
     let problem: Error | undefined;
     const reader = createBatchReader(blobs, (entry, bytes) => {
       const target = join(partial, entry.path);
-      mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-      writeFileSync(target, bytes, { mode: 0o600 });
+      try {
+        mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+        writeFileSync(target, bytes, { mode: 0o600 });
+      } catch (error) {
+        throw fsFailure("written", error);
+      }
     });
     try {
       if (blobs.length > 0) {
@@ -290,19 +342,21 @@ export function createGitSource(options: GitSourceOptions): GitSource {
       renameSync(partial, treeDir(commit));
     } catch (error) {
       rmSync(partial, { recursive: true, force: true });
+      if (error instanceof SourceError) throw error;
       throw error instanceof GitError
         ? failure("read", error)
         : new SourceError(
-            `the repository ${described} could not be extracted: ${(error as Error).message}`,
+            `the repository ${described} could not be extracted; the log has the detail`,
+            (error as Error).message,
           );
     }
   }
 
-  function walkTree(commit: string, fetchedAt: Date): Loaded {
+  function walkTree(commit: string, fetchedAt: Date, fresh: boolean): Loaded {
     const tree = treeDir(commit);
     const root = bundlePath === "." ? tree : join(tree, bundlePath);
     try {
-      return { walk: walkBundle(root, caps), published: { commit, fetchedAt } };
+      return { walk: walkBundle(root, caps), published: { commit, fetchedAt }, fresh };
     } catch (error) {
       const original = (error as Error).message;
       throw new SourceError(
@@ -314,8 +368,9 @@ export function createGitSource(options: GitSourceOptions): GitSource {
 
   function servedOnDisk(state: State | undefined): Loaded | undefined {
     if (state?.served === undefined || !treeExists(state.served)) return undefined;
-    const fetchedAt = state.fetchedAt === undefined ? clock() : new Date(state.fetchedAt);
-    return walkTree(state.served, Number.isNaN(fetchedAt.getTime()) ? clock() : fetchedAt);
+    const when = state.servedFetchedAt ?? state.fetchedAt;
+    const fetchedAt = when === undefined ? clock() : new Date(when);
+    return walkTree(state.served, Number.isNaN(fetchedAt.getTime()) ? clock() : fetchedAt, false);
   }
 
   /** Removes extracted trees that are neither served nor the newest, and any partial folder. */
@@ -337,9 +392,10 @@ export function createGitSource(options: GitSourceOptions): GitSource {
     ensureWorkDir();
     let state = readState();
     if (state !== undefined && (state.repository !== repository || state.branch !== branch)) {
-      resetWorkDir();
+      resetWorkDir("the configuration names another repository or branch");
       state = undefined;
     }
+    seedAttempted(state);
     if (firstLoad) {
       firstLoad = false;
       const onDisk = servedOnDisk(state);
@@ -360,8 +416,11 @@ export function createGitSource(options: GitSourceOptions): GitSource {
     try {
       await fetch();
     } catch (error) {
-      if (!staleLock(error)) throw failure("fetched", error);
-      rmSync(repoDir, { recursive: true, force: true });
+      // A lock file a killed git left behind, or a clone git itself can no longer read: both are derived, so a
+      // fresh clone replaces them; any other failure (the network, the credential) is reported as it is.
+      if (staleLock(error)) recloneRepo("a lock file was left behind by a killed git");
+      else if (!(await cloneReadable())) recloneRepo("the clone could not be read");
+      else throw failure("fetched", error);
       try {
         await clone();
         await fetch();
@@ -381,37 +440,54 @@ export function createGitSource(options: GitSourceOptions): GitSource {
     // commit the runtime fails to index must look moved to the poller until it is served.
     if (state?.extracted === commit && treeExists(commit)) {
       writeState({ ...base, fetchedAt: fetchedAt.toISOString() });
-      return walkTree(commit, fetchedAt);
+      return walkTree(commit, fetchedAt, false);
     }
     const listing = await list(commit).catch((error: unknown) => {
       throw failure("read", error);
     });
     const refused = (refusal: Refusal): Loaded => {
-      writeState({ ...base, lastAttempted: commit, fetchedAt: fetchedAt.toISOString() });
-      return { walk: emptyWalk(refusal), published: { commit, fetchedAt } };
+      attempted = commit;
+      writeState({ ...base, fetchedAt: fetchedAt.toISOString() });
+      return { walk: emptyWalk(refusal), published: { commit, fetchedAt }, fresh: false };
     };
     if ("refusal" in listing) return refused(listing.refusal);
     const refusal = validateTree(listing.entries, caps, bundlePath);
     if (refusal !== undefined) return refused(refusal);
     await extract(commit, listing.entries);
-    writeState({ ...base, extracted: commit, fetchedAt: fetchedAt.toISOString() });
-    return walkTree(commit, fetchedAt);
+    const next: State = {
+      ...base,
+      extracted: commit,
+      extractedAt: fetchedAt.toISOString(),
+      fetchedAt: fetchedAt.toISOString(),
+    };
+    writeState(next);
+    // Trees the loader refused would pile up otherwise: keep the served one and this one (bite 5 review BR16).
+    prune(next);
+    return walkTree(commit, fetchedAt, true);
   }
 
   return {
     kind: "git",
+    workDir,
     load,
     loadServed: async () => servedOnDisk(readState()),
     served: (commit) => {
-      const state: State = {
-        repository,
-        branch,
-        ...(readState() ?? {}),
-        served: commit,
-        lastAttempted: commit,
-      };
+      attempted = commit;
+      const current = readState();
+      const state: State = { repository, branch, ...(current ?? {}), served: commit };
+      if (current?.extracted === commit && current.extractedAt !== undefined)
+        state.servedFetchedAt = current.extractedAt;
       writeState(state);
       prune(state);
+    },
+    discard: (commit) => {
+      if (!COMMIT.test(commit) || !treeExists(commit)) return;
+      rmSync(treeDir(commit), { recursive: true, force: true });
+      const current = readState();
+      if (current?.extracted === commit) {
+        const { extracted: _e, extractedAt: _a, ...rest } = current;
+        writeState(rest);
+      }
     },
     changed: async (): Promise<RemoteChange> => {
       if (!existsSync(join(repoDir, "HEAD"))) return "moved";
@@ -432,7 +508,8 @@ export function createGitSource(options: GitSourceOptions): GitSource {
         .find((l) => l.endsWith(`\trefs/heads/${branch}`));
       if (line === undefined) return "gone";
       const remote = line.split("\t")[0] ?? "";
-      return remote === readState()?.lastAttempted ? "same" : "moved";
+      seedAttempted(readState());
+      return remote === attempted ? "same" : "moved";
     },
     describe: () => described,
     abort: () => runner.abort(),

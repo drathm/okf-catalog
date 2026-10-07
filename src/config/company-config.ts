@@ -23,7 +23,7 @@ export type ConfigResult = { ok: true; config: CompanyConfig } | { ok: false; pr
 
 const COMPANY = /^[a-z0-9][a-z0-9-]{0,62}$/;
 /** The scp-like repository form: a user, a host, a colon and a path that is not an option. */
-const SCP_LIKE = /^[A-Za-z0-9._-]+@[A-Za-z0-9.-]+:[^-\s/][^\s]*$/;
+const SCP_LIKE = /^[A-Za-z0-9._][A-Za-z0-9._-]*@[A-Za-z0-9.-]+:[^-\s/][^\s]*$/;
 /** A branch name as one plain ref segment or a few: letters, digits, `.`, `_`, `-` and `/`, nothing a refspec or an option could misread. */
 const BRANCH = /^[A-Za-z0-9_][A-Za-z0-9._/-]*$/;
 
@@ -51,6 +51,7 @@ export function repositoryProblem(value: string, options: ParseOptions = {}): st
     return "must not carry a query or a fragment (a token in a URL would reach the log)";
   if (url.protocol === "https:" && url.username.length > 0)
     return "must not carry a user name over https; use a credential helper";
+  if (url.username.startsWith("-")) return "must not carry a user name that looks like an option";
   return undefined;
 }
 
@@ -58,8 +59,10 @@ export function repositoryProblem(value: string, options: ParseOptions = {}): st
 export function branchProblem(value: string): string | undefined {
   if (!BRANCH.test(value) || value.includes("..") || value.includes("//") || value.includes("@{"))
     return "must be a plain branch name of letters, digits, '.', '_', '-' and '/'";
-  if (value.endsWith("/") || value.endsWith(".lock") || value.endsWith(".") || value.includes("/."))
-    return "must not end in '/', '.' or '.lock', and no segment may start with '.'";
+  if (value.endsWith("/") || value.endsWith(".") || value.includes("/."))
+    return "must not end in '/' or '.', and no segment may start with '.'";
+  if (value === "HEAD" || value.split("/").some((segment) => segment.endsWith(".lock")))
+    return "must not be HEAD, and no segment may end in '.lock'";
   return undefined;
 }
 

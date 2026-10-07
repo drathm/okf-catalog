@@ -71,6 +71,9 @@ const refuse = (path: string, rule: Refusal["rule"], detail: string): Refusal =>
   rule,
   detail,
 });
+const utf8Length = (text: string): number => new TextEncoder().encode(text).length;
+/** The shortest platform limit on a whole path the server runs on (macOS); a longer one fails at extraction. */
+const PATH_BYTES_CAP = 1024;
 
 /**
  * Judges a fetched commit's tree before anything is written (D43): a symbolic link or a gitlink, a blob over the
@@ -101,10 +104,12 @@ export function validateTree(
       return refuse(entry.path, "path-escape", "not a safe bundle-relative path");
     if (entry.path !== entry.path.normalize("NFC"))
       return refuse(entry.path, "path-escape", "not in Unicode normalisation form C");
+    if (utf8Length(entry.path) > PATH_BYTES_CAP)
+      return refuse(entry.path, "path-escape", `a path over ${PATH_BYTES_CAP} bytes`);
     for (const segment of entry.path.split("/")) {
       if (isDotGitSegment(segment))
         return refuse(entry.path, "path-escape", "a segment a file system would read as .git");
-      if (Buffer.byteLength(segment, "utf8") > 255)
+      if (utf8Length(segment) > 255)
         return refuse(entry.path, "path-escape", "a segment over 255 bytes");
     }
     const key = collisionKey(entry.path);

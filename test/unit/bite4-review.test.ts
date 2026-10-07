@@ -188,6 +188,7 @@ describe("cache folder (round 2)", () => {
     expect(cacheOverlapsBundle("/home/me/.cache/okf-catalog/acme", "/home/me/.cache-kb")).toBe(
       false,
     );
+    expect(cacheOverlapsBundle("/home/me/kb/..out", "/home/me/kb")).toBe(true);
   });
 });
 
@@ -227,5 +228,62 @@ describe("configuration (round 2)", () => {
     const inline = parseCompanyConfig("company: [\nsource: x\n", "/srv", HOME);
     // The parser names where it gave up (the line after the unclosed sequence), with no code frame after it.
     expect(!inline.ok && inline.problems[0]).toMatch(/at line \d+, column \d+:$/);
+  });
+});
+
+describe("status lines for a repository source (bite 5)", () => {
+  const generation = loadGeneration(readFixture("behaviours"), {}, NOW);
+  const withPublished = {
+    ...generation,
+    published: { commit: "c".repeat(40), fetchedAt: new Date("2026-10-07T09:00:00Z") },
+  };
+  it("names the published commit, the poller's last tick, the lock's holder and the last refusal", () => {
+    const out = projectStatus(
+      withPublished,
+      {
+        lock: "private",
+        loaded: true,
+        fatal: false,
+        lockOwner: { pid: 4242, startedAt: "2026-10-07T08:00:00Z", alive: true },
+        poller: {
+          intervalMs: 600_000,
+          lastTick: new Date("2026-10-07T09:10:00Z"),
+          lastOutcome: "unchanged",
+        },
+        lastRefusal: {
+          commit: "d".repeat(40),
+          rule: "symlink",
+          path: "link.md",
+          detail: "a symbolic link",
+        },
+      },
+      toolOptions,
+      NOW,
+    );
+    const line = statusSummary(out);
+    expect(line).toContain("published cccccccccccc fetched 2026-10-07T09:00:00.000Z");
+    expect(line).toContain("poller every 600 s, last tick unchanged at 2026-10-07T09:10:00.000Z");
+    expect(line).toContain("lock private (held by pid 4242 since 2026-10-07T08:00:00Z, alive)");
+    expect(line).toContain("last refusal dddddddddddd symlink (link.md)");
+    expect(out.lastRefusal).toMatchObject({ commit: "d".repeat(40), rule: "symlink" });
+  });
+  it("says the holder is unreadable when the private lock's owner file is not, and shows nothing for a local source", () => {
+    const privateNoOwner = projectStatus(
+      generation,
+      { lock: "private", loaded: true, fatal: false, lockOwner: null },
+      toolOptions,
+      NOW,
+    );
+    expect(statusSummary(privateNoOwner)).toContain("lock private (holder unreadable)");
+    const local = projectStatus(
+      generation,
+      { lock: "exclusive", loaded: true, fatal: false },
+      toolOptions,
+      NOW,
+    );
+    expect(local.published).toBeNull();
+    expect(local.poller).toBeNull();
+    expect(local.lastRefusal).toBeNull();
+    expect(statusSummary(local)).not.toMatch(/published |poller |last refusal/);
   });
 });

@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { chmodSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -16,6 +24,8 @@ interface Control {
   stderr?: string;
   sleepMs?: number;
   childMarker?: string;
+  /** The grandchild ignores SIGTERM, as a stuck ssh might. */
+  childIgnoresTerm?: boolean;
 }
 
 /** A stand-in git: records every call's arguments, environment and working folder, then behaves as told. */
@@ -35,7 +45,8 @@ if (control.stdout) process.stdout.write(control.stdout.replace("{stdin}", stdin
 if (control.stderr) process.stderr.write(control.stderr);
 if (control.childMarker) {
   const { spawn } = await import("node:child_process");
-  const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)", control.childMarker], { stdio: "ignore" });
+  const body = control.childIgnoresTerm ? "process.on('SIGTERM', () => {}); setTimeout(() => {}, 60000)" : "setTimeout(() => {}, 60000)";
+  const child = spawn(process.execPath, ["-e", body, control.childMarker], { stdio: "ignore" });
   await new Promise((r) => child.on("exit", r));
 } else if (control.sleepMs) await new Promise((r) => setTimeout(r, control.sleepMs));
 process.exit(control.exitCode ?? 0);
@@ -252,5 +263,37 @@ describe("createGitRunner", () => {
     await new Promise((r) => setTimeout(r, 300));
     expect(alive(marker)).toBe(false);
     expect(git.running).toBe(0);
+  });
+
+  it("survives a git that exits without reading its input (EPIPE on stdin is not a crash)", async () => {
+    const dir = work();
+    const git = runner(standIn(dir, { exitCode: 0 }));
+    const result = await git.run(["cat-file", "--batch"], {
+      cwd: dir,
+      timeoutMs: 5000,
+      input: "x".repeat(2_000_000),
+    });
+    expect(result.code).toBe(0);
+  });
+
+  it("refuses every command once aborted, so a shutdown cannot race a tick into a fresh fetch", async () => {
+    const dir = work();
+    const git = runner(standIn(dir, { stdout: "ok\n" }));
+    git.abort();
+    await expect(git.run(["fetch"], { cwd: dir, timeoutMs: 5000 })).rejects.toMatchObject({
+      aborted: true,
+    });
+    expect(existsSync(join(dir, "calls.jsonl"))).toBe(false);
+  });
+
+  it("kills a group member that ignores SIGTERM with SIGKILL after the grace, even though git itself exited", async () => {
+    const dir = work();
+    const marker = `okfstuck${process.pid}${Date.now()}`;
+    const git = runner(standIn(dir, { childMarker: marker, childIgnoresTerm: true }));
+    await expect(git.run(["fetch"], { cwd: dir, timeoutMs: 300 })).rejects.toMatchObject({
+      timedOut: true,
+    });
+    await new Promise((r) => setTimeout(r, 1600));
+    expect(alive(marker)).toBe(false);
   });
 });

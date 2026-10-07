@@ -43,10 +43,22 @@ export type RefreshOutcome =
   /** Something threw; the previous generation stays. The index is re-aligned with it when that is possible; when it is not, the runtime refuses until a refresh succeeds. */
   | { outcome: "failed"; error: string };
 
+export interface LastRefusal {
+  /** The fetched commit, for a repository source. */
+  commit?: string;
+  rule: string;
+  path: string;
+  detail: string;
+}
+
 export interface RuntimeStatus {
   lock: "exclusive" | "private";
   /** Whether a generation is published; false before the first load lands or while it keeps failing. */
   loaded: boolean;
+  /** Whether the published generation is itself a refusal (D39), which a poller tick keeps retrying. */
+  fatal?: boolean;
+  /** The last commit or load the loader refused, and why; a fixed publish clears it. */
+  lastRefusal?: LastRefusal;
   lastAttempt?: { at: Date; outcome: "swapped" | "fatal" | "failed" };
   /** The fixed sentence every tool answers with while the server cannot serve. */
   refusing?: string;

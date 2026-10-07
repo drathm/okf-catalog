@@ -20,6 +20,8 @@ export interface Poller {
   /** One tick, for tests and for `start()`: never two at once. */
   tick(): Promise<PollerOutcome>;
   state(): PollerStatus;
+  /** Whether the armed timer holds the process; undefined when none is armed. For tests. */
+  timerHasRef(): boolean | undefined;
 }
 
 /**
@@ -43,7 +45,11 @@ export function createPoller(deps: PollerDeps): Poller {
     try {
       const status = deps.runtime.status();
       const source = deps.source();
-      let shouldRefresh = !status.loaded || status.refusing !== undefined || source === undefined;
+      let shouldRefresh =
+        !status.loaded ||
+        status.fatal === true ||
+        status.refusing !== undefined ||
+        source === undefined;
       if (!shouldRefresh && source?.changed !== undefined) {
         const change = await source.changed();
         if (change === "gone") outcome = "gone";
@@ -114,6 +120,7 @@ export function createPoller(deps: PollerDeps): Poller {
       if (inFlight !== undefined) await inFlight.catch(() => undefined);
     },
     tick,
+    timerHasRef: () => timer?.hasRef(),
     state: () => ({
       intervalMs: deps.intervalMs,
       ...(lastTick === undefined ? {} : { lastTick }),

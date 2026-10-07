@@ -7,12 +7,29 @@ export interface ExpectedBlob {
 
 export interface BatchReader {
   /** Feeds the next chunk of stdout; throws on the first byte that is not what the listing promised. */
-  feed(chunk: Buffer): void;
+  feed(chunk: Uint8Array): void;
   /** Called at the end of stdout; throws when a blob is still owed. */
   finish(): void;
 }
 
 const HEADER = /^([0-9a-f]{40,64}) (\S+)(?: (\d+))?$/;
+const utf8 = new TextDecoder("utf-8");
+
+const concat = (parts: readonly Uint8Array[]): Uint8Array => {
+  let length = 0;
+  for (const part of parts) length += part.length;
+  const out = new Uint8Array(length);
+  let at = 0;
+  for (const part of parts) {
+    out.set(part, at);
+    at += part.length;
+  }
+  return out;
+};
+const indexOfNewline = (bytes: Uint8Array): number => {
+  for (let i = 0; i < bytes.length; i++) if (bytes[i] === 0x0a) return i;
+  return -1;
+};
 
 /**
  * Reads `cat-file --batch` output for a known list of blobs, in order: `<sha> blob <size>\n`, the raw bytes, a
@@ -21,20 +38,20 @@ const HEADER = /^([0-9a-f]{40,64}) (\S+)(?: (\d+))?$/;
  */
 export function createBatchReader(
   expected: readonly ExpectedBlob[],
-  onBlob: (entry: ExpectedBlob, bytes: Buffer) => void,
+  onBlob: (entry: ExpectedBlob, bytes: Uint8Array) => void,
 ): BatchReader {
   const queue = [...expected];
-  let pending: Buffer = Buffer.alloc(0);
-  let current: { entry: ExpectedBlob; got: Buffer[]; gotLength: number } | undefined;
+  let pending: Uint8Array = new Uint8Array(0);
+  let current: { entry: ExpectedBlob; got: Uint8Array[]; gotLength: number } | undefined;
   let awaitingNewline = false;
   let done = false;
 
-  function feed(chunk: Buffer): void {
+  function feed(chunk: Uint8Array): void {
     if (done) {
       if (chunk.length > 0) throw new Error("cat-file printed more after the last blob");
       return;
     }
-    pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk]);
+    pending = pending.length === 0 ? chunk : concat([pending, chunk]);
     for (;;) {
       if (awaitingNewline) {
         if (pending.length === 0) return;
@@ -49,9 +66,9 @@ export function createBatchReader(
         }
       }
       if (current === undefined) {
-        const newline = pending.indexOf(0x0a);
+        const newline = indexOfNewline(pending);
         if (newline === -1) return;
-        const header = pending.subarray(0, newline).toString("utf8");
+        const header = utf8.decode(pending.subarray(0, newline));
         pending = pending.subarray(newline + 1);
         const match = HEADER.exec(header);
         const next = queue[0];
@@ -76,7 +93,7 @@ export function createBatchReader(
         pending = pending.subarray(take);
       }
       if (current.gotLength < current.entry.size) return;
-      onBlob(current.entry, Buffer.concat(current.got));
+      onBlob(current.entry, concat(current.got));
       current = undefined;
       awaitingNewline = true;
     }

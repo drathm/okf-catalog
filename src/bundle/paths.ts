@@ -30,4 +30,17 @@ export function isSafeRelativePath(path: string): boolean {
 }
 
 /** Two paths that agree under this key would be one file to the engine (and to a case-folding file system). */
-export const collisionKey = (path: string): string => path.normalize("NFC").toLowerCase();
+export const collisionKey = (path: string): string =>
+  path.normalize("NFC").toUpperCase().toLowerCase();
+
+/** The first pair of paths the engine's key folds together, or undefined when every path is distinct under it. */
+export function findCollision(paths: readonly string[]): [string, string] | undefined {
+  const seen = new Map<string, string>();
+  for (const path of paths) {
+    const key = collisionKey(path);
+    const other = seen.get(key);
+    if (other !== undefined) return [other, path];
+    seen.set(key, path);
+  }
+  return undefined;
+}

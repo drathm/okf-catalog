@@ -100,6 +100,7 @@ describe("the core has no clock, environment, network or console of its own", ()
       /\bprocess\./,
       /\bfetch\(/,
       /\bconsole\./,
+      /\bBuffer\./,
       /\bsetTimeout\(/,
       /\bsetImmediate\(/,
       /\bMath\.random\(/,

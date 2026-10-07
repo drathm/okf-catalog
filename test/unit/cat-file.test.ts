@@ -14,7 +14,8 @@ function collect() {
       { sha: SHA_B, size: 3, path: "dir/b.md" },
       { sha: SHA_A, size: 5, path: "copy.md" },
     ],
-    (entry, bytes) => void blobs.push({ path: entry.path, bytes: bytes.toString("latin1") }),
+    (entry, bytes) =>
+      void blobs.push({ path: entry.path, bytes: Buffer.from(bytes).toString("latin1") }),
   );
   return { reader, blobs };
 }
