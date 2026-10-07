@@ -44,6 +44,12 @@ if ! printf '%s\n2.1.221\n' "$VERSION" | awk -F. 'NR==1{a1=$1;a2=$2;a3=$3} NR==2
   exit 2
 fi
 
+# From 2.1.259 the result event carries the list of denied permissions when prompts are answered by nobody.
+PROMPTS=""
+if printf '%s\n2.1.259\n' "$VERSION" | awk -F. 'NR==1{a1=$1;a2=$2;a3=$3} NR==2{exit !(a1>$1 || (a1==$1 && (a2>$2 || (a2==$2 && a3>=$3))))}'; then
+  PROMPTS="--permission-prompts none"
+fi
+
 NODE=$(command -v node)
 MCP="$RESULTS/mcp-config.json"
 # alwaysLoad: Claude Code defers MCP tools behind its tool search by default; the catalog's four must be loaded
@@ -60,7 +66,7 @@ run_one() { # name prompt
   ( cd "$EMPTY" && ENABLE_TOOL_SEARCH=false claude -p "$2" \
       --plugin-dir "$CHECKOUT/plugin/claude-code" \
       --mcp-config "${3:-$MCP}" --strict-mcp-config \
-      --tools Skill --allowedTools "${4:-$TOOLS}" --permission-mode dontAsk \
+      --tools Skill --allowedTools "${4:-$TOOLS}" --permission-mode dontAsk $PROMPTS \
       --model "$MODEL" --max-budget-usd "$BUDGET" --no-session-persistence \
       --output-format stream-json --verbose ) > "$OUT" || echo "claude exited $? for $1; verify.mjs reads the result event's subtype"
   rmdir "$EMPTY" 2>/dev/null || true
