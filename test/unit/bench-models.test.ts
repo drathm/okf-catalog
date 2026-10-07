@@ -1,3 +1,5 @@
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   approvalText,
@@ -37,6 +39,26 @@ describe("the bench's model entries", () => {
       expect(m.bytes).toBeGreaterThan(100_000_000);
       expect(m.variable).toMatch(/^QMD_(EMBED|RERANK|GENERATE)_MODEL$/);
     }
+  });
+
+  it("match qmd's default model URIs and node-llama-cpp's resolved file names, read from the installed packages", async () => {
+    const qmdDir = dirname(fileURLToPath(import.meta.resolve("@tobilu/qmd")));
+    const llm = (await import(pathToFileURL(join(qmdDir, "llm.js")).href)) as Record<
+      string,
+      string
+    >;
+    expect(MODELS.map((m) => m.uri)).toEqual([
+      llm.DEFAULT_EMBED_MODEL_URI,
+      llm.DEFAULT_RERANK_MODEL_URI,
+      llm.DEFAULT_GENERATE_MODEL_URI,
+    ]);
+    const nlcDir = dirname(fileURLToPath(import.meta.resolve("node-llama-cpp")));
+    const parser = (await import(
+      pathToFileURL(join(nlcDir, "utils", "parseModelUri.js")).href
+    )) as {
+      parseModelUri: (uri: string) => { fullFilename?: string } | null;
+    };
+    for (const m of MODELS) expect(parser.parseModelUri(m.uri)?.fullFilename, m.uri).toBe(m.file);
   });
 
   it("know which models each mode needs", () => {

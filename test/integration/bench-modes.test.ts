@@ -88,6 +88,8 @@ describe("the benchmark harness's modes path", { timeout: 120_000 }, () => {
     expect(summary.modes.embed.chunksEmbedded).toBeGreaterThan(0);
     expect(Object.keys(summary.modes.perMode).sort()).toEqual(["fused", "vector"]);
     expect(summary.modes.perMode.vector?.samples).toBe(1);
+    // The vector path on its own, not the lexical list it is fused with: both gold pages at the top.
+    expect(summary.modes.perMode.vector?.overall["hit@1"]?.median).toBe(2);
     expect(summary.modes.perMode.fused?.overall["hit@3"]?.median).toBe(2);
     expect(summary.summary["question/relaxed"]?.all.n).toBe(2);
     const rows = readFileSync(
@@ -96,9 +98,21 @@ describe("the benchmark harness's modes path", { timeout: 120_000 }, () => {
     )
       .split("\n")
       .filter((l) => l.length > 0)
-      .map((l) => JSON.parse(l) as { mode?: string; config?: string; rank: number | null });
-    expect(rows.filter((row) => row.mode === "vector")).toHaveLength(2);
-    expect(rows.filter((row) => row.mode === "fused")).toHaveLength(2);
+      .map(
+        (l) =>
+          JSON.parse(l) as {
+            mode?: string;
+            config?: string;
+            rank: number | null;
+            lists?: { policy: number; vector: number };
+          },
+      );
+    const vector = rows.filter((row) => row.mode === "vector");
+    expect(vector.map((row) => row.rank)).toEqual([1, 1]);
+    const fused = rows.filter((row) => row.mode === "fused");
+    expect(fused).toHaveLength(2);
+    for (const row of fused) expect(row.lists?.vector, JSON.stringify(row)).toBeGreaterThan(0);
+    expect(rows.filter((row) => row.config === "question/relaxed@20")).toHaveLength(2);
     expect(rows.filter((row) => row.config === "question/relaxed")).toHaveLength(2);
     expect(existsSync(join(REPO, "bench", "results", summaryFile as string))).toBe(false);
   });
@@ -110,20 +124,16 @@ describe("the benchmark harness's modes path", { timeout: 120_000 }, () => {
     writeFileSync(join(empty, "embeddinggemma-300M-Q8_0.gguf"), "GGUF");
     writeFileSync(join(empty, "hf_ggml-org_embeddinggemma-300M-Q8_0.gguf.etag"), "x");
     writeFileSync(join(empty, "hf_ggml-org_qwen3-reranker-0.6b-q8_0.gguf.ipull"), "x");
-    const workBefore = existsSync(join(REPO, "bench", ".work"))
-      ? readdirSync(join(REPO, "bench", ".work"))
-      : [];
-    const r = run(["--modes", "full", "--models-dir", empty]);
+    const out = join(temp, "out-absent");
+    mkdirSync(out, { recursive: true });
+    const r = run(["--modes", "full", "--models-dir", empty, "--out", out]);
     expect(r.status).toBe(3);
     expect(r.stderr).not.toContain("TRIPWIRE");
     expect(r.stderr).toContain("node bench/pull-models.mjs embed rerank expand");
     expect(r.stderr).toContain("333 590 944");
     expect(r.stderr).toContain("Gemma");
     expect(r.stderr).toMatch(/embeddinggemma-300M-Q8_0\.gguf: absent/);
-    const workAfter = existsSync(join(REPO, "bench", ".work"))
-      ? readdirSync(join(REPO, "bench", ".work"))
-      : [];
-    expect(workAfter).toEqual(workBefore);
+    expect(readdirSync(out)).toEqual([]);
     expect(readdirSync(empty).sort()).toEqual([
       "embeddinggemma-300M-Q8_0.gguf",
       "hf_ggml-org_embeddinggemma-300M-Q8_0.gguf.etag",
@@ -142,5 +152,8 @@ describe("the benchmark harness's modes path", { timeout: 120_000 }, () => {
     });
     expect(preset.status).toBe(4);
     expect(preset.stderr).toContain("QMD_EMBED_MODEL");
+    const gpu = run(["--modes", "vector", "--models-dir", empty], { QMD_LLAMA_GPU: "vulkan" });
+    expect(gpu.status).toBe(4);
+    expect(gpu.stderr).toContain("QMD_LLAMA_GPU");
   });
 });

@@ -1,7 +1,9 @@
 // A network tripwire, loaded with `node --import bench/lib/tripwire.mjs …`: any attempt to reach the network
-// through fetch, a TCP or TLS socket, a DNS lookup or an HTTP request writes TRIPWIRE to stderr and ends the
-// process with exit code 86. Local IPC (a socket path, a pipe) stays allowed. The suite runs the harness's
+// through fetch, a TCP or TLS socket, a DNS lookup, an HTTP request or a child process other than git (a
+// source build of llama.cpp would clone through one) writes TRIPWIRE to stderr and ends the process with exit
+// code 86. Local IPC (a socket path, a pipe) stays allowed. The suite runs the harness's
 // no-model paths under it, so "nothing was downloaded" is a failure the test can see, not a claim.
+import childProcess from "node:child_process";
 import dns from "node:dns";
 import http from "node:http";
 import https from "node:https";
@@ -32,3 +34,13 @@ http.request = () => trip("http.request");
 http.get = () => trip("http.get");
 https.request = () => trip("https.request");
 https.get = () => trip("https.get");
+const guardSpawn = (name) => {
+  const original = childProcess[name];
+  childProcess[name] = function tripwireSpawn(command, ...args) {
+    const base = String(command).split("/").pop();
+    if (base === "git") return original.call(this, command, ...args);
+    return trip(`child_process.${name}(${String(command)})`);
+  };
+};
+for (const name of ["spawn", "spawnSync", "execFile", "execFileSync", "exec", "execSync", "fork"])
+  guardSpawn(name);

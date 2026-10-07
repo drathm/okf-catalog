@@ -118,7 +118,7 @@ export function approvalText(missing, dir) {
   lines.push(`  node bench/pull-models.mjs ${missing.map((m) => m.entry.key).join(" ")}`);
   lines.push("");
   lines.push(
-    "Expect about 1.5 GB of resident memory with all three models loaded, a few minutes to embed the corpus, and seconds per question for the reranker and the expansion model on an Apple Silicon laptop.",
+    "Expect about 2.5 GiB of resident memory with all three models loaded (2.1 GiB of weights, with the embedder loaded twice: qmd loads it once for embedding and once more, on its default instance, for tokenising chunks), a few minutes to embed the corpus, and seconds per question for the reranker and the expansion model on an Apple Silicon laptop.",
   );
   return `${lines.join("\n")}\n`;
 }

@@ -1,6 +1,6 @@
 # Lexical benchmark, bite 3
 
-Run 2026-10-07 on darwin arm64, Node v24.15.0, qmd 2.8.3, okf-catalog commit `02cba7c` with uncommitted changes (diff hash `0b442d7b68f4`). Reproduce with `sh bench/fetch-corpus.sh`, `npm run build`, `node bench/run.mjs`, then `node bench/report.mjs` to regenerate this note. The run writes one JSON line per question per configuration and a summary under `bench/results/` (gitignored).
+Run 2026-10-07 on darwin arm64, Node v24.15.0, qmd 2.8.3, okf-catalog commit `b8928e8` with uncommitted changes (diff hash `d1c78c1edd03`). Reproduce with `sh bench/fetch-corpus.sh`, `npm run build`, `node bench/run.mjs`, then `node bench/report.mjs` to regenerate this note. The run writes one JSON line per question per configuration and a summary under `bench/results/` (gitignored).
 
 ## Why
 
@@ -21,7 +21,7 @@ The walker found 757 files; with drafts admitted and integrity off, 736 pages we
 
 ## Method
 
-Every question runs in seven configurations: the question text or its keyword form with the relaxed rung on or off; and the question text with the gold page's own folder as the topic filter, with its type as the type filter, and with a relaxed per-term pool of 100 instead of the first rung's pool. `limit` is 5, overdue pages are included, and the clock is pinned to 2026-10-06T12:00:00.000Z. The gold page's rank in the five hits gives hit@1, hit@3 and MRR@5 (a miss contributes 0). The paired tables count, per question, whether the first configuration moved the gold page's rank up, down or not at all against the second; a miss ranks as 99. The filter configurations use the gold page's own folder and type, which a real caller does not know; they measure what the filters do to the ranking (D25), not how often a caller would guess them.
+Every question runs in eight configurations: the question text or its keyword form with the relaxed rung on or off; the question text with the gold page's own folder as the topic filter, with its type as the type filter, and with a relaxed per-term pool of 100 instead of the first rung's pool; and the question text through the ladder twenty deep, cut to five for the rank (`question/relaxed@20`, the control for the fusion mode of the modes note, since the ladder's pools grow with its limit). `limit` is 5, overdue pages are included, and the clock is pinned to 2026-10-06T12:00:00.000Z. The gold page's rank in the five hits gives hit@1, hit@3 and MRR@5 (a miss contributes 0). The paired tables count, per question, whether the first configuration moved the gold page's rank up, down or not at all against the second; a miss ranks as 99. The filter configurations use the gold page's own folder and type, which a real caller does not know; they measure what the filters do to the ranking (D25), not how often a caller would guess them.
 
 ## Results
 
@@ -34,6 +34,7 @@ Every question runs in seven configurations: the question text or its keyword fo
 | question/relaxed+topic | 19/25 | 23/25 | 0.85 |
 | question/relaxed+type | 19/25 | 22/25 | 0.85 |
 | question/relaxed+pool100 | 16/25 | 20/25 | 0.71 |
+| question/relaxed@20 | 17/25 | 20/25 | 0.73 |
 
 By question style:
 
@@ -46,6 +47,7 @@ By question style:
 | question/relaxed+topic | 9/10 | 10/10 | 0.95 | 10/15 | 13/15 | 0.78 |
 | question/relaxed+type | 9/10 | 10/10 | 0.95 | 10/15 | 12/15 | 0.78 |
 | question/relaxed+pool100 | 9/10 | 9/10 | 0.90 | 7/15 | 11/15 | 0.58 |
+| question/relaxed@20 | 9/10 | 9/10 | 0.90 | 8/15 | 11/15 | 0.62 |
 
 Paired by question:
 
@@ -114,6 +116,14 @@ Reading. With keywords, the all-terms rung puts the gold page in place for every
 | question/relaxed+pool100 | B17 | paraphrase | miss | relaxed | locally hosted model forget earlier messages skip tool calls default settings room | `cole-medin/concepts/context-window-limits.md` |
 | question/relaxed+pool100 | B22 | reuse | miss | all-terms | video covers stripe coding agents ship 300 prs week | `cole-medin/entities/organizations/aws.md` |
 | question/relaxed+pool100 | B25 | paraphrase | miss | relaxed | video agent harness running whole day straight recreate anthropic chat website share | `cole-medin/concepts/chat-interfaces.md` |
+| question/relaxed@20 | B3 | paraphrase | 2 | relaxed | two plugin versions bumped published releases changed cannot happen | `okf-skills/components/ci-workflow.md` |
+| question/relaxed@20 | B9 | paraphrase | 2 | all-terms | project vendored dependency define concept id one wins | `cole-medin/entities/people/cole-medin.md` |
+| question/relaxed@20 | B11 | paraphrase | miss | relaxed | two notes tie relevance memory search decide comes first | `cole-medin/sources/the-most-value-packed-rag-guide-on-youtube-feat-llama-31-405b.md` |
+| question/relaxed@20 | B12 | paraphrase | 3 | relaxed | two-layer memory model agents large always-loaded instruction file | `cole-medin/concepts/self-evolving-memory.md` |
+| question/relaxed@20 | B14 | paraphrase | miss | relaxed | happens agent saves note twice retry key changed text | `cole-medin/sources/no-code-rag-agents-you-have-to-check-out-n8n-langchain.md` |
+| question/relaxed@20 | B17 | paraphrase | miss | relaxed | locally hosted model forget earlier messages skip tool calls default settings room | `cole-medin/concepts/context-window-limits.md` |
+| question/relaxed@20 | B22 | reuse | miss | all-terms | video covers stripe coding agents ship 300 prs week | `cole-medin/entities/organizations/aws.md` |
+| question/relaxed@20 | B25 | paraphrase | miss | relaxed | video agent harness running whole day straight recreate anthropic chat website share | `cole-medin/entities/tools/confluence.md` |
 
 Observations. The paraphrase misses share two or fewer content terms with their page, which no lexical ranking can recover. B22's question form is answered by the all-terms rung with a long entity page that happens to contain every term as a prefix, so relaxation never runs for it. The keyword form of B2 sends `concentric cose 000 concepts`: the tokenizer splits `1,000` into `1` (dropped, one character) and `000`, which is exactly how the engine's FTS5 tokenizer indexes it (a query token `1000` matches nothing, probed against qmd 2.8.3), so the split is kept. The relaxed per-term pool is the first rung's pool by default; the pool-100 row above measures the first alternative.
 
@@ -125,17 +135,18 @@ The first two runs of this benchmark disagreed on one question (B25: rank 1, the
 
 | Measure | Value |
 |---|---|
-| Index time, 736 pages | 712 ms |
-| Database size, 736 pages | 10.7 MiB |
+| Index time, 736 pages | 728 ms |
+| Database size, 736 pages | 10.8 MiB |
 | Documents not indexed | 0 (0 by path collision) |
-| Process RSS after the run | 1116 MiB (walked files, catalog and qmd store all resident) |
-| Query latency, question/relaxed | median 10.3 ms, max 27.8 ms |
-| Query latency, question/strict | median 0.4 ms, max 3.4 ms |
-| Query latency, keywords/relaxed | median 2.3 ms, max 12.1 ms |
-| Query latency, keywords/strict | median 0.3 ms, max 1.4 ms |
-| Query latency, question/relaxed+topic | median 12.1 ms, max 27.2 ms |
-| Query latency, question/relaxed+type | median 10.6 ms, max 26.5 ms |
-| Query latency, question/relaxed+pool100 | median 45.4 ms, max 104.9 ms |
+| Process RSS after the run | 1485 MiB (walked files, catalog and qmd store all resident) |
+| Query latency, question/relaxed | median 10.1 ms, max 30.1 ms |
+| Query latency, question/strict | median 0.3 ms, max 2.1 ms |
+| Query latency, keywords/relaxed | median 2.3 ms, max 12.3 ms |
+| Query latency, keywords/strict | median 0.3 ms, max 1.5 ms |
+| Query latency, question/relaxed+topic | median 12.5 ms, max 24.6 ms |
+| Query latency, question/relaxed+type | median 10.9 ms, max 25.8 ms |
+| Query latency, question/relaxed+pool100 | median 42.4 ms, max 99.4 ms |
+| Query latency, question/relaxed@20 | median 40.2 ms, max 116.5 ms |
 | Rows fetched per search, question/relaxed | median 210, max 515 (every row carries its page body) |
 | Rows fetched per search, question/strict | median 0, max 21 (every row carries its page body) |
 | Rows fetched per search, keywords/relaxed | median 45, max 250 (every row carries its page body) |
@@ -143,6 +154,7 @@ The first two runs of this benchmark disagreed on one question (B25: rank 1, the
 | Rows fetched per search, question/relaxed+topic | median 212, max 515 (every row carries its page body) |
 | Rows fetched per search, question/relaxed+type | median 212, max 515 (every row carries its page body) |
 | Rows fetched per search, question/relaxed+pool100 | median 937, max 2445 (every row carries its page body) |
+| Rows fetched per search, question/relaxed@20 | median 954, max 1895 (every row carries its page body) |
 | Questions with a term at the frequency floor (question/relaxed) | 16 of 25 |
 
 Fixtures, for the record (measured once on the same machine):

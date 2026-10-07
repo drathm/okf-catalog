@@ -15,9 +15,11 @@ import { createHash } from "node:crypto";
 import {
   appendFileSync,
   closeSync,
+  createReadStream,
   existsSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readdirSync,
   readFileSync,
@@ -26,7 +28,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { approvalText, MODELS, MODES, missingModels, modelPath, modelsFor } from "./lib/models.mjs";
@@ -83,18 +85,27 @@ if (bundleDir !== undefined) {
 const MODELS_DIR = resolve(option("--models-dir") ?? join(here, ".models"));
 const modelMeta = [];
 if (modes.length > 0) {
-  const preset = [...MODELS.map((m) => m.variable), "CI"].filter(
-    (v) => process.env[v] !== undefined,
-  );
+  // A preset model variable would send qmd to a file this harness never checked; a preset GPU variable could
+  // steer qmd's own runtime load away from the packaged binary and into a source build.
+  const guarded = [
+    ...MODELS.map((m) => m.variable),
+    "CI",
+    "QMD_LLAMA_GPU",
+    "QMD_FORCE_CPU",
+    "NODE_LLAMA_CPP_GPU",
+  ];
+  const preset = guarded.filter((v) => process.env[v] !== undefined);
   if (preset.length > 0) {
     fail(
       EXIT_MODES_REFUSED,
-      `refusing to measure with ${preset.join(", ")} set: qmd would read a model, or refuse model work, this harness did not check`,
+      `refusing to measure with ${preset.join(", ")} set: qmd would read a model, refuse model work or load a runtime this harness did not check`,
     );
   }
   process.env.GGML_METAL_NO_RESIDENCY = "1";
   if (stubEmbedder) {
     process.env.QMD_EMBED_MODEL = "stub:bag-of-words-64";
+    process.env.QMD_RERANK_MODEL = join(MODELS_DIR, "no-reranker-under-the-stub.gguf");
+    process.env.QMD_GENERATE_MODEL = join(MODELS_DIR, "no-expansion-model-under-the-stub.gguf");
   } else {
     const statFor = (path) => {
       let stat;
@@ -119,15 +130,35 @@ if (modes.length > 0) {
       process.stderr.write(approvalText(missing, MODELS_DIR));
       process.exit(EXIT_MODELS_MISSING);
     }
-    for (const entry of modelsFor(modes)) {
+    // The files the modes need are hashed, so a different GGUF of the pinned size cannot pass as the pinned one.
+    const sha256File = (path) =>
+      new Promise((resolveHash, reject) => {
+        const hash = createHash("sha256");
+        createReadStream(path)
+          .on("data", (chunk) => hash.update(chunk))
+          .on("end", () => resolveHash(hash.digest("hex")))
+          .on("error", reject);
+      });
+    const needed = new Set(modelsFor(modes).map((m) => m.key));
+    for (const entry of MODELS) {
       const path = modelPath(MODELS_DIR, entry);
+      // Every model variable is set, so a model no mode asked for resolves to a missing file that throws,
+      // never to qmd's default `hf:` URI, which would download.
       process.env[entry.variable] = path;
+      if (!needed.has(entry.key)) continue;
+      const digest = await sha256File(path);
+      if (digest !== entry.sha256) {
+        fail(
+          EXIT_MODELS_MISSING,
+          `${path} is not the pinned ${entry.key}: sha256 ${digest}, expected ${entry.sha256}; remove it and run node bench/pull-models.mjs ${entry.key}`,
+        );
+      }
       modelMeta.push({
         key: entry.key,
         uri: entry.uri,
         path,
         bytes: entry.bytes,
-        sha256: entry.sha256,
+        sha256: digest,
         revision: entry.revision,
       });
     }
@@ -171,9 +202,18 @@ if (newestSource(join(repo, "src")) > statSync(join(repo, "dist", "cli.js")).mti
   fail(EXIT_USAGE, "dist/ is older than src/: run npm run build first");
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 const resultsDir = outDir === undefined ? join(here, "results") : resolve(outDir);
-const work = join(here, ".work", stamp);
 mkdirSync(resultsDir, { recursive: true });
-mkdirSync(work, { recursive: true });
+// The work folder (the derived tree, the store, qmd's own cache folder) lives under the system temp folder,
+// never inside the checkout, with a name of its own, and goes away on a signal as on a normal end.
+const work = mkdtempSync(join(tmpdir(), "okf-catalog-bench-"));
+const removeWork = () => rmSync(work, { recursive: true, force: true });
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    removeWork();
+    process.exit(130);
+  });
+}
+if (modes.length > 0) process.env.XDG_CACHE_HOME = join(work, "xdg");
 const jsonlPath = join(resultsDir, `${stamp}.jsonl`);
 writeFileSync(jsonlPath, "");
 const emit = (row) => appendFileSync(jsonlPath, `${JSON.stringify(row)}\n`);
@@ -261,7 +301,14 @@ const CONFIGS = [
     form: "question",
     request: () => ({ relax: true, relaxedPool: 100 }),
   },
+  // The ladder twenty deep, cut to five for the rank: the control for the fusion mode, which fuses this list.
+  { key: "question/relaxed@20", form: "question", limit: 20, request: () => ({ relax: true }) },
 ];
+const policyLists = new Map();
+/** Content terms of the question (as the ladder sent them) that the gold page's own text carries. */
+const sharedTerms = new Map();
+const tokensOf = (text) =>
+  new Set((text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).map((w) => w));
 const textOf = (q, form) => (form === "question" ? q.question : q.keywords.join(" "));
 const ranks = new Map();
 for (const config of CONFIGS) {
@@ -274,13 +321,23 @@ for (const config of CONFIGS) {
     const r = await search(
       catalog,
       engine,
-      { question: text, includeStale: true, limit: 5, ...extra },
+      { question: text, includeStale: true, limit: config.limit ?? 5, ...extra },
       NOW,
     );
     const ms = Math.round((performance.now() - started) * 10) / 10;
-    const position = r.hits.findIndex((h) => h.path === q.gold);
+    const position = r.hits.slice(0, 5).findIndex((h) => h.path === q.gold);
     const rank = position === -1 ? null : position + 1;
     outcomes.set(q.id, rank);
+    if (config.key === "question/relaxed@20") {
+      policyLists.set(q.id, { paths: r.hits.map((h) => h.path), terms: r.terms });
+    }
+    if (config.key === "question/relaxed") {
+      const page = catalog.pages.get(q.gold);
+      const pageTokens = tokensOf(
+        `${page?.title ?? ""} ${page?.description ?? ""} ${page?.body ?? ""}`,
+      );
+      sharedTerms.set(q.id, r.terms.filter((term) => pageTokens.has(term.toLowerCase())).length);
+    }
     emit({
       config: config.key,
       id: q.id,
@@ -294,7 +351,7 @@ for (const config of CONFIGS) {
       dropped: r.dropped,
       rung: r.strategy,
       rank,
-      top5: r.hits.map((h) => h.path),
+      top5: r.hits.slice(0, 5).map((h) => h.path),
       considered: r.considered,
       pool: r.pool,
       engineQueries: r.engineQueries,
@@ -303,19 +360,6 @@ for (const config of CONFIGS) {
       topicExhausted: r.topicExhausted,
       ms,
     });
-  }
-}
-// The production ladder's ranked list, twenty deep, for the fusion mode; and the token string it sends.
-const policyLists = new Map();
-if (modes.includes("fused")) {
-  for (const q of questions) {
-    const r = await search(
-      catalog,
-      engine,
-      { question: q.question, includeStale: true, limit: 20, relax: true },
-      NOW,
-    );
-    policyLists.set(q.id, { paths: r.hits.map((h) => h.path), terms: r.terms });
   }
 }
 memory.afterLexical = rss();
@@ -392,6 +436,8 @@ if (modes.length > 0) {
     /Error rate too high/i,
     /aborting embedding/i,
     /disabled in CI/i,
+    /Reranker unavailable/i,
+    /expansion failed/i,
   ];
   const original = {
     warn: console.warn,
@@ -412,6 +458,11 @@ if (modes.length > 0) {
   try {
     const { createStore } = await import("@tobilu/qmd");
     const storeModule = await import(pathToFileURL(join(qmdDir, "store.js")).href);
+    const llmModule = await import(pathToFileURL(join(qmdDir, "llm.js")).href);
+    // With the llama folder marked unwritable, qmd's own runtime load passes build: "never" and skipDownload:
+    // true to node-llama-cpp, so a packaged binary that fails to load stops the run instead of starting a
+    // source build (which would clone llama.cpp through a child process).
+    llmModule.setLlamaDirWritableForTest(false);
     let stub = null;
     if (stubEmbedder) {
       const { installStub } = await import("./lib/stub-llm.mjs");
@@ -521,10 +572,36 @@ if (modes.length > 0) {
         },
       });
       const lists = new Set();
-      for (const r of results)
-        for (const c of r.explain?.rrf?.contributions ?? [])
+      const ftsQueries = new Set();
+      for (const r of results) {
+        for (const c of r.explain?.rrf?.contributions ?? []) {
           lists.add(`${c.source}:${c.queryType}:${c.query}`);
-      return { paths: results.map((r) => decodeDisplay(r.displayPath)), trace, lists: [...lists] };
+          if (c.source === "fts") ftsQueries.add(c.query);
+        }
+      }
+      // qmd degrades without throwing: an expansion that came back empty (with no strong-signal shortcut), a
+      // reranker that never ran, or one that scored every candidate 0.5 (its own fallback) fail the run.
+      if (trace.strongSignal === null && (trace.expansions ?? []).length === 0) {
+        throw new Error(
+          `qmd expanded ${JSON.stringify(text)} to nothing without a strong signal: the expansion model fell back`,
+        );
+      }
+      if (!skipRerank) {
+        if (trace.rerankMs === null)
+          throw new Error(`the reranker never ran for ${JSON.stringify(text)}`);
+        const scores = results.map((r) => r.explain?.rerankScore);
+        if (scores.length > 1 && scores.every((s) => s === 0.5)) {
+          throw new Error(
+            `every candidate of ${JSON.stringify(text)} scored 0.5: the reranker fell back`,
+          );
+        }
+      }
+      return {
+        paths: results.map((r) => decodeDisplay(r.displayPath)),
+        trace,
+        lists: [...lists],
+        lexString: [...ftsQueries].join(" | "),
+      };
     };
     const runs = [];
     const modeSamples = (mode) => (mode === "hybrid" || mode === "full" ? samples : 1);
@@ -556,13 +633,23 @@ if (modes.length > 0) {
           } else {
             const r = await qmdPipeline(q.question, mode === "hybrid");
             top5 = distinct(r.paths, 5);
-            extra = { lexString: q.question, trace: r.trace, lists: r.lists };
+            extra = { lexString: r.lexString, trace: r.trace, lists: r.lists };
           }
           const ms = Math.round((performance.now() - started) * 10) / 10;
           const position = top5.indexOf(q.gold);
           const rank = position === -1 ? null : position + 1;
           outcomes.set(q.id, rank);
-          emit({ mode, sample, id: q.id, style: q.style, rank, top5, ms, ...extra });
+          emit({
+            mode,
+            sample,
+            id: q.id,
+            style: q.style,
+            shared: sharedTerms.get(q.id) ?? null,
+            rank,
+            top5,
+            ms,
+            ...extra,
+          });
         }
         runs.push({ mode, sample, outcomes });
       }
@@ -582,7 +669,12 @@ if (modes.length > 0) {
       const own = runs.filter((r) => r.mode === mode);
       const summaries = own.map((r) => summarise(r.outcomes));
       const against = {};
-      for (const base of ["question/relaxed", "question/strict", "keywords/relaxed"]) {
+      for (const base of [
+        "question/relaxed",
+        "question/relaxed@20",
+        "question/strict",
+        "keywords/relaxed",
+      ]) {
         against[base] = own.map((r) => pairOutcomes(r.outcomes, ranks.get(base)));
       }
       const spread = {};
@@ -645,6 +737,8 @@ if (modes.length > 0) {
       dbBytesAfterEmbed,
       dbBytesAfterModes: statSync(dbPath).size,
       llmCacheRowsAtEnd: cacheRows(),
+      productionLimitDefault: 8,
+      sharedTerms: Object.fromEntries(sharedTerms),
       retrieval: {
         vectorRows: 20,
         returned: 5,
@@ -666,7 +760,7 @@ if (modes.length > 0) {
     } catch {
       // closing is best effort on the failure path
     }
-    rmSync(work, { recursive: true, force: true });
+    removeWork();
     process.exit(EXIT_MODES_FAILED);
   }
   restoreConsole();
@@ -760,4 +854,4 @@ process.stdout.write(
   `${JSON.stringify({ meta, summary, paired, modes: modesResult === null ? null : { requested: modes, perMode: modesResult.perMode } }, null, 2)}\n`,
 );
 // The generation tree and the store are measurements' scaffolding, not results: a run leaves no work folder behind.
-rmSync(work, { recursive: true, force: true });
+removeWork();

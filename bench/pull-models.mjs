@@ -5,7 +5,7 @@
 // `rm -r` removes it), then checks the file's name, size and SHA-256 against the values pinned in
 // bench/lib/models.mjs. Nothing else in the harness fetches anything.
 import { createHash } from "node:crypto";
-import { createReadStream, mkdirSync, statSync } from "node:fs";
+import { createReadStream, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { formatBytes, MODELS, modelPath } from "./lib/models.mjs";
@@ -50,7 +50,11 @@ for (const key of keys) {
   if (digest !== entry.sha256) problems.push(`sha256 ${digest}, expected ${entry.sha256}`);
   if (problems.length > 0) {
     failed = true;
-    process.stderr.write(`${entry.key}: NOT the pinned file: ${problems.join("; ")}\n`);
+    // Left in place, the file would be reused by the resolver on the next run; removed, the next run fetches.
+    unlinkSync(path);
+    process.stderr.write(
+      `${entry.key}: NOT the pinned file (${problems.join("; ")}); removed, so the next run fetches it again\n`,
+    );
   } else process.stdout.write(`${entry.key}: in place at ${path}, size and SHA-256 as pinned\n`);
 }
 process.exit(failed ? 1 : 0);

@@ -98,7 +98,7 @@ const folderOfRepo = {
   "cole-medin": "cole-medin",
   "superops-okf": "okf-docs",
 };
-for (const [repoName, commit] of Object.entries(m.corpus)) {
+for (const [repoName, commit] of Object.entries(m.corpus ?? {})) {
   const b = m.pages.byBundle[folderOfRepo[repoName]] ?? { walked: 0, admitted: 0, questions: 0 };
   out.push(
     `| \`${folderOfRepo[repoName]}\` | ${REPOS[repoName]} | \`${commit.slice(0, 12)}\` | ${b.walked} | ${b.admitted} | ${b.questions} |`,
@@ -110,7 +110,7 @@ out.push(
 );
 out.push("## Method\n");
 out.push(
-  `Every question runs in seven configurations: the question text or its keyword form with the relaxed rung on or off; and the question text with the gold page's own folder as the topic filter, with its type as the type filter, and with a relaxed per-term pool of 100 instead of the first rung's pool. \`limit\` is ${m.request.limit}, overdue pages are included, and the clock is pinned to ${m.clock}. The gold page's rank in the five hits gives hit@1, hit@3 and MRR@5 (a miss contributes 0). The paired tables count, per question, whether the first configuration moved the gold page's rank up, down or not at all against the second; a miss ranks as 99. The filter configurations use the gold page's own folder and type, which a real caller does not know; they measure what the filters do to the ranking (D25), not how often a caller would guess them.\n`,
+  `Every question runs in eight configurations: the question text or its keyword form with the relaxed rung on or off; the question text with the gold page's own folder as the topic filter, with its type as the type filter, and with a relaxed per-term pool of 100 instead of the first rung's pool; and the question text through the ladder twenty deep, cut to five for the rank (\`question/relaxed@20\`, the control for the fusion mode of the modes note, since the ladder's pools grow with its limit). \`limit\` is ${m.request.limit}, overdue pages are included, and the clock is pinned to ${m.clock}. The gold page's rank in the five hits gives hit@1, hit@3 and MRR@5 (a miss contributes 0). The paired tables count, per question, whether the first configuration moved the gold page's rank up, down or not at all against the second; a miss ranks as 99. The filter configurations use the gold page's own folder and type, which a real caller does not know; they measure what the filters do to the ranking (D25), not how often a caller would guess them.\n`,
 );
 out.push("## Results\n");
 out.push("| Configuration | hit@1 | hit@3 | MRR@5 |\n|---|---|---|---|");
@@ -206,7 +206,7 @@ if (S.modes !== null && S.modes !== undefined) {
   );
   note.push("## Why\n");
   note.push(
-    "Decision D7 made lexical search the default with a reservation: if qmd's full mode changes results dramatically, the default is wrong. This note is that measurement, over the same derived index the lexical benchmark uses, so the only thing that differs between the rows is the retrieval. The threshold was written before the run (D51): the worst of `full`'s samples, paired against `question/relaxed`, improves the gold rank of at least 8 of the 25 questions and worsens at most 2. The sample is the lexical note's: 25 author-written questions over a corpus that is mostly one bundle, a smoke test, not a survey of what users ask.\n",
+    "Decision D7 made lexical search the default with a reservation: if qmd's full mode changes results dramatically, the default is wrong. This note is that measurement, over the same derived index the lexical benchmark uses, so what differs between the rows is the retrieval, with one caveat: the production ladder's list depends on its limit, so `fused`, which fuses the ladder twenty deep, is also paired against that twenty-deep list cut to five (`question/relaxed@20`), the control that isolates what the vectors add. The threshold was written before the run (D51): the worst of `full`'s samples, paired against `question/relaxed`, improves the gold rank of at least 8 of the 25 questions and worsens at most 2. The sample is the lexical note's: 25 author-written questions over a corpus that is mostly one bundle, a smoke test, not a survey of what users ask. Production answers with a default limit of 8; the anchors here use 5, as the lexical note does.\n",
   );
   note.push("## Method\n");
   note.push(
@@ -214,7 +214,12 @@ if (S.modes !== null && S.modes !== undefined) {
   );
   note.push("## Results\n");
   note.push("| Mode | samples | hit@1 | hit@3 | MRR@5 |\n|---|---|---|---|---|");
-  for (const base of ["question/relaxed", "question/strict", "keywords/relaxed"]) {
+  for (const base of [
+    "question/relaxed",
+    "question/relaxed@20",
+    "question/strict",
+    "keywords/relaxed",
+  ]) {
     const v = S.summary[base]?.all;
     if (v)
       note.push(
@@ -232,23 +237,23 @@ if (S.modes !== null && S.modes !== undefined) {
     note.push(`| ${mode} | ${styles.map((s) => fmtMode(v.byStyle[s])).join(" | ")} |`);
   note.push("\nPaired by question, per sample (first better / first worse / same):\n");
   note.push(
-    "| Mode | against question/relaxed | against question/strict | against keywords/relaxed |\n|---|---|---|---|",
+    "| Mode | against question/relaxed | against question/relaxed@20 | against question/strict | against keywords/relaxed |\n|---|---|---|---|---|",
   );
   for (const [mode, v] of Object.entries(M.perMode)) {
-    const cell = (list) => list.map((p) => `${p.better}/${p.worse}/${p.same}`).join(", ");
+    const cell = (list) => (list ?? []).map((p) => `${p.better}/${p.worse}/${p.same}`).join(", ");
     note.push(
-      `| ${mode} | ${cell(v.paired["question/relaxed"])} | ${cell(v.paired["question/strict"])} | ${cell(v.paired["keywords/relaxed"])} |`,
+      `| ${mode} | ${cell(v.paired["question/relaxed"])} | ${cell(v.paired["question/relaxed@20"])} | ${cell(v.paired["question/strict"])} | ${cell(v.paired["keywords/relaxed"])} |`,
     );
   }
   const full = M.perMode.full;
-  if (full !== undefined) {
-    const worst = full.paired["question/relaxed"].reduce(
-      (acc, p) => (acc === null || p.better - p.worse < acc.better - acc.worse ? p : acc),
-      null,
-    );
-    const met = worst !== null && worst.better >= 8 && worst.worse <= 2;
+  if (full !== undefined && onCorpus) {
+    // Every sample must meet both bounds: the fewest improvements and the most regressions across the samples.
+    const pairs = full.paired["question/relaxed"] ?? [];
+    const minBetter = Math.min(...pairs.map((p) => p.better));
+    const maxWorse = Math.max(...pairs.map((p) => p.worse));
+    const met = pairs.length > 0 && minBetter >= 8 && maxWorse <= 2;
     note.push(
-      `\nAgainst the threshold: the worst \`full\` sample improves ${worst?.better ?? "?"} questions and worsens ${worst?.worse ?? "?"} against \`question/relaxed\`; the D51 threshold (at least 8 better, at most 2 worse) is ${met ? "met, so the maintainer decides with the sample's limits in view" : "not met, so the lexical default stands and D7's reservation can close"}.\n`,
+      `\nAgainst the threshold: across \`full\`'s ${pairs.length} sample(s) paired with \`question/relaxed\`, the fewest questions improved is ${minBetter} and the most worsened is ${maxWorse}; the D51 threshold (every sample at least 8 better and at most 2 worse) is ${met ? "met, so the maintainer decides with the sample's limits in view" : "not met, so the lexical default stands and D7's reservation can close"}.\n`,
     );
   }
   note.push("## Stability and cost\n");
@@ -257,7 +262,9 @@ if (S.modes !== null && S.modes !== undefined) {
     note.push(
       `| ${mode}: questions whose rank differed between samples | ${v.questionsWhoseRankVaried} of ${Object.keys(v.rankSpread).length} |`,
     );
-    note.push(`| ${mode}: model load, timed on a warm-up query | ${v.modelLoadMs} ms |`);
+    note.push(
+      `| ${mode}: first query of the mode (a warm-up no question uses; for vector and fused the embedder was already loaded by embed()) | ${v.modelLoadMs} ms |`,
+    );
     const ms = modeRows.filter((r) => r.mode === mode).map((r) => r.ms);
     if (ms.length > 0)
       note.push(
@@ -278,12 +285,24 @@ if (S.modes !== null && S.modes !== undefined) {
   if (onCorpus) {
     note.push("\n## Where the gold page was not first\n");
     note.push(
-      "| Mode | Sample | Question | Style | Gold rank | First hit | Lexical string qmd or the ladder ran |\n|---|---|---|---|---|---|---|",
+      "| Mode | Sample | Question | Style | Shared terms | Gold rank | First hit | Lexical strings run (qmd's FTS queries, or the ladder's terms) |\n|---|---|---|---|---|---|---|---|",
     );
     for (const r of modeRows) {
       if (r.rank !== 1)
         note.push(
-          `| ${r.mode} | ${r.sample} | ${r.id} | ${r.style} | ${r.rank ?? "miss"} | ${r.top5[0] ? `\`${r.top5[0]}\`` : "(no hits)"} | ${r.lexString ?? ""} |`,
+          `| ${r.mode} | ${r.sample} | ${r.id} | ${r.style}${r.shared !== null && r.shared !== undefined && r.shared <= 2 ? " †" : ""} | ${r.shared ?? "?"} | ${r.rank ?? "miss"} | ${r.top5[0] ? `\`${r.top5[0]}\`` : "(no hits)"} | ${r.lexString ?? ""} |`,
+        );
+    }
+    note.push(
+      "\n† a question whose ladder terms share two or fewer with the gold page's own text, which no lexical ranking can recover (the lexical note's observation, counted here).\n",
+    );
+    const listed = modeRows.filter((r) => Array.isArray(r.lists) && r.lists.length > 0);
+    if (listed.length > 0) {
+      note.push("\nThe lists qmd fused per question (source:query type:query), every sample:\n");
+      note.push("| Mode | Sample | Question | Lists |\n|---|---|---|---|");
+      for (const r of listed)
+        note.push(
+          `| ${r.mode} | ${r.sample} | ${r.id} | ${r.lists.map((l) => `\`${l}\``).join(", ")} |`,
         );
     }
     const expanded = modeRows.filter((r) => r.trace?.expansions);
