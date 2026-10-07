@@ -19,7 +19,7 @@ Status: draft 3, 2026-10-06, after independent adversarial review round 1 and th
 7. Page bodies are data. The skill says so, the acceptance test checks it, and no server code interprets body text as instructions.
 8. The repository holds no company names, company content or session details. Fixtures are built from the specification's own examples and from pages written for the tests.
 
-**Acceptance gate.** CI green on Node 22 and 24, macOS and Linux: formatter and linter, type check, dependency rule, unit and integration tests. Then the version 0 list in intent §7, run on a clean account by someone other than the author, with results recorded in `docs/acceptance/version-0.md`.
+**Acceptance gate.** CI green on Node 24 and 26 (the Active LTS line and the next), macOS and Linux: formatter and linter, type check, dependency rule, unit and integration tests. Then the version 0 list in intent §7, run on a clean account by someone other than the author, with results recorded in `docs/acceptance/version-0.md`.
 
 ## 1. Verified before planning
 
@@ -58,7 +58,7 @@ A composition layer, `src/serve/`, sits between the commands and everything else
 
 ```
 okf-catalog/
-  package.json                 name okf-catalog; type module; bin okf-catalog → dist/cli.js; engines node >=22.14 (raised from 22.12 after the first CI run: better-sqlite3 13 needs Node-API 10)
+  package.json                 name okf-catalog; type module; bin okf-catalog → dist/cli.js; engines node >=24 (raised from 22.12 after the first CI run: the floor is the Active LTS line, and better-sqlite3 13 needs Node-API 10, which 22.12 lacks)
   tsconfig.json                strict, NodeNext, ES2023, exactOptionalPropertyTypes, noUncheckedIndexedAccess; no declarations (a CLI), source maps with inline sources
   biome.json                   formatter and linter, recommended rules
   vitest.config.ts

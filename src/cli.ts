@@ -13,9 +13,10 @@ options:
   --help      print this text
 `;
 
-// better-sqlite3 13 is built on Node-API 10, which Node ships from 22.14.0; 22.12 and 22.13 die by a signal at the
-// first database open (bisected on the first CI run).
-const MIN_NODE: [number, number] = [22, 14];
+// The floor is the Active LTS line at the time of the release (the maintainer's ruling, 2026-10-07): Node 24.
+// (Below that, better-sqlite3 13's binary needs Node-API 10, which 22.12 and 22.13 lack; they die by a signal at
+// the first database open, bisected on the first CI run.)
+const MIN_NODE: [number, number] = [24, 0];
 
 function nodeIsSupported(): boolean {
   const [major = 0, minor = 0] = process.versions.node.split(".").map(Number);
