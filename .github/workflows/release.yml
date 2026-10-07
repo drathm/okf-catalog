@@ -37,5 +37,16 @@ jobs:
       - name: The tag names the package's version
         run: |
           test "v$(node -p 'require("./package.json").version')" = "${GITHUB_REF_NAME}"
+      - name: Already on the registry?
+        id: registry
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          if npm view "okf-catalog@${version}" version >/dev/null 2>&1; then
+            echo "published=true" >> "$GITHUB_OUTPUT"
+            echo "okf-catalog@${version} is already on the registry (a manual publish); nothing to do"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Publish
+        if: steps.registry.outputs.published == 'false'
         run: npm publish --provenance --access public
