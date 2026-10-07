@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
-import { isAbsolute, join, relative, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /** The cache root: an absolute XDG_CACHE_HOME, else the platform's cache folder. A relative XDG value is ignored and noted. */
 export function cacheRoot(input: {
@@ -42,11 +42,23 @@ export function judgeFolder(stat: FolderStat, uid: number, isRoot: boolean): str
     if ((stat.mode & 0o002) !== 0 && (stat.mode & 0o1000) === 0) {
       return "is writable by everyone and has no sticky bit";
     }
+    if (stat.uid !== uid && (stat.mode & 0o020) !== 0 && (stat.mode & 0o1000) === 0) {
+      return "is owned by another user and writable by its group without the sticky bit";
+    }
     return undefined;
   }
   if (stat.uid !== uid) return "is owned by another user";
   if ((stat.mode & 0o022) !== 0) return "is writable by its group or by everyone";
   return undefined;
+}
+
+/** Whether one folder lies inside the other: the cache must never sit inside the bundle, nor the bundle inside the cache. */
+export function cacheOverlapsBundle(cacheDir: string, bundleDir: string): boolean {
+  const inside = (inner: string, outer: string): boolean => {
+    const rel = relative(resolve(outer), resolve(inner));
+    return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+  };
+  return inside(cacheDir, bundleDir) || inside(bundleDir, cacheDir);
 }
 
 /** `problem` is for the model and names no path; `detail` is for the log and does. */

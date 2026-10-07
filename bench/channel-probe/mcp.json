@@ -1,0 +1,1 @@
+{ "mcpServers": { "probe": { "command": "node", "args": ["bench/channel-probe/server.mjs"] } } }

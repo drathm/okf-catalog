@@ -27,19 +27,46 @@ const OWNER = "owner.json";
  */
 const HELD = new Set<Database.Database>();
 
+/** How many times a busy lock is retried, and the pause between tries: about 200 ms before a folder counts as held. */
+const BUSY_ATTEMPTS = 25;
+const BUSY_PAUSE_MS = 8;
+
+const pause = (ms: number): void => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+};
+
 /**
  * One process per company folder, enforced by the operating system: an exclusive SQLite transaction on
  * `lock.sqlite`, held for the life of the process and released the instant it dies, however it dies. There is
  * no stale state to recover and no liveness test to get wrong. `owner.json` beside it is information only.
+ *
+ * A busy answer is retried briefly: on a cold folder two racers both create the database and each setup step
+ * takes a lock of its own, so without the retry both could see busy and neither would hold the lock (observed 4 in
+ * 100 cold races, 17 in 100 after a holder was killed). A folder still busy after the retries is held.
  */
 export function acquireLock(companyDir: string, now: Date): Lock {
+  for (let attempt = 1; ; attempt++) {
+    const result = tryAcquire(companyDir, now);
+    if (result !== "busy") return result;
+    if (attempt >= BUSY_ATTEMPTS) {
+      const owner = readOwner(companyDir);
+      return owner === undefined ? { kind: "held" } : { kind: "held", owner };
+    }
+    // Jitter keeps two racers that failed together from retrying in lockstep.
+    pause(BUSY_PAUSE_MS / 2 + Math.random() * BUSY_PAUSE_MS);
+  }
+}
+
+function tryAcquire(companyDir: string, now: Date): Extract<Lock, { kind: "exclusive" }> | "busy" {
   const db = new Database(join(companyDir, LOCK_DB), { timeout: 0 });
   try {
     // A table and a row inside the open transaction: the exclusive pager lock exists only once a page is
     // written, so an empty database would not keep a second process out.
+    // No `locking_mode = EXCLUSIVE`: in that mode a connection keeps its shared lock after a failed upgrade, so two
+    // racers each holding one would both be refused until both gave up. The open exclusive transaction below holds
+    // the lock for the life of the connection on its own.
     db.pragma("journal_mode = DELETE");
     db.exec("CREATE TABLE IF NOT EXISTS owner (pid INTEGER NOT NULL, started_at TEXT NOT NULL)");
-    db.pragma("locking_mode = EXCLUSIVE");
     db.exec("BEGIN EXCLUSIVE");
     db.prepare("DELETE FROM owner").run();
     db.prepare("INSERT INTO owner (pid, started_at) VALUES (?, ?)").run(
@@ -48,10 +75,7 @@ export function acquireLock(companyDir: string, now: Date): Lock {
     );
   } catch (error) {
     db.close();
-    if (String((error as { code?: string }).code ?? "").startsWith("SQLITE_BUSY")) {
-      const owner = readOwner(companyDir);
-      return owner === undefined ? { kind: "held" } : { kind: "held", owner };
-    }
+    if (String((error as { code?: string }).code ?? "").startsWith("SQLITE_BUSY")) return "busy";
     throw error;
   }
   HELD.add(db);

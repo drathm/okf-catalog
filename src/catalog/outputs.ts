@@ -20,6 +20,16 @@ import {
 export const RESULT_BUDGET = 40_000;
 /** Entries a status list carries beside its count. */
 export const STATUS_LIST_CAP = 50;
+/** The most characters of a refusing text that reach the model, after escaping. */
+export const REFUSING_CAP = 1_000;
+
+/** A refusing text as the model may see it: made safe (one line, controls escaped) and cut at the cap. */
+export function refusingText(text: string): string {
+  const made = safe(text);
+  if (made.length <= REFUSING_CAP) return made;
+  const end = isHighSurrogate(made, REFUSING_CAP - 1) ? REFUSING_CAP - 1 : REFUSING_CAP;
+  return `${made.slice(0, end)}…`;
+}
 
 export interface Cut {
   slice: string;
@@ -95,6 +105,8 @@ export const SearchOutputSchema = z.strictObject({
         overdue: z.boolean(),
       }),
       replacement: z.string().nullable(),
+      sources: z.number(),
+      resource: z.string().nullable(),
       rung: Rung,
       termsMatched: z.number().nullable(),
       snippet: z.string(),
@@ -157,6 +169,8 @@ export const StatusOutputSchema = z.strictObject({
   excludedByStatus: z.number(),
   attachments: z.number(),
   hidden: z.number(),
+  /** Served pages past their recheck date at the time of the call (intent §6). */
+  overdue: z.number(),
   refusals: list(z.strictObject({ path: z.string(), rule: z.string(), detail: z.string() })),
   degradations: list(z.strictObject({ path: z.string(), code: z.string(), field: z.string() })),
   unknownTypes: list(z.string()),
@@ -206,6 +220,8 @@ export function projectSearch(
         overdue: hit.overdue,
       },
       replacement: hit.replacement ?? null,
+      sources: hit.sources,
+      resource: hit.resource ?? null,
       rung: hit.rung,
       termsMatched: hit.termsMatched ?? null,
       snippet: text,
@@ -348,8 +364,14 @@ export function projectStatus(
   generation: Generation,
   runtime: RuntimeStatus,
   options: ToolOptions,
+  now: Date,
 ): StatusOutput {
   const r = generation.report;
+  let overdue = 0;
+  for (const page of generation.catalog.pages.values()) {
+    if (page.staleAfter?.at !== undefined && now.getTime() >= page.staleAfter.at.getTime())
+      overdue += 1;
+  }
   return StatusOutputSchema.parse({
     company: options.company,
     source: options.source,
@@ -361,6 +383,7 @@ export function projectStatus(
     excludedByStatus: r.excludedByStatus,
     attachments: r.attachments,
     hidden: r.hidden,
+    overdue,
     refusals: capped(r.refusals.map((x) => ({ path: x.path, rule: x.rule, detail: x.detail }))),
     degradations: capped(
       r.degradations.map((x) => ({ path: x.path, code: x.code, field: x.field })),
@@ -387,7 +410,7 @@ export function projectStatus(
       runtime.lastAttempt === undefined
         ? null
         : { at: runtime.lastAttempt.at.toISOString(), outcome: runtime.lastAttempt.outcome },
-    refusing: runtime.refusing ?? null,
+    refusing: runtime.refusing === undefined ? null : refusingText(runtime.refusing),
   });
 }
 
@@ -395,7 +418,7 @@ export function projectStatus(
 export function statusSummary(out: StatusOutput): string {
   const n = (count: number, word: string): string => `${count} ${word}${count === 1 ? "" : "s"}`;
   const parts = [
-    `${out.company}: ${out.admitted} pages admitted, ${out.excludedByStatus} excluded by status, ${n(out.refusals.count, "refusal")}, ${n(out.degradations.count, "degradation")}`,
+    `${out.company}: ${out.admitted} pages admitted, ${out.excludedByStatus} excluded by status, ${n(out.overdue, "overdue page")}, ${n(out.refusals.count, "refusal")}, ${n(out.degradations.count, "degradation")}`,
     `integrity ${out.integrity}`,
     `${out.engine.documents} documents indexed, ${out.engine.notIndexed} not indexed, ${n(out.engine.collisions, "collision")}`,
     `lock ${out.lock}`,

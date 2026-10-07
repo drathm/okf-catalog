@@ -13,6 +13,7 @@ import {
   projectReserved,
   projectSearch,
   projectStatus,
+  refusingText,
   SearchOutputSchema,
   StatusOutputSchema,
   statusSummary,
@@ -100,6 +101,10 @@ function pageText(output: PageOutput): string {
 
 const describeType = (text: string): string => `${text} ${DATA_SENTENCE}`;
 
+/** The one sentence every tool answers with while the server cannot serve: the fix, never a path the model has no business with. */
+const refusingSentence = (refusing: string): string =>
+  `the server is refusing every request until its configuration is fixed: ${refusingText(refusing)}`;
+
 /**
  * The four tools. Every handler runs under a lease on the current generation, answers in both channels, and
  * turns anything it cannot repair into a fixed sentence; the detail goes to the log, never to the model.
@@ -119,11 +124,7 @@ export function registerTools(
     async (args: A): Promise<ToolResult> => {
       const started = performance.now();
       const refusing = runtime.status().refusing;
-      if (refusing !== undefined) {
-        return fail(
-          `the server is refusing every request until its configuration is fixed: ${refusing}`,
-        );
-      }
+      if (refusing !== undefined) return fail(refusingSentence(refusing));
       try {
         const { logFields, ...result } = await runtime.lease<ToolResult>(
           async (generation, engine) => fn(args, generation, engine),
@@ -143,6 +144,9 @@ export function registerTools(
           ms: Math.round(performance.now() - started),
           error: (error as Error).message,
         });
+        // The call that started the first load is the one that sees it fail: answer with the fix, as later calls do.
+        const refusingNow = runtime.status().refusing;
+        if (refusingNow !== undefined) return fail(refusingSentence(refusingNow));
         return fail("the server hit a defect answering this call; its log has the detail");
       }
     };
@@ -152,7 +156,7 @@ export function registerTools(
     {
       title: "Search the knowledge bundle",
       description: describeType(
-        "Finds pages by keywords. Write one concept per word; common words are dropped, and when no page holds every word the match is relaxed and the result says so. Each hit carries its path, type, status, trust tier, recheck date and a quoted snippet.",
+        "Finds pages by keywords. Write one concept per word; common words are dropped, and when no page holds every word the match is relaxed and the result says so. Each hit carries its path, type, status, trust tier, recheck date, source count, resource and a quoted snippet.",
       ),
       inputSchema: z.object({
         question: z
@@ -339,7 +343,7 @@ export function registerTools(
       annotations: { readOnlyHint: true },
     },
     guarded("status", (_args, generation) => {
-      const output = projectStatus(generation, runtime.status(), options);
+      const output = projectStatus(generation, runtime.status(), options, clock());
       return ok(statusSummary(output), output);
     }),
   );

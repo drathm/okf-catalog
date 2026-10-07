@@ -90,6 +90,7 @@ describe("projections parse under their strict schemas and are JSON-safe", () =>
         overdue: false,
         score: 2.5,
         rung: "all-terms",
+        sources: 0,
       },
       {
         path: "terms/epsilon.md",
@@ -100,6 +101,7 @@ describe("projections parse under their strict schemas and are JSON-safe", () =>
         overdue: false,
         score: 1.25,
         rung: "relaxed",
+        sources: 0,
         termsMatched: 1,
       },
     ],
@@ -120,7 +122,7 @@ describe("projections parse under their strict schemas and are JSON-safe", () =>
     expect(() => SearchOutputSchema.parse(out)).not.toThrow();
     expect(jsonSafe(out)).toBe(true);
     expect(out.hits[0]?.citation).toMatch(
-      /^terms\/alpha\.md — Alpha \[Term, stable, human-reviewed, recheck 2030-01-01\]/,
+      /^terms\/alpha\.md — Alpha \[Term, stable, human-reviewed, recheck 2030-01-01, no sources\]/,
     );
     expect(out.hits[1]?.citation).toContain("deprecated, no replacement");
     expect(typeof out.hits[0]?.snippet).toBe("string");
@@ -173,6 +175,7 @@ describe("projections parse under their strict schemas and are JSON-safe", () =>
       generation,
       { lock: "exclusive", lastAttempt: { at: NOW, outcome: "swapped" } },
       { company: "b", source: "./kb", dev: false, limitDefault: 8, resultBudget: RESULT_BUDGET },
+      NOW,
     );
     expect(() => StatusOutputSchema.parse(out)).not.toThrow();
     expect(jsonSafe(out)).toBe(true);
@@ -256,6 +259,7 @@ describe("result bounds (bite 4 build review)", () => {
       many,
       { lock: "exclusive" },
       { company: "b", source: "./kb", dev: false, limitDefault: 8, resultBudget: RESULT_BUDGET },
+      NOW,
     );
     expect(out.engine.encodedFolders.count).toBe(120);
     expect(out.engine.encodedFolders.first).toHaveLength(50);
@@ -266,6 +270,7 @@ describe("result bounds (bite 4 build review)", () => {
       generation,
       { lock: "exclusive", lastAttempt: { at: NOW, outcome: "failed" } },
       { company: "b", source: "./kb", dev: false, limitDefault: 8, resultBudget: RESULT_BUDGET },
+      NOW,
     );
     const line = statusSummary(out);
     expect(line).toContain("last attempt failed at 2026-10-06T12:00:00.000Z");

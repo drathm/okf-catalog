@@ -6,7 +6,7 @@ import { parseArgs } from "node:util";
 import { RESULT_BUDGET } from "../catalog/outputs.js";
 import type { Runtime, ToolOptions } from "../catalog/runtime.js";
 import { discoverConfigPath, readCompanyConfig } from "../config/company-config.js";
-import { cacheRoot, companyDir, ensureCache } from "../fs/cache-dir.js";
+import { cacheOverlapsBundle, cacheRoot, companyDir, ensureCache } from "../fs/cache-dir.js";
 import {
   acquireLock,
   type Lock,
@@ -49,11 +49,17 @@ function reserveStdout(): Writable {
       write(chunk, encoding, callback);
     },
   });
+  // A failure of the real stdout (the client stopped reading: EPIPE) reaches the transport through its own
+  // stream, so it is reported, never an unhandled 'error' event that ends the process.
+  original.on("error", (error) => protocol.destroy(error));
   type Writer = (chunk: unknown, ...rest: unknown[]) => boolean;
   (original as unknown as { write: Writer }).write = (chunk, ...rest) =>
     (process.stderr.write as unknown as Writer)(chunk, ...rest);
   return protocol;
 }
+
+/** Stream failures that mean the client is gone; anything else (a malformed line) is only logged. */
+const STREAM_FAILURES = new Set(["EPIPE", "ERR_STREAM_DESTROYED", "ECONNRESET", "EIO"]);
 
 /** Every console method becomes a log record, so a dependency's message never reaches the protocol channel. */
 function redirectConsole(log: Log): void {
@@ -144,6 +150,7 @@ export async function runServe(argv: string[]): Promise<number> {
     parsed.values.config === undefined ? undefined : String(parsed.values.config),
     process.env,
     process.cwd(),
+    home,
   );
   let runtime: Runtime;
   let options: ToolOptions = {
@@ -190,13 +197,21 @@ export async function runServe(argv: string[]): Promise<number> {
         company: config.company,
         source,
         prepare: async () => {
+          if (cacheOverlapsBundle(dir, local.path)) {
+            const described = new Error(
+              "the cache folder lies inside the bundle folder, or the bundle inside the cache folder; set XDG_CACHE_HOME to a folder outside the bundle",
+            ) as Error & { detail?: string };
+            described.detail = `cache ${dir}; bundle ${local.path}`;
+            throw described;
+          }
           const ensured = ensureCache(dir, root.root, {
             uid: process.getuid?.() ?? 0,
             platform: process.platform,
           });
           if (!ensured.ok) {
-            log.error("serve.refusing", { problem: ensured.detail });
-            throw new Error(ensured.problem);
+            const described = new Error(ensured.problem) as Error & { detail?: string };
+            described.detail = ensured.detail;
+            throw described;
           }
           sweepPrivate(dir, processAlive);
           const lock = acquireLock(dir, clock());
@@ -238,8 +253,15 @@ export async function runServe(argv: string[]): Promise<number> {
   }
 
   const factory = createServerFactory(runtime, options, clock, log, version());
-  const handle = serveOverStdio(factory, { stdin: process.stdin, stdout: protocolOut }, (error) =>
-    log.error("transport.error", { error: error.message }),
+  let onTransportFailure: (error: Error) => void = () => undefined;
+  const handle = serveOverStdio(
+    factory,
+    { stdin: process.stdin, stdout: protocolOut },
+    (error) => {
+      log.error("transport.error", { error: error.message });
+      onTransportFailure(error);
+    },
+    () => runtime.start?.(),
   );
 
   let finished: (() => void) | undefined;
@@ -284,6 +306,12 @@ export async function runServe(argv: string[]): Promise<number> {
       clearTimeout(deadline);
       process.exit(0);
     });
+  };
+  onTransportFailure = (error) => {
+    const code = (error as NodeJS.ErrnoException).code ?? "";
+    if (STREAM_FAILURES.has(code)) {
+      void shutdown(`the client stopped reading (${code})`).then(() => process.exit(0));
+    }
   };
   process.stdin.on("end", () => void shutdown("stdin ended").then(() => process.exit(0)));
   process.stdin.on("close", () => void shutdown("stdin closed").then(() => process.exit(0)));

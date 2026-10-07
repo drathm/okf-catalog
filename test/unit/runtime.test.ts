@@ -38,9 +38,10 @@ function memorySource(initial: BundleFile[]) {
   };
 }
 
-/** An engine over the rendered documents it is given: prefix match on every term, counting the calls, failing once on request. */
-function countingEngine(): Engine & {
+/** An engine over the rendered documents it is given: prefix match on every term, counting the calls, failing once on request; `slowLexMs` makes every query yield to the loop first and read the index as it stands afterwards. */
+function countingEngine(slowLexMs = 0): Engine & {
   indexCalls: number;
+  closeCalls: number;
   failNext: boolean;
   failAgain: boolean;
   docs: string[];
@@ -48,6 +49,7 @@ function countingEngine(): Engine & {
   let texts = new Map<string, string[]>();
   const state = {
     indexCalls: 0,
+    closeCalls: 0,
     failNext: false,
     failAgain: false,
     docs: [] as string[],
@@ -81,6 +83,7 @@ function countingEngine(): Engine & {
       };
     },
     async lex(terms: readonly string[], limit: number) {
+      if (slowLexMs > 0) await new Promise((r) => setTimeout(r, slowLexMs));
       const hits = [];
       for (const [path, words] of texts) {
         let bm25 = 0;
@@ -97,7 +100,9 @@ function countingEngine(): Engine & {
     async status() {
       return { documents: state.docs.length };
     },
-    async close() {},
+    async close() {
+      state.closeCalls += 1;
+    },
   };
   return state;
 }
@@ -261,5 +266,66 @@ describe("createRuntime: a re-index that fails too (bite 4 build review)", () =>
     expect(runtime.status().refusing).toBeUndefined();
     expect(await runtime.lease(async () => 1)).toBe(1);
     await runtime.shutdown();
+  });
+});
+
+describe("createRuntime (bite 4 build review, round 2)", () => {
+  it("refuses, and never rejects into the void, when a first load started by the handshake fails", async () => {
+    const rejections: unknown[] = [];
+    const onRejection = (reason: unknown): void => {
+      rejections.push(reason);
+    };
+    process.on("unhandledRejection", onRejection);
+    try {
+      const runtime = createRuntime({
+        company: "b",
+        source: memorySource(readFixture("behaviours")),
+        prepare: async () => {
+          throw new Error("the cache root cannot be read (EACCES)");
+        },
+        load: options,
+        clock: () => NOW,
+        log: quiet,
+      });
+      runtime.start();
+      await new Promise((r) => setTimeout(r, 30));
+      expect(rejections).toEqual([]);
+      expect(runtime.status().refusing).toMatch(/cannot be read/);
+      await expect(runtime.ready()).rejects.toThrow(/cannot be read/);
+      await runtime.shutdown();
+    } finally {
+      process.off("unhandledRejection", onRejection);
+    }
+  });
+
+  it("never serves the new index against the old catalog while a refresh that adds pages swaps (the gate, with a slow engine)", async () => {
+    const files = readFixture("behaviours");
+    const source = memorySource(files.filter((f) => !f.path.startsWith("notes/")));
+    const engine = countingEngine(5);
+    const { runtime } = build(source, engine, { integrity: "none" });
+    runtime.start();
+    await runtime.ready();
+    source.set(files);
+    const refreshing = runtime.refresh();
+    const during = await Promise.all(
+      Array.from({ length: 5 }, () =>
+        runtime.lease(async (generation: Generation, eng: Engine) =>
+          search(generation.catalog, eng, { question: "note", includeStale: true, limit: 8 }, NOW),
+        ),
+      ),
+    );
+    expect((await refreshing).outcome).toBe("swapped");
+    for (const r of during) expect(r.filteredOut.unknown).toBe(0);
+    await runtime.shutdown();
+  });
+
+  it("shuts down during the first load by waiting for it, closing the engine once", async () => {
+    const engine = countingEngine();
+    const { runtime } = build(memorySource(readFixture("behaviours")), engine);
+    runtime.start();
+    await runtime.shutdown();
+    expect(engine.closeCalls).toBe(1);
+    expect(runtime.status().lastAttempt?.outcome).toBe("swapped");
+    await expect(runtime.lease(async () => 1)).rejects.toThrow(/shut down/);
   });
 });

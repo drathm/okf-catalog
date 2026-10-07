@@ -20,7 +20,7 @@ const COUNTS = [
  */
 const ALLOWED: Record<string, readonly string[]> = {
   "serve.start": ["company", "source", "lock", "dev", "node", "configRule", "note"],
-  "serve.refusing": ["problem"],
+  "serve.refusing": ["problem", "detail"],
   "serve.shutdown": ["reason"],
   "engine.reset": ["detail"],
   "load.done": COUNTS,
@@ -34,6 +34,11 @@ const ALLOWED: Record<string, readonly string[]> = {
 };
 
 export type Fields = Record<string, string | number | boolean | readonly string[] | undefined>;
+
+/** The most characters a free-text field keeps; one error message cannot flood the log. */
+export const LOG_VALUE_CAP = 2_000;
+const clipValue = (value: string): string =>
+  value.length <= LOG_VALUE_CAP ? value : `${value.slice(0, LOG_VALUE_CAP)}…`;
 
 export interface Log {
   error(event: string, fields?: Fields): void;
@@ -58,9 +63,9 @@ export function createLog(
       if (value === undefined) continue;
       record[key] =
         typeof value === "string"
-          ? escapeControls(value)
+          ? escapeControls(clipValue(value))
           : Array.isArray(value)
-            ? value.map((v) => escapeControls(String(v)))
+            ? value.map((v) => escapeControls(clipValue(String(v))))
             : value;
     }
     stream.write(`${JSON.stringify(record)}\n`);

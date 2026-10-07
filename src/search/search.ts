@@ -29,6 +29,10 @@ export interface SearchHit {
   staleAfter?: string;
   overdue: boolean;
   replacement?: PagePath;
+  /** How many sources the page lists (intent §6: the count travels on hits). */
+  sources: number;
+  /** The page's `resource`, when it has one. */
+  resource?: string;
   /** Raw BM25. On the all-terms rung it includes the type and topic tokens once; on the relaxed rung it is the sum of the content terms' scores. */
   score: number;
   rung: Rung;
@@ -293,9 +297,11 @@ function shape(page: Page, score: number, rung: Rung, now: Date): SearchHit {
     status: page.status,
     trust: page.trust,
     overdue: isOverdue(page.staleAfter, now),
+    sources: page.sources.length,
     score,
     rung,
   };
+  if (page.resource !== undefined) hit.resource = page.resource;
   if (page.description !== undefined) hit.description = page.description;
   if (page.staleAfter !== undefined) hit.staleAfter = page.staleAfter.raw;
   if (page.replacement !== undefined) hit.replacement = page.replacement;

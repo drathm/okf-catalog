@@ -41,8 +41,9 @@ type Prepared =
 
 /**
  * The serving runtime (decisions D28, D38, D39). The first load begins on `start()` or the first `ready()`,
- * never before, so a probing connection costs nothing. Loading yields to the event loop between its phases, so
- * the handshake is answered between them; only the engine's own update does not yield. Tool calls hold a lease
+ * never before, so a probing connection costs nothing. Loading yields to the event loop between its phases (walk,
+ * load, derive, index), so the handshake is answered between them; each phase itself runs without yielding
+ * (measured on 736 pages: the load about 1.1 s, the engine's update about 0.7 s). Tool calls hold a lease
  * on the generation they read; a refresh prepares the next generation while leases run, then blocks new leases,
  * waits for the running ones, indexes, swaps catalog and index together, and releases. A refused reload keeps
  * the previous generation; a reload that throws keeps it too and re-aligns the index with it. A refused first
@@ -185,10 +186,17 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
       } catch (error) {
         refusing = (error as Error).message;
         lastAttempt = { at: deps.clock(), outcome: "failed" };
-        deps.log.error("serve.refusing", { problem: refusing });
+        const detail = (error as { detail?: unknown }).detail;
+        deps.log.error("serve.refusing", {
+          problem: refusing,
+          ...(typeof detail === "string" ? { detail } : {}),
+        });
         throw error;
       }
     })();
+    // The handshake starts this load with nobody waiting on it; a failure is kept for `ready()` and `status()`
+    // and must not surface as an unhandled rejection, which would end the process.
+    firstLoad.catch(() => undefined);
   }
 
   async function ready(): Promise<Generation> {
@@ -290,7 +298,6 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
       if (refreshing !== undefined) await refreshing.catch(() => undefined);
       await whenNoneRequested();
       if (engine !== undefined) await engine.close();
-      deps.log.info("serve.shutdown", { reason: "closed" });
     })();
     return closing;
   }

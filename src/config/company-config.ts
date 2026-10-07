@@ -3,6 +3,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod/v4";
 import { type Caps, DEFAULT_CAPS, type SpecText, type Status } from "../bundle/model.js";
+import { safe } from "../catalog/text.js";
 
 /** Configuration as the server uses it: paths resolved, defaults applied, `dev` mapped onto drafts and integrity. */
 export interface CompanyConfig {
@@ -86,10 +87,9 @@ export function parseCompanyConfig(text: string, configDir: string, home: string
   try {
     document = parseYaml(text, { version: "1.2" });
   } catch (error) {
-    return {
-      ok: false,
-      problems: [`the configuration is not valid YAML: ${(error as Error).message}`],
-    };
+    // The parser's message carries a code frame of the file on later lines: the first line names the problem.
+    const first = (error as Error).message.split("\n")[0] ?? "";
+    return { ok: false, problems: [`the configuration is not valid YAML: ${safe(first)}`] };
   }
   if (document === null || typeof document !== "object" || Array.isArray(document)) {
     return { ok: false, problems: ["the configuration must be a mapping of keys to values"] };
@@ -174,8 +174,12 @@ export function discoverConfigPath(
   flag: string | undefined,
   env: NodeJS.ProcessEnv,
   cwd: string,
+  home: string,
 ): Discovery {
-  if (flag !== undefined) return { path: resolve(cwd, flag), rule: "flag" };
+  // A leading `~/` is expanded as it is inside the file; nothing else is interpreted.
+  const expand = (value: string): string =>
+    value.startsWith("~/") ? join(home, value.slice(2)) : resolve(cwd, value);
+  if (flag !== undefined) return { path: expand(flag), rule: "flag" };
   if (Object.hasOwn(env, "OKF_CATALOG_CONFIG")) {
     const value = (env.OKF_CATALOG_CONFIG ?? "").trim();
     if (value.length === 0 || value.includes("${")) {
@@ -184,7 +188,7 @@ export function discoverConfigPath(
           "OKF_CATALOG_CONFIG is empty or still holds a placeholder; run /plugin configure okf-catalog to set the configuration path, or pass --config",
       };
     }
-    return { path: resolve(cwd, value), rule: "env" };
+    return { path: expand(value), rule: "env" };
   }
   return { path: join(cwd, "okf-catalog.yaml"), rule: "cwd" };
 }
@@ -197,7 +201,10 @@ export function readCompanyConfig(path: string, home: string): ConfigResult {
   let text: string;
   try {
     const stat = statSync(path);
-    if (stat.isFile() && stat.size > CONFIG_SIZE_CAP) {
+    if (!stat.isFile()) {
+      return { ok: false, problems: [`the configuration path ${path} is not a regular file`] };
+    }
+    if (stat.size > CONFIG_SIZE_CAP) {
       return {
         ok: false,
         problems: [

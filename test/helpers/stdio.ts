@@ -57,6 +57,10 @@ export interface RawRun {
   waitFor(id: number, ms?: number): Promise<Record<string, unknown>>;
   /** Closes stdin and waits for the process to exit. */
   end(ms?: number): Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
+  /** Waits for the process to exit on its own; reports a timeout without touching it. */
+  waitExit(
+    ms?: number,
+  ): Promise<{ code: number | null; signal: NodeJS.Signals | null; timedOut: boolean }>;
 }
 
 /** Spawns the server as a raw child and speaks newline-delimited JSON-RPC to it, keeping every byte of both streams. */
@@ -120,6 +124,13 @@ export function rawServer(box: Sandbox, extraArgs: string[] = [], nodeArgs: stri
       );
       return Promise.race([exited, timer]);
     },
+    waitExit: (ms = 15_000) =>
+      Promise.race([
+        exited.then((e) => ({ ...e, timedOut: false })),
+        new Promise<{ code: number | null; signal: NodeJS.Signals | null; timedOut: boolean }>(
+          (resolve) => setTimeout(() => resolve({ code: null, signal: null, timedOut: true }), ms),
+        ),
+      ]),
   };
 }
 

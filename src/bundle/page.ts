@@ -298,7 +298,15 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
             source.id = String(entry.id);
           if (typeof entry.title === "string") source.title = entry.title;
           if (typeof entry.author === "string") source.author = entry.author;
-          if (typeof entry.usage_count === "number") source.usageCount = entry.usage_count;
+          if (typeof entry.usage_count === "number") {
+            if (Number.isFinite(entry.usage_count)) source.usageCount = entry.usage_count;
+            else
+              degrade(
+                "source-malformed",
+                "sources",
+                `sources[${i}].usage_count is not a finite number; ignored`,
+              );
+          }
           if (typeof entry.last_modified === "string") source.lastModified = entry.last_modified;
           const w = entry.usage_window;
           if (isRecord(w) && typeof w.from === "string" && typeof w.to === "string")

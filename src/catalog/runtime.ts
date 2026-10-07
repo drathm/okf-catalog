@@ -36,7 +36,10 @@ export interface ToolOptions {
   resultBudget: number;
 }
 
-/** The runtime as the MCP adapter sees it. The composition layer implements it. */
+/** The runtime as the MCP adapter sees it. The composition layer implements it.
+ * Never call `refresh()` from inside a `lease` callback: a swap waits for the active leases and the lease would
+ * wait for the swap.
+ */
 export interface Runtime {
   /** Begins the first load if it has not begun; idempotent. The adapter calls it when a connection completes `initialize`. */
   start?(): void;

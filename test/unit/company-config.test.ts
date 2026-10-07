@@ -134,32 +134,37 @@ describe("discoverConfigPath and readCompanyConfig", () => {
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
   it("takes the flag, then the variable, then the working folder, and says which", () => {
-    expect(discoverConfigPath("/x/flag.yaml", { OKF_CATALOG_CONFIG: "/x/env.yaml" }, dir)).toEqual({
+    expect(
+      discoverConfigPath("/x/flag.yaml", { OKF_CATALOG_CONFIG: "/x/env.yaml" }, dir, HOME),
+    ).toEqual({
       path: "/x/flag.yaml",
       rule: "flag",
     });
-    expect(discoverConfigPath(undefined, { OKF_CATALOG_CONFIG: "/x/env.yaml" }, dir)).toEqual({
-      path: "/x/env.yaml",
-      rule: "env",
-    });
-    expect(discoverConfigPath(undefined, {}, dir)).toEqual({
+    expect(discoverConfigPath(undefined, { OKF_CATALOG_CONFIG: "/x/env.yaml" }, dir, HOME)).toEqual(
+      {
+        path: "/x/env.yaml",
+        rule: "env",
+      },
+    );
+    expect(discoverConfigPath(undefined, {}, dir, HOME)).toEqual({
       path: join(dir, "okf-catalog.yaml"),
       rule: "cwd",
     });
-    expect(discoverConfigPath("relative.yaml", {}, dir)).toEqual({
+    expect(discoverConfigPath("relative.yaml", {}, dir, HOME)).toEqual({
       path: join(dir, "relative.yaml"),
       rule: "flag",
     });
   });
 
   it("never falls through when the variable is empty or still holds a placeholder", () => {
-    const empty = discoverConfigPath(undefined, { OKF_CATALOG_CONFIG: "" }, dir);
+    const empty = discoverConfigPath(undefined, { OKF_CATALOG_CONFIG: "" }, dir, HOME);
     expect("error" in empty && empty.error).toMatch(/plugin configure okf-catalog/);
     const placeholder = discoverConfigPath(
       undefined,
       // biome-ignore lint/suspicious/noTemplateCurlyInString: the unsubstituted placeholder is the case under test
       { OKF_CATALOG_CONFIG: "${user_config.config_path}" },
       dir,
+      HOME,
     );
     expect("error" in placeholder && placeholder.error).toMatch(/plugin configure okf-catalog/);
   });

@@ -26,6 +26,15 @@ const box = (fixture = "spec-example", yaml?: string): Sandbox => {
   return b;
 };
 const companyDir = (b: Sandbox) => join(b.cacheRoot, "okf-catalog", "fixture");
+const lockFile = (b: Sandbox) => join(companyDir(b), "lock.sqlite");
+const waitForFile = async (path: string, ms: number): Promise<boolean> => {
+  const started = Date.now();
+  while (Date.now() - started < ms) {
+    if (existsSync(path)) return true;
+    await new Promise((r) => setTimeout(r, 25));
+  }
+  return existsSync(path);
+};
 
 describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
   it("serves the four tools to the SDK client, with the private cache under the sandbox and stderr piped", async () => {
@@ -74,6 +83,8 @@ describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
     expect((init.result as { serverInfo: { name: string } }).serverInfo.name).toBe("okf-catalog");
     expect((init.result as { instructions?: string }).instructions).toMatch(/cite/i);
     run.send(INITIALIZED);
+    // The load starts on the notification alone: the lock appears before any tool is listed or called.
+    expect(await waitForFile(lockFile(b), 5000)).toBe(true);
     run.send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
     const list = await run.waitFor(2);
     expect((list.result as { tools: unknown[] }).tools).toHaveLength(4);
@@ -90,7 +101,7 @@ describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
     expect(exit.code).toBe(0);
     expect(impureLines(run.stdout())).toEqual([]);
     expect(run.stderr()).not.toMatch(/Acme Retail is a/);
-    expect(run.stderr()).toMatch(/"event":"serve.shutdown"/);
+    expect(run.stderr().match(/"event":"serve.shutdown"/g)).toHaveLength(1);
     // The lock is free again and no private folder was left behind.
     const lock = acquireLock(companyDir(b), new Date());
     expect(lock.kind).toBe("exclusive");
@@ -140,10 +151,14 @@ describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
       method: "tools/call",
       params: { name: "status", arguments: {} },
     });
-    await new Promise((r) => setTimeout(r, 150));
+    // The lock is taken at the start of the load, so its file proves the load is running when the signal lands.
+    expect(await waitForFile(lockFile(b), 5000)).toBe(true);
     run.child.kill("SIGTERM");
-    const exit = await run.end();
+    // The signal alone ends the process: stdin stays open, so the shutdown it logs is the signal's.
+    const exit = await run.waitExit(15_000);
+    expect(exit.timedOut).toBe(false);
     expect(exit.code).toBe(0);
+    expect(run.stderr()).toMatch(/"event":"serve.shutdown","reason":"SIGTERM"/);
     expect(impureLines(run.stdout())).toEqual([]);
     const again = rawServer(b);
     again.send(INITIALIZE);
@@ -249,5 +264,98 @@ describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
     await second.end();
     expect(readdirSync(join(companyDir(b), "private"))).toHaveLength(0);
     await first.end();
+  });
+  it("stays up after the 2025-era handshake when the first load fails, naming the source as configured and never the resolved path", async () => {
+    const b = box("spec-example", "company: fixture\nsource:\n  local: ./missing-kb\n");
+    const run = rawServer(b);
+    run.send(INITIALIZE);
+    await run.waitFor(1);
+    run.send(INITIALIZED);
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(run.child.exitCode).toBeNull();
+    run.send({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "search", arguments: { question: "alpha" } },
+    });
+    const r = await run.waitFor(2);
+    const result = r.result as { isError?: boolean; content: Array<{ text: string }> };
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toContain("./missing-kb");
+    expect(result.content[0]?.text).toContain("does not exist");
+    expect(result.content[0]?.text).not.toContain(b.root);
+    expect(result.content[0]?.text).not.toContain("defect");
+    const exit = await run.end();
+    expect(exit.code).toBe(0);
+    expect(run.stderr()).toMatch(/"event":"serve.refusing"/);
+    expect(run.stderr()).toContain(join(b.root, "missing-kb"));
+  });
+
+  it("starts the first load on a tools/list with no handshake (the current protocol's path), and never on a ping", async () => {
+    const b = box();
+    const run = rawServer(b);
+    run.send({ jsonrpc: "2.0", id: 1, method: "ping" });
+    await run.waitFor(1);
+    await new Promise((r) => setTimeout(r, 400));
+    expect(existsSync(companyDir(b))).toBe(false);
+    run.send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
+    const list = await run.waitFor(2);
+    expect((list.result as { tools: unknown[] }).tools).toHaveLength(4);
+    expect(await waitForFile(lockFile(b), 5000)).toBe(true);
+    const exit = await run.end();
+    expect(exit.code).toBe(0);
+  });
+
+  it("lists tools to a negotiating SDK client and has the bundle loaded by the time the listing is answered", async () => {
+    const b = box();
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [CLI, "serve", "--config", b.configPath],
+      env: b.env,
+      cwd: b.cwd,
+    });
+    const client = new Client(
+      { name: "test", version: "0.0.0" },
+      { versionNegotiation: { mode: "auto" } },
+    );
+    await client.connect(transport);
+    const tools = (await client.listTools()).tools.map((t) => t.name).sort();
+    expect(tools).toEqual(["catalog", "get_page", "search", "status"]);
+    expect(await waitForFile(lockFile(b), 5000)).toBe(true);
+    await client.close();
+  });
+
+  it("exits on its own, releasing the lock, when the client stops reading its output", async () => {
+    const b = box();
+    const run = rawServer(b);
+    run.send(INITIALIZE);
+    await run.waitFor(1);
+    run.send(INITIALIZED);
+    run.send({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "status", arguments: {} },
+    });
+    await run.waitFor(2);
+    run.child.stdout?.destroy();
+    await new Promise((r) => setTimeout(r, 50));
+    for (let i = 0; i < 20; i++) {
+      run.send({
+        jsonrpc: "2.0",
+        id: 10 + i,
+        method: "tools/call",
+        params: { name: "catalog", arguments: {} },
+      });
+    }
+    const exit = await run.waitExit(8000);
+    expect(exit.timedOut).toBe(false);
+    expect(exit.code).toBe(0);
+    expect(run.stderr()).toMatch(/"event":"serve.shutdown"/);
+    expect(run.stderr()).not.toMatch(/Unhandled 'error' event/);
+    const lock = acquireLock(companyDir(b), new Date());
+    expect(lock.kind).toBe("exclusive");
+    if (lock.kind === "exclusive") lock.close();
   });
 });

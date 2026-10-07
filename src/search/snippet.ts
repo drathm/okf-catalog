@@ -62,15 +62,29 @@ export function snippet(
   });
   if (matches.length === 0) return fallback();
   matches.sort((a, b) => a.at - b.at);
+  // Two pointers over the sorted matches: the window starting at each match, with per-term counts, in linear time.
+  const counts = new Map<number, number>();
+  let distinct = 0;
+  let right = 0;
   let bestStart = matches[0]?.at ?? 0;
   let bestCount = 0;
-  for (const { at } of matches) {
-    const inside = new Set<number>();
-    for (const m of matches) if (m.at >= at && m.at < at + width) inside.add(m.term);
-    if (inside.size > bestCount) {
-      bestCount = inside.size;
-      bestStart = at;
+  for (let left = 0; left < matches.length; left++) {
+    const start = matches[left]?.at ?? 0;
+    while (right < matches.length && (matches[right]?.at ?? 0) < start + width) {
+      const term = matches[right]?.term ?? 0;
+      const seen = counts.get(term) ?? 0;
+      if (seen === 0) distinct += 1;
+      counts.set(term, seen + 1);
+      right++;
     }
+    if (distinct > bestCount) {
+      bestCount = distinct;
+      bestStart = start;
+    }
+    const leaving = matches[left]?.term ?? 0;
+    const remaining = (counts.get(leaving) ?? 1) - 1;
+    counts.set(leaving, remaining);
+    if (remaining === 0) distinct -= 1;
   }
   return clip(prose, bestStart, bestStart + width);
 }

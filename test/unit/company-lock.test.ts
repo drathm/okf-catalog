@@ -17,10 +17,17 @@ import { acquireLock, privateDir, sweepPrivate } from "../../src/fs/company-lock
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const HOLDER = join(REPO, "test", "helpers", "hold-lock.mjs");
 
+/** Every holder spawned by this file; a failed assertion must not leave one alive. */
+const holders: ReturnType<typeof spawn>[] = [];
+afterAll(() => {
+  for (const child of holders) if (child.exitCode === null) child.kill("SIGKILL");
+});
+
 /** Spawns a process that takes the lock and reports; resolves with the child and its first line. */
 function holder(dir: string): Promise<{ child: ReturnType<typeof spawn>; first: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [HOLDER, dir], { stdio: ["pipe", "pipe", "pipe"] });
+    holders.push(child);
     let out = "";
     child.stdout.on("data", (chunk: Buffer) => {
       out += chunk.toString();
@@ -72,13 +79,45 @@ describe("acquireLock", { timeout: 30_000 }, () => {
     if (after.kind === "exclusive") after.close();
   });
 
-  it("gives exactly one of two processes racing from a cold start the lock", async () => {
-    const dir = join(work, "c");
+  it("gives exactly one of two processes racing from a cold start the lock, every time", async () => {
+    // A cold folder has no database yet: both racers create it, and each step of the setup takes a lock of its
+    // own, so without a brief retry both can see SQLITE_BUSY and neither holds the lock (observed 4 in 100).
+    for (let round = 0; round < 8; round++) {
+      const dir = join(work, `race-${round}`);
+      mkdirSync(dir);
+      const [a, b] = await Promise.all([holder(dir), holder(dir)]);
+      try {
+        expect([a.first, b.first].sort(), `round ${round}`).toEqual(["exclusive", "held"]);
+      } finally {
+        a.child.kill("SIGKILL");
+        b.child.kill("SIGKILL");
+      }
+    }
+  });
+
+  it("gives the lock to exactly one of two processes racing for a folder whose holder was just killed", async () => {
+    const dir = join(work, "warm");
     mkdirSync(dir);
-    const [a, b] = await Promise.all([holder(dir), holder(dir)]);
-    expect([a.first, b.first].sort()).toEqual(["exclusive", "held"]);
-    a.child.kill("SIGKILL");
-    b.child.kill("SIGKILL");
+    const { child } = await holder(dir);
+    child.kill("SIGKILL");
+    await new Promise<void>((resolve) => child.on("exit", () => resolve()));
+    for (let round = 0; round < 8; round++) {
+      const [a, b] = await Promise.all([holder(dir), holder(dir)]);
+      try {
+        expect([a.first, b.first].sort(), `round ${round}`).toEqual(["exclusive", "held"]);
+      } finally {
+        a.child.kill("SIGKILL");
+        b.child.kill("SIGKILL");
+        await Promise.all(
+          [a.child, b.child].map(
+            (c) =>
+              new Promise<void>((resolve) =>
+                c.exitCode === null ? c.on("exit", () => resolve()) : resolve(),
+              ),
+          ),
+        );
+      }
+    }
   });
 });
 

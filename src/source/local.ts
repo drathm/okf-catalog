@@ -15,7 +15,21 @@ export function createLocalSource(
 ): LocalSource {
   return {
     kind: "local",
-    load: () => walkBundle(source.path, caps),
+    load: () => {
+      try {
+        return walkBundle(source.path, caps);
+      } catch (error) {
+        // The model is told the source as configured; the resolved path travels as detail, for the log only.
+        const original = (error as Error).message;
+        const described = new Error(
+          original.split(source.path).join(source.configured),
+        ) as Error & {
+          detail?: string;
+        };
+        described.detail = original;
+        throw described;
+      }
+    },
     describe: () => source.configured,
   };
 }
