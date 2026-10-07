@@ -10,7 +10,7 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { buildManifest, MANIFEST_NAME } from "../bundle/manifest.js";
-import type { BundleFile, LoadOptions, Status } from "../bundle/model.js";
+import type { BundleFile, LoadOptions } from "../bundle/model.js";
 import { findCollision } from "../bundle/paths.js";
 import { reservedKind } from "../bundle/reserved.js";
 import { readCompanyConfig } from "../config/company-config.js";
@@ -30,7 +30,8 @@ options:
   --config <path>     the company configuration (admission, caps, types, spec text)
   --from <folder>     the bundle folder to pack (a checkout's bundle folder, never a repository root)
   --out <folder>      where to write; new or empty
-  --admit <status>    admit this status (stable, deprecated); may be repeated; default from the configuration
+  --admit <status>    admit this status: stable, deprecated or a word of the company's own, never draft;
+                      may be repeated; default from the configuration
   --commit <sha>      the source commit to record in the manifest; the zero commit without it
   --help              print this text
 
@@ -39,7 +40,6 @@ exit codes: 0 packed; 1 the loader refused a file; 2 usage, configuration or out
 
 const ZERO_COMMIT = "0".repeat(40);
 const COMMIT = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
-const STATUSES = new Set<Status>(["stable", "deprecated"]);
 
 /** `YYYY-MM-DDTHH:mm:ssZ`, the form the fixtures carry, so a pack under OKF_CATALOG_NOW reproduces them. */
 const publishedAt = (now: Date): string => now.toISOString().replace(/\.\d{3}Z$/, "Z");
@@ -90,11 +90,13 @@ export function runPack(argv: string[], io: CommandIo): number {
     return usage(io, "--config, --from and --out are required");
   if (commit !== undefined && !COMMIT.test(commit))
     return usage(io, "--commit must be a full commit hash in lower-case hex");
-  const admit: Status[] = [];
+  // Any status word but draft (D77), as serve.admit takes: pack writes what the rule admits, and drafts never travel.
+  const admit: string[] = [];
   for (const flag of admitFlags) {
-    if (!STATUSES.has(flag as Status))
-      return usage(io, `--admit must be stable or deprecated, got ${flag}`);
-    admit.push(flag as Status);
+    const status = flag.trim();
+    if (status.length === 0 || status.toLowerCase() === "draft")
+      return usage(io, `--admit takes a status other than draft, got ${JSON.stringify(flag)}`);
+    admit.push(status);
   }
 
   const read = readCompanyConfig(resolve(configPath), homedir());

@@ -193,7 +193,12 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
     degrade("tags-not-list", "tags", `tags is ${kindOf(rawTags)}, not a list; ignored`);
   }
 
-  const statusResult = normaliseStatus(data.status, Object.hasOwn(data, "status"), degrade);
+  const statusResult = normaliseStatus(
+    data.status,
+    Object.hasOwn(data, "status"),
+    scalarText.status,
+    degrade,
+  );
 
   let staleAfter: StaleAfter | undefined;
   if (
@@ -390,23 +395,39 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
   return { ok: true, page };
 }
 
+/**
+ * The page's status (D61). Absent, null or blank is `stable`, as §5.4 says. The three known values are read without
+ * regard to case. Any other word is the producer's own and is kept, trimmed, with its case, and reported: it is
+ * never rewritten, and admission decides whether it is served (D77). A number or boolean is read as written; a list
+ * or mapping is no word, so its JSON text stands in for one and it counts as unknown. `raw` is the value as written.
+ */
 function normaliseStatus(
   value: unknown,
   present: boolean,
+  sourceText: string | undefined,
   degrade: (code: DegradationCode, field: string, detail: string) => void,
-): { status: Status; source: Page["statusSource"]; raw?: string } {
+): { status: string; source: Page["statusSource"]; raw?: string } {
   if (!present || value === undefined || value === null)
     return { status: "stable", source: "default" };
-  const raw = typeof value === "string" ? value : JSON.stringify(value);
-  const normalised = raw.trim().toLowerCase();
-  if (normalised.length === 0) return { status: "stable", source: "default" };
-  if (STATUSES.has(normalised)) return { status: normalised as Status, source: "frontmatter", raw };
+  const raw =
+    typeof value === "string"
+      ? value
+      : typeof value === "number" || typeof value === "boolean"
+        ? (sourceText ?? String(value))
+        : JSON.stringify(value);
+  const word = raw.trim();
+  if (word.length === 0) return { status: "stable", source: "default" };
+  const known = word.toLowerCase();
+  if (typeof value !== "object" && STATUSES.has(known))
+    return { status: known, source: "frontmatter", raw };
   degrade(
     "status-unknown",
     "status",
-    `status "${raw}" is not draft, stable or deprecated; treated as draft`,
+    typeof value === "object"
+      ? `status is ${kindOf(value)}, not draft, stable or deprecated; kept as its text ${word}`
+      : `status "${word}" is not draft, stable or deprecated; kept as written`,
   );
-  return { status: "draft", source: "frontmatter", raw };
+  return { status: word, source: "frontmatter", raw };
 }
 
 const ARTICLE: Record<string, string> = {

@@ -9,6 +9,7 @@ import type { Generation, RuntimeStatus, ToolOptions } from "./runtime.js";
 import {
   DATA_SENTENCE,
   hitLine,
+  type LineOptions,
   MARKER,
   pageHeader,
   reservedHeader,
@@ -60,7 +61,8 @@ export const FRONTMATTER_BUDGET = 8_000;
 /** Characters of a catalog entry's description kept in a result. */
 const ENTRY_DESCRIPTION_CAP = 200;
 
-const Status = z.enum(["draft", "stable", "deprecated"]);
+/** Any word: the three known values, or the company's own word for a page it admits (D61, D77). */
+const Status = z.string();
 const Trust = z.enum(["unverified", "machine-confirmed", "human-reviewed"]);
 const Rung = z.enum(["all-terms", "relaxed"]);
 const Form = z.enum(["date", "datetime", "unparseable"]);
@@ -224,7 +226,7 @@ export function projectSearch(
   response: SearchResponse,
   catalog: Catalog,
   now: Date,
-  options: { dev: boolean },
+  options: { dev: boolean } & LineOptions,
 ): SearchOutput {
   void now;
   const hits = response.hits.map((hit) => {
@@ -247,7 +249,7 @@ export function projectSearch(
       rung: hit.rung,
       termsMatched: hit.termsMatched ?? null,
       snippet: text,
-      citation: hitLine(hit, text, page?.staleAfter?.form),
+      citation: hitLine(hit, text, page?.staleAfter?.form, options),
     };
   });
   return SearchOutputSchema.parse({
@@ -267,8 +269,14 @@ export function projectSearch(
 const bodyRoom = (budget: number, citation: string): number =>
   Math.max(1, budget - citation.length - NOTICE.length - 80);
 
-export function projectPage(page: Page, now: Date, offset: number, budget: number): PageOutput {
-  const citation = pageHeader(page, now);
+export function projectPage(
+  page: Page,
+  now: Date,
+  offset: number,
+  budget: number,
+  options: LineOptions = {},
+): PageOutput {
+  const citation = pageHeader(page, now, options);
   const cut = cutText(page.body, offset, bodyRoom(budget, citation));
   const provenance = provenanceOf(page, now);
   if (JSON.stringify(provenance.frontmatter).length > FRONTMATTER_BUDGET) {

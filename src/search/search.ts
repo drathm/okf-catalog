@@ -1,4 +1,4 @@
-import type { Page, PagePath, Status, Trust } from "../bundle/model.js";
+import type { Page, PagePath, Trust } from "../bundle/model.js";
 import { byCodeUnit } from "../bundle/paths.js";
 import type { Catalog } from "../catalog/model.js";
 import { isOverdue } from "../catalog/provenance.js";
@@ -24,7 +24,8 @@ export interface SearchHit {
   title: string;
   description?: string;
   type: string;
-  status: Status;
+  /** The page's status as it is served: one of the three known values, or the company's own word (D61). */
+  status: string;
   trust: Trust;
   staleAfter?: string;
   overdue: boolean;

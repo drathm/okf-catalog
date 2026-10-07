@@ -1,8 +1,16 @@
 import type { BundleFile, Caps, Page, Refusal, Status } from "./model.js";
 
-/** The company's admission rule. The development flag admits drafts, and so the unknown statuses read as draft. */
-export function admit(page: Page, admitStatuses: Status[], dev: boolean): boolean {
-  return admitStatuses.includes(page.status) || (dev && page.status === "draft");
+const KNOWN: ReadonlySet<string> = new Set<Status>(["draft", "stable", "deprecated"]);
+
+/**
+ * The company's admission rule (D77): a page whose status the company lists, compared trimmed and without regard to
+ * case; under the development flag, also a draft and a status outside the three the specification names, each
+ * labelled with its own word. An unknown status is never admitted by default: the list bounds what is served.
+ */
+export function admit(page: Page, admitStatuses: readonly string[], dev: boolean): boolean {
+  const status = page.status.toLowerCase();
+  if (admitStatuses.some((listed) => listed.trim().toLowerCase() === status)) return true;
+  return dev && (status === "draft" || !KNOWN.has(status));
 }
 
 /** Type values the company did not declare. Nothing is unknown when nothing is declared. */

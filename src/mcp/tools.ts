@@ -226,7 +226,10 @@ export function registerTools(
           "every word of the question is a common word the index ignores; ask with keywords, the distinctive words a page would use",
         );
       }
-      const output = projectSearch(response, generation.catalog, now, { dev: options.dev });
+      const output = projectSearch(response, generation.catalog, now, {
+        dev: options.dev,
+        undeclaredTypes: new Set(generation.report.unknownTypes),
+      });
       return {
         ...ok([output.summary, ...output.hits.map((h) => h.citation)].join("\n"), output),
         logFields: { engineQueries: response.engineQueries, rowsFetched: response.rowsFetched },
@@ -264,7 +267,9 @@ export function registerTools(
       const offset = args.offset ?? 0;
       const page = generation.catalog.pages.get(path);
       if (page !== undefined) {
-        const output = projectPage(page, clock(), offset, options.resultBudget);
+        const output = projectPage(page, clock(), offset, options.resultBudget, {
+          undeclaredTypes: new Set(generation.report.unknownTypes),
+        });
         return ok(pageText(output), output);
       }
       const reserved = reservedAt(generation.catalog, path);

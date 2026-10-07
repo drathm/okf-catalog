@@ -153,11 +153,36 @@ describe("parsePage: trust and lifecycle", () => {
     expect(codes(page("terms/zeta.md", "2026-08-15"))).toEqual([]);
   });
 
-  it("treats an unknown status as draft, keeps the raw value, and reports it", () => {
+  it("keeps an unknown status as written, trimmed, case kept, and reports it", () => {
     const p = page("notes/unknown-status.md");
-    expect(p.status).toBe("draft");
+    expect(p.status).toBe("archived");
     expect(p.statusRaw).toBe("archived");
     expect(codes(p)).toEqual(["status-unknown"]);
+    const status = (line: string): Page => {
+      const r = inline("x.md", `---\ntype: T\ntitle: T\ndescription: D\n${line}\n---\n`);
+      if (!r.ok) throw new Error(`${line}: ${r.refusal.rule}`);
+      return r.page;
+    };
+    const review = status('status: " In Review "');
+    expect(review.status).toBe("In Review");
+    expect(review.statusRaw).toBe(" In Review ");
+    expect(codes(review)).toEqual(["status-unknown"]);
+    // The three known values are read without regard to case, and kept as the specification spells them.
+    const known = status("status: Stable");
+    expect(known.status).toBe("stable");
+    expect(known.statusRaw).toBe("Stable");
+    expect(codes(known)).toEqual([]);
+    expect(status("status: ' DEPRECATED '").status).toBe("deprecated");
+    // A list or a mapping is no word: its JSON text stands in for one, and it counts as unknown.
+    const list = status("status: [a, b]");
+    expect(list.status).toBe('["a","b"]');
+    expect(codes(list)).toEqual(["status-unknown"]);
+    const mapping = status("status: { a: 1 }");
+    expect(mapping.status).toBe('{"a":1}');
+    expect(codes(mapping)).toEqual(["status-unknown"]);
+    // A number or a boolean is read as written.
+    expect(status("status: 2").status).toBe("2");
+    expect(status("status: True").status).toBe("True");
   });
 
   it("defaults an absent status to stable, and reads a draft as written", () => {

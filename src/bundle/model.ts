@@ -8,6 +8,7 @@ export interface BundleFile {
   bytes: Uint8Array;
 }
 
+/** The three statuses the specification names (§5.4). A page's own status may be any word (D61). */
 export type Status = "draft" | "stable" | "deprecated";
 export type Trust = "unverified" | "machine-confirmed" | "human-reviewed";
 export type SpecText = "2026-08-15" | "2026-08-21";
@@ -134,7 +135,11 @@ export interface Page {
   description?: string;
   descriptionSource: "frontmatter" | "body" | "none";
   tags: string[];
-  status: Status;
+  /**
+   * `draft`, `stable` or `deprecated`, read without regard to case and kept as the specification spells them; any
+   * other word kept as written, trimmed, with its case (D61); a list or mapping as its JSON text.
+   */
+  status: string;
   statusSource: "frontmatter" | "default";
   statusRaw?: string;
   staleAfter?: StaleAfter;
@@ -180,7 +185,8 @@ export const DEFAULT_CAPS: Caps = {
 };
 
 export interface LoadOptions {
-  admit: Status[];
+  /** The statuses the company admits, compared trimmed and without regard to case (D77). */
+  admit: string[];
   dev: boolean;
   integrity: "require-manifest" | "none";
   specText: SpecText;

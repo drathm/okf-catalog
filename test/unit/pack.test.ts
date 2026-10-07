@@ -125,6 +125,46 @@ describe("okf-catalog pack", () => {
     );
   });
 
+  it("packs an unknown-status page only when the configuration or --admit names it", () => {
+    const work = temp();
+    const cfg = config(work);
+    const from = join(FIXTURES, "behaviours");
+    const packed = (args: string[], configPath = cfg): string[] => {
+      const out = join(work, `out-${Math.random().toString(36).slice(2)}`);
+      const run = io();
+      expect(runPack(["--config", configPath, "--from", from, "--out", out, ...args], run.io)).toBe(
+        0,
+      );
+      return list(out);
+    };
+    const byDefault = packed([]);
+    expect(byDefault).toContain("terms/alpha.md");
+    expect(byDefault).not.toContain("notes/unknown-status.md");
+    expect(byDefault).not.toContain("notes/draft.md");
+    const flagged = packed(["--admit", "archived"]);
+    expect(flagged).toContain("notes/unknown-status.md");
+    expect(flagged).not.toContain("terms/alpha.md");
+    expect(flagged).not.toContain("notes/draft.md");
+    const listing = join(work, "listing.yaml");
+    writeFileSync(
+      listing,
+      "company: acme\nsource:\n  local: ./kb\nserve:\n  admit: [stable, deprecated, Archived]\n",
+    );
+    const configured = packed([], listing);
+    expect(configured).toContain("notes/unknown-status.md");
+    expect(configured).toContain("terms/alpha.md");
+    expect(configured).not.toContain("notes/draft.md");
+    const draft = io();
+    expect(
+      runPack(
+        ["--config", cfg, "--from", from, "--out", join(work, "never"), "--admit", "Draft"],
+        draft.io,
+      ),
+    ).toBe(2);
+    expect(draft.stderr()).toMatch(/--admit/);
+    expect(existsSync(join(work, "never"))).toBe(false);
+  });
+
   it("writes nothing and exits 1 when the loader refuses a file, as check does", () => {
     const work = temp();
     const cfg = config(work);

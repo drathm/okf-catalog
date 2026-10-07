@@ -68,19 +68,39 @@ export const sourceCount = (count: number): string =>
 /** Page text inside a server-voice quotation: made safe, and its own quotation marks escaped so it cannot close the quote. */
 const quoted = (text: string): string => `"${safe(text).replace(/"/g, '\\"')}"`;
 
+/** What a line needs to know about the bundle beyond the page: the types the company did not declare. */
+export interface LineOptions {
+  /** Types outside the company's declared list (the report's `unknownTypes`); empty when it declares none. */
+  undeclaredTypes?: ReadonlySet<string>;
+}
+
+const KNOWN_STATUSES: ReadonlySet<string> = new Set(["draft", "stable", "deprecated"]);
+
+/**
+ * A status as a fact in the brackets: one of the three known values as it is, any other word quoted, since it is
+ * the company's own text and a comma in it must not add a fact (P13).
+ */
+const statusFact = (status: string): string =>
+  KNOWN_STATUSES.has(status) ? status : quoted(status);
+
+/** A type as a fact in the brackets: quoted when the company declares its types and this is not one of them (P13). */
+const typeFact = (type: string, options: LineOptions): string =>
+  options.undeclaredTypes?.has(type) === true ? quoted(type) : safe(type);
+
 /** One search hit as a line: path, title, the bracketed facts, the quoted snippet, the replacement. */
 export function hitLine(
   hit: SearchHit,
   snippet: string | undefined,
   form: StaleAfter["form"] | undefined,
+  options: LineOptions = {},
 ): string {
   const recheck: Recheck | undefined =
     hit.staleAfter === undefined
       ? undefined
       : { raw: hit.staleAfter, form: form ?? "date", overdue: hit.overdue };
   const facts = [
-    safe(hit.type),
-    hit.status,
+    typeFact(hit.type, options),
+    statusFact(hit.status),
     hit.trust,
     recheckPhrase(recheck),
     sourceCount(hit.sources),
@@ -113,7 +133,7 @@ function verificationPhrase(page: Page): string {
 }
 
 /** The citation header of a page: path, then the bracketed facts, then the deprecation. */
-export function pageHeader(page: Page, now: Date): string {
+export function pageHeader(page: Page, now: Date, options: LineOptions = {}): string {
   const recheck: Recheck | undefined =
     page.staleAfter === undefined
       ? undefined
@@ -130,8 +150,8 @@ export function pageHeader(page: Page, now: Date): string {
           .map((s) => (s.id === undefined ? safe(s.resource) : `${safe(s.id)} ${safe(s.resource)}`))
           .join("; ")}`;
   const facts = [
-    safe(page.type),
-    page.status,
+    typeFact(page.type, options),
+    statusFact(page.status),
     page.trust,
     // The tier already says "unverified" when there is no verification to name.
     ...(page.verified.length === 0 ? [] : [verificationPhrase(page)]),

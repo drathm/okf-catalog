@@ -132,6 +132,18 @@ describe("projections parse under their strict schemas and are JSON-safe", () =>
     expect(() => SearchOutputSchema.parse({ ...out, extra: 1 })).toThrow();
   });
 
+  it("takes a status outside the three known values in every schema", () => {
+    const hit = { ...(response.hits[0] as SearchResponse["hits"][number]), status: "archived" };
+    const out = projectSearch({ ...response, hits: [hit] }, catalog, NOW, { dev: true });
+    expect(out.hits[0]?.status).toBe("archived");
+    expect(out.hits[0]?.citation).toContain('"archived"');
+    const archived: Page = { ...page("terms/alpha.md"), status: "archived" };
+    const read = projectPage(archived, NOW, 0, RESULT_BUDGET);
+    expect(read.provenance?.status).toBe("archived");
+    expect(() => PageOutputSchema.parse(read)).not.toThrow();
+    expect(() => SearchOutputSchema.parse(out)).not.toThrow();
+  });
+
   it("page: a header as the citation, the notice before the body, the body cut at the budget with an offset", () => {
     const out = projectPage(page("terms/alpha.md"), NOW, 0, RESULT_BUDGET);
     expect(() => PageOutputSchema.parse(out)).not.toThrow();

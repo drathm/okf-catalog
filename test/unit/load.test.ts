@@ -115,7 +115,28 @@ describe("loadBundle on the behaviours bundle", () => {
   it("admits the draft and the unknown status under the development flag", () => {
     const dev = loadBundle("behaviours", files, options({ dev: true, integrity: "none" }), NOW);
     expect(dev.report.admitted).toBe(19);
-    expect(dev.catalog.pages.get("notes/unknown-status.md")?.status).toBe("draft");
+    expect(dev.catalog.pages.get("notes/unknown-status.md")?.status).toBe("archived");
+    expect(dev.catalog.pages.get("notes/draft.md")?.status).toBe("draft");
+  });
+
+  it("admits an unknown status the company lists, and its generated index lists it", () => {
+    const listed = loadBundle(
+      "behaviours",
+      files,
+      options({ admit: ["stable", "deprecated", "Archived"], types: ["Term", "Note"] }),
+      NOW,
+    );
+    expect(listed.report.admitted).toBe(18);
+    expect(listed.report.excludedByStatus).toBe(1);
+    expect(listed.catalog.pages.get("notes/unknown-status.md")?.status).toBe("archived");
+    expect(listed.catalog.pages.has("notes/draft.md")).toBe(false);
+    expect(listed.report.unknownStatuses).toEqual([
+      { path: "notes/unknown-status.md", value: "archived" },
+    ]);
+    const notes = listed.catalog.folders.get("notes");
+    expect(notes?.indexSource).toBe("generated");
+    expect(notes?.index?.body).toContain("(unknown-status.md)");
+    expect(notes?.index?.body).not.toContain("(draft.md)");
   });
 
   it("reports degradations for admitted pages only, and lists every type", () => {

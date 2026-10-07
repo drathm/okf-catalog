@@ -1,10 +1,10 @@
-import type { Page, PagePath, Source, StaleAfter, Status, Trust } from "../bundle/model.js";
+import type { Page, PagePath, Source, StaleAfter, Trust } from "../bundle/model.js";
 
 export interface Provenance {
   path: PagePath;
   title: string;
   type: string;
-  status: Status;
+  status: string;
   trust: Trust;
   generated?: { by: string; at?: string };
   verified: Array<{ by: string; at?: string }>;
