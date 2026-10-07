@@ -34,6 +34,27 @@ The acceptance list from the implementation plan, with the evidence for each ite
 | A bundle with no index files, an unknown type and a broken link is served and reported | `status` on such a bundle through the session; `test/unit/outputs.test.ts` proves the fields exist | pending (manual confirmation); automated for the fields |
 | A hostile bundle is refused with the report on stderr | `okf-catalog check` exit 1 (`test/unit/check-command.test.ts`); through `serve`, `status` carries the refusal | automated |
 
+## Bite 5: the git source, the poller, `pack`, the publish loop
+
+| Item | Evidence | Status |
+|---|---|---|
+| A published branch is served: clone, fetch, listing, validation and extraction, with the fetched commit and when it was fetched in `status` | `test/unit/git-source.test.ts`, `test/integration/stdio.test.ts` ("serves a published branch…") | automated |
+| Git runs with a fixed binary, a built environment (planted redirecting variables never arrive), fixed settings, `--` where it belongs, its own process group killed on timeout and on shutdown, streamed and capped output, credentials replaced | `test/unit/git-runner.test.ts` | automated |
+| A commit with a symbolic link, a gitlink, an oversize blob, too many entries, an unsafe or `.git`-like or non-NFC path, or a collision is refused before anything is written, and the previous tree stays served | `test/unit/git-tree.test.ts`, `test/unit/git-source.test.ts` | automated |
+| Extraction writes raw bytes: a CRLF blob under `text=auto` with a filter in a planted global configuration arrives unchanged | `test/unit/git-source.test.ts` ("extracts raw bytes…") | automated |
+| A force-pushed branch and one that moves backwards are followed; a deleted branch is logged once while the tree stays served; an unreachable remote keeps the served tree; an offline start answers from disk; a missing or foreign or locked clone is recreated | `test/unit/git-source.test.ts`, `test/unit/poller.test.ts` | automated |
+| A failed first load is retried by the poller and the refusal clears on success; a refused fetched commit at first load falls back to the tree last served | `test/unit/runtime.test.ts` (bite 5 block) | automated |
+| The poller runs one tick at a time on a chained timer, refreshes only when the remote moved, never keeps the process alive, stops cleanly | `test/unit/poller.test.ts` | automated |
+| Two servers on one company each own a source folder and poller; the second names the holder, alive, in `status` | `test/integration/stdio.test.ts` ("…gives a second server its own source and the holder's name") | automated |
+| Shutdown during a clone leaves no git process behind | `test/integration/stdio.test.ts` ("ends cleanly, leaving no git process behind…") | automated |
+| `pack` reproduces the `spec-example` manifest byte for byte, repacks a packed bundle to the same manifest, leaves drafts out, copies attachments anywhere and hidden files never, writes form C, records `--commit`, refuses a non-empty or overlapping output, writes nothing on a loader refusal | `test/unit/pack.test.ts` | automated |
+| The publish loop: `pack.sh` runs the checkers before and after `pack`, `push.sh` publishes parent-linked commits without force, the server picks up a change and a removal on the poller's tick, a failing check after `pack` stops the push | `test/integration/publish-loop.test.ts` | automated |
+| The workflow runs on the source branch only, pins every action, keeps the write token in a job that runs git alone, and installs the server from a pinned source | `test/unit/recipe.test.ts` | automated |
+| A store that is not a database is rebuilt once with its sidecars and `status` says why; another failure is not a rebuild | `test/integration/qmd-engine-rebuild.test.ts` | automated |
+| The configuration accepts https and ssh repositories without a password and the `user@host:path` form, a plain branch name and a safe bundle path, and refuses the rest | `test/unit/company-config.test.ts` | automated |
+| The recorded publish loop through a Claude Code session: publish a change, see the next answer reflect it | the same session as the bite 4 pending items, with `recipes/publish/pack.sh` and `push.sh` against the maintainer's repository | pending: needs a signed-in Claude Code and a repository the maintainer names |
+| The workflow runs on a real repository and the server picks up its push | copy `recipes/publish/publish.yml` into the repository, set its four values, push to the source branch | pending (manual): needs the maintainer's repository |
+
 ## How to run the pending items
 
 Sign in once (`claude` in a terminal), then, from the repository root:
