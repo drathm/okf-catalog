@@ -103,7 +103,7 @@ describe("parseFrontmatter: hostile and odd inputs (review round 1)", () => {
     const r = parseFrontmatter("__proto__: hello\ntype: T\n");
     expect(r.ok).toBe(true);
     expect(r.ok && Object.hasOwn(r.sources, "__proto__")).toBe(true);
-    expect(r.ok && (r.sources as Record<string, string>)["__proto__"]).toBe("hello");
+    expect(r.ok && Object.getOwnPropertyDescriptor(r.sources, "__proto__")?.value).toBe("hello");
     expect(r.ok && Object.hasOwn(r.data, "type")).toBe(true);
   });
 

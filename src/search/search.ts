@@ -1,0 +1,253 @@
+import type { Page, PagePath, Status, Trust } from "../bundle/model.js";
+import { byCodeUnit } from "../bundle/paths.js";
+import type { Catalog } from "../catalog/model.js";
+import { isOverdue } from "../catalog/provenance.js";
+import type { Engine, EngineHit } from "./engine.js";
+import { normaliseQuestion, tokenize } from "./query.js";
+
+export type Rung = "all-terms" | "relaxed";
+
+export interface SearchRequest {
+  question: string;
+  type?: string;
+  topic?: string;
+  includeStale: boolean;
+  limit: number;
+  /** Run the relaxed rung when the first rung leaves the answer short (default true); the benchmark turns it off. */
+  relax?: boolean;
+}
+
+export interface SearchHit {
+  path: PagePath;
+  title: string;
+  description?: string;
+  type: string;
+  status: Status;
+  trust: Trust;
+  staleAfter?: string;
+  overdue: boolean;
+  replacement?: PagePath;
+  /** Raw BM25, on one scale for both rungs. */
+  score: number;
+  rung: Rung;
+  termsMatched?: number;
+}
+
+export interface SearchResponse {
+  hits: SearchHit[];
+  /** The rung that answered: the rung of the first hit; `none` when nothing was found or the question had no content terms. */
+  strategy: Rung | "none";
+  reason?: "no-content-terms";
+  terms: string[];
+  dropped: string[];
+  /** Distinct engine hits examined across every query. */
+  considered: number;
+  /** Distinct pages the filters removed, per reason. */
+  filteredOut: { type: number; topic: number; stale: number; unknown: number };
+  /** The pool size the first rung ended with. */
+  pool: number;
+}
+
+const POOL_FACTOR = 4;
+const POOL_CAP = 500;
+const RELAXED_FLOOR = 0.01;
+const TIE = 1e-9;
+const TRUST_RANK: Record<Trust, number> = {
+  "human-reviewed": 0,
+  "machine-confirmed": 1,
+  unverified: 2,
+};
+
+interface Candidate {
+  page: Page;
+  score: number;
+  matched: number;
+}
+
+function topicPrefix(topic: string | undefined): string | undefined {
+  if (topic === undefined) return undefined;
+  const trimmed = topic.replace(/^\/+|\/+$/g, "");
+  return trimmed.length === 0 ? undefined : `${trimmed}/`;
+}
+
+function order(a: Candidate, b: Candidate): number {
+  if (Math.abs(b.score - a.score) > TIE) return b.score - a.score;
+  const trust = TRUST_RANK[a.page.trust] - TRUST_RANK[b.page.trust];
+  return trust !== 0 ? trust : byCodeUnit(a.page.path, b.page.path);
+}
+
+interface CompletedPool {
+  hits: EngineHit[];
+  /** True when the engine had nothing beyond these rows. */
+  exhausted: boolean;
+}
+
+/**
+ * Asks the engine for `pool` rows and completes the tie group at the cut. qmd orders equal scores by insertion
+ * order, which differs from one index build to the next, so a pool that cuts inside a group of equal scores
+ * would make the answer depend on the build. One extra row shows whether the cut fell inside a group; when it
+ * did, the request widens until a row below the cut's score is seen, the engine runs out, or the cap is
+ * reached. Rows below the cut's score are dropped. At the cap the group is cut as the engine cut it, which is
+ * the one residual the engine's order can still reach.
+ */
+async function lexComplete(
+  engine: Engine,
+  terms: readonly string[],
+  pool: number,
+): Promise<CompletedPool> {
+  let ask = pool + 1;
+  for (;;) {
+    const rows = await engine.lex(terms, ask);
+    if (rows.length <= pool) return { hits: rows, exhausted: true };
+    const cut = (rows[pool - 1] as EngineHit).bm25;
+    let end = pool;
+    while (end < rows.length && Math.abs((rows[end] as EngineHit).bm25 - cut) <= TIE) end += 1;
+    if (end < rows.length) return { hits: rows.slice(0, end), exhausted: false };
+    if (rows.length < ask) return { hits: rows, exhausted: true };
+    if (ask > POOL_CAP) return { hits: rows, exhausted: false };
+    ask = Math.min(ask * POOL_FACTOR, POOL_CAP + 1);
+  }
+}
+
+/**
+ * Searches the catalog through the engine. The first rung sends every content term, plus the topic's path
+ * segments and the type value, as one query, widening the pool while the filters leave it short and the engine
+ * returned a full pool. When still short, the relaxed rung sends one query per content term and fuses by
+ * summed BM25, ranked by terms matched. Every engine query completes the tie group at its cut, so the answer
+ * does not depend on the engine's order among equal scores. Hits carry provenance and their rung; the response
+ * says what was filtered and why.
+ */
+export async function search(
+  catalog: Catalog,
+  engine: Engine,
+  request: SearchRequest,
+  now: Date,
+): Promise<SearchResponse> {
+  const { terms, dropped } = normaliseQuestion(request.question);
+  const limit = Math.max(1, request.limit);
+  const removed = {
+    type: new Set<PagePath>(),
+    topic: new Set<PagePath>(),
+    stale: new Set<PagePath>(),
+    unknown: new Set<PagePath>(),
+  };
+  const filteredOut = () => ({
+    type: removed.type.size,
+    topic: removed.topic.size,
+    stale: removed.stale.size,
+    unknown: removed.unknown.size,
+  });
+  if (terms.length === 0) {
+    return {
+      hits: [],
+      strategy: "none",
+      reason: "no-content-terms",
+      terms,
+      dropped,
+      considered: 0,
+      filteredOut: filteredOut(),
+      pool: 0,
+    };
+  }
+  const prefix = topicPrefix(request.topic);
+  const wantedType = request.type?.trim().toLowerCase();
+  const extra = [
+    ...(prefix === undefined ? [] : tokenize(prefix.replace(/\//g, " "))),
+    ...(wantedType === undefined ? [] : tokenize(wantedType)),
+  ];
+  const considered = new Set<PagePath>();
+
+  /** Applies the filters to one engine hit; returns the page when it survives. */
+  const admit = (hit: EngineHit): Page | undefined => {
+    considered.add(hit.path);
+    const page = catalog.pages.get(hit.path);
+    if (page === undefined) {
+      removed.unknown.add(hit.path);
+      return undefined;
+    }
+    if (wantedType !== undefined && page.type.toLowerCase() !== wantedType) {
+      removed.type.add(hit.path);
+      return undefined;
+    }
+    if (prefix !== undefined && !page.path.startsWith(prefix)) {
+      removed.topic.add(hit.path);
+      return undefined;
+    }
+    if (!request.includeStale && isOverdue(page.staleAfter, now)) {
+      removed.stale.add(hit.path);
+      return undefined;
+    }
+    return page;
+  };
+
+  // First rung: all terms, widening while short and the engine still had more to give.
+  let pool = limit * POOL_FACTOR;
+  let first: Candidate[] = [];
+  for (;;) {
+    const { hits: engineHits, exhausted } = await lexComplete(engine, [...terms, ...extra], pool);
+    first = [];
+    for (const hit of engineHits) {
+      const page = admit(hit);
+      if (page !== undefined) first.push({ page, score: hit.bm25, matched: terms.length });
+    }
+    if (first.length >= limit || exhausted || pool >= POOL_CAP) break;
+    pool = Math.min(pool * POOL_FACTOR, POOL_CAP);
+  }
+  first.sort(order);
+  const hits: SearchHit[] = first
+    .slice(0, limit)
+    .map((c) => shape(c.page, c.score, "all-terms", now));
+
+  // Relaxed rung: one query per term, fused by summed BM25, ranked by terms matched then by the sum.
+  if (request.relax !== false && hits.length < limit && terms.length > 1) {
+    const taken = new Set(hits.map((h) => h.path));
+    const fused = new Map<PagePath, Candidate>();
+    for (const term of terms) {
+      for (const hit of (await lexComplete(engine, [term, ...extra], pool)).hits) {
+        if (taken.has(hit.path)) continue;
+        const page = admit(hit);
+        if (page === undefined) continue;
+        const entry = fused.get(hit.path) ?? { page, score: 0, matched: 0 };
+        entry.score += hit.bm25;
+        entry.matched += 1;
+        fused.set(hit.path, entry);
+      }
+    }
+    const best = Math.max(0, ...[...fused.values()].map((e) => e.score));
+    const relaxed = [...fused.values()]
+      .filter((e) => e.score >= best * RELAXED_FLOOR)
+      .sort((a, b) => b.matched - a.matched || order(a, b));
+    for (const e of relaxed) {
+      if (hits.length >= limit) break;
+      hits.push({ ...shape(e.page, e.score, "relaxed", now), termsMatched: e.matched });
+    }
+  }
+
+  const strategy: Rung | "none" = hits[0]?.rung ?? "none";
+  return {
+    hits,
+    strategy,
+    terms,
+    dropped,
+    considered: considered.size,
+    filteredOut: filteredOut(),
+    pool,
+  };
+}
+
+function shape(page: Page, score: number, rung: Rung, now: Date): SearchHit {
+  const hit: SearchHit = {
+    path: page.path,
+    title: page.title,
+    type: page.type,
+    status: page.status,
+    trust: page.trust,
+    overdue: isOverdue(page.staleAfter, now),
+    score,
+    rung,
+  };
+  if (page.description !== undefined) hit.description = page.description;
+  if (page.staleAfter !== undefined) hit.staleAfter = page.staleAfter.raw;
+  if (page.replacement !== undefined) hit.replacement = page.replacement;
+  return hit;
+}

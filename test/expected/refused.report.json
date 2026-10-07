@@ -1,0 +1,42 @@
+{
+  "okf_catalog_report": 1,
+  "loadedAt": "2026-10-06T12:00:00.000Z",
+  "integrity": "checked",
+  "admitted": 1,
+  "excludedByStatus": 0,
+  "attachments": 0,
+  "hidden": 0,
+  "refusals": [
+    {
+      "path": ".qmd/index.yml",
+      "rule": "engine-config",
+      "detail": "the search engine's own configuration has no place in a bundle"
+    },
+    {
+      "path": "bad-yaml.md",
+      "rule": "frontmatter-unparseable",
+      "detail": "Flow sequence in block collection must be sufficiently indented and end with a ] at line 3, column 17"
+    },
+    {
+      "path": "no-frontmatter.md",
+      "rule": "no-frontmatter",
+      "detail": "no frontmatter block opens the file"
+    },
+    {
+      "path": "no-type.md",
+      "rule": "no-type",
+      "detail": "the frontmatter has no type"
+    }
+  ],
+  "degradations": [],
+  "unknownTypes": [],
+  "unknownStatuses": [],
+  "brokenLinks": [],
+  "linksToUnserved": [],
+  "missingOnDisk": [],
+  "foldersWithoutIndex": [
+    ""
+  ],
+  "encodedFolders": [],
+  "commit": "0000000000000000000000000000000000000000"
+}

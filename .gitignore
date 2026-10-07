@@ -7,3 +7,5 @@
 .DS_Store
 /bench/corpus/
 /bench/clones/
+/bench/results/
+/bench/.work/

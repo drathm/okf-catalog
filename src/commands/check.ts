@@ -1,0 +1,124 @@
+import { parseArgs } from "node:util";
+import { loadBundle } from "../bundle/load.js";
+import {
+  DEFAULT_CAPS,
+  type LoadOptions,
+  type Report,
+  type SpecText,
+  type Status,
+} from "../bundle/model.js";
+import { walkBundle } from "../fs/walk.js";
+import { renderReport } from "../report/report.js";
+
+export const CHECK_USAGE = `usage: okf-catalog check <bundle folder> [options]
+
+Applies the intake contract to a folder and prints the report.
+
+options:
+  --integrity <require-manifest|none>   default require-manifest; a source checkout needs none
+  --dev                                 admit drafts and label them
+  --admit <stable,deprecated>           statuses to serve (default stable,deprecated)
+  --types <a,b>                         the company's declared types; others are reported
+  --spec-text <2026-08-15|2026-08-21>   which OKF 0.2 text's date form is expected (default 2026-08-15)
+  --json                                print the report as JSON
+
+exit codes: 0 the bundle can be served; 1 something was refused; 2 usage or environment error
+`;
+
+export interface CommandIo {
+  stdout: (text: string) => void;
+  stderr: (text: string) => void;
+  env: NodeJS.ProcessEnv;
+}
+
+const STATUSES = new Set<Status>(["draft", "stable", "deprecated"]);
+
+/** The clock: a fixed instant from OKF_CATALOG_NOW for deterministic runs, else now. */
+export function clockFrom(env: NodeJS.ProcessEnv): Date {
+  const fixed = env.OKF_CATALOG_NOW;
+  if (fixed === undefined || fixed.length === 0) return new Date();
+  const at = new Date(fixed);
+  if (Number.isNaN(at.getTime())) throw new Error(`OKF_CATALOG_NOW is not a datetime: ${fixed}`);
+  return at;
+}
+
+/** A report as JSON: a format marker, ISO dates, nothing else. */
+export function reportToJson(report: Report): string {
+  return `${JSON.stringify({ okf_catalog_report: 1, ...report, loadedAt: report.loadedAt.toISOString() }, null, 2)}\n`;
+}
+
+export function runCheck(argv: string[], io: CommandIo): number {
+  let parsed: ReturnType<typeof parseArgs>;
+  try {
+    parsed = parseArgs({
+      args: argv,
+      options: {
+        integrity: { type: "string", default: "require-manifest" },
+        dev: { type: "boolean", default: false },
+        admit: { type: "string", default: "stable,deprecated" },
+        types: { type: "string" },
+        "spec-text": { type: "string", default: "2026-08-15" },
+        json: { type: "boolean", default: false },
+      },
+      allowPositionals: true,
+      strict: true,
+    });
+  } catch (error) {
+    io.stderr(`${(error as Error).message}\n${CHECK_USAGE}`);
+    return 2;
+  }
+  const folder = parsed.positionals[0];
+  const integrity = parsed.values.integrity;
+  const specText = parsed.values["spec-text"];
+  const admit = String(parsed.values.admit)
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
+  if (folder === undefined || parsed.positionals.length !== 1) {
+    io.stderr(`check takes exactly one bundle folder\n${CHECK_USAGE}`);
+    return 2;
+  }
+  if (integrity !== "require-manifest" && integrity !== "none") {
+    io.stderr(`--integrity must be require-manifest or none\n${CHECK_USAGE}`);
+    return 2;
+  }
+  if (specText !== "2026-08-15" && specText !== "2026-08-21") {
+    io.stderr(`--spec-text must be 2026-08-15 or 2026-08-21\n${CHECK_USAGE}`);
+    return 2;
+  }
+  if (!admit.every((s): s is Status => STATUSES.has(s as Status))) {
+    io.stderr(`--admit lists statuses other than draft, stable and deprecated\n${CHECK_USAGE}`);
+    return 2;
+  }
+  let now: Date;
+  try {
+    now = clockFrom(io.env);
+  } catch (error) {
+    io.stderr(`${(error as Error).message}\n`);
+    return 2;
+  }
+  let walked: ReturnType<typeof walkBundle>;
+  try {
+    walked = walkBundle(folder, DEFAULT_CAPS);
+  } catch (error) {
+    io.stderr(`${(error as Error).message}\n`);
+    return 2;
+  }
+  const options: LoadOptions = {
+    admit: admit as Status[],
+    dev: parsed.values.dev === true,
+    integrity,
+    specText: specText as SpecText,
+    caps: DEFAULT_CAPS,
+    walkRefusals: walked.refusals,
+    hiddenPaths: walked.hidden,
+  };
+  if (parsed.values.types !== undefined)
+    options.types = String(parsed.values.types)
+      .split(",")
+      .map((s) => s.trim());
+  if (walked.fatal !== undefined) options.walkFatal = walked.fatal;
+  const { report } = loadBundle("check", walked.files, options, now);
+  io.stdout(parsed.values.json === true ? reportToJson(report) : renderReport(report));
+  return report.fatal !== undefined || report.refusals.length > 0 ? 1 : 0;
+}

@@ -1,7 +1,20 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.15/schema.json",
   "files": {
-    "includes": ["src/**", "test/**", "bench/**", "*.ts", "*.cjs", "*.json", "!!test/fixtures"]
+    "includes": [
+      "src/**",
+      "test/**",
+      "bench/**",
+      "*.ts",
+      "*.cjs",
+      "*.json",
+      "!!test/fixtures",
+      "!!test/expected",
+      "!!bench/clones",
+      "!!bench/corpus",
+      "!!bench/results",
+      "!!bench/.work"
+    ]
   },
   "formatter": {
     "enabled": true,

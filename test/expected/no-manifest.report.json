@@ -1,0 +1,20 @@
+{
+  "okf_catalog_report": 1,
+  "loadedAt": "2026-10-06T12:00:00.000Z",
+  "integrity": "skipped",
+  "admitted": 1,
+  "excludedByStatus": 0,
+  "attachments": 0,
+  "hidden": 0,
+  "refusals": [],
+  "degradations": [],
+  "unknownTypes": [],
+  "unknownStatuses": [],
+  "brokenLinks": [],
+  "linksToUnserved": [],
+  "missingOnDisk": [],
+  "foldersWithoutIndex": [
+    ""
+  ],
+  "encodedFolders": []
+}

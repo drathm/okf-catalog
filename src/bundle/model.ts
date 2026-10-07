@@ -104,6 +104,7 @@ export type RefusalRule =
   | "symlink"
   | "gitlink"
   | "path-escape"
+  | "special-file"
   | "engine-config"
   | "hash-mismatch"
   | "size-mismatch"
@@ -182,6 +183,10 @@ export interface LoadOptions {
   types?: string[];
   /** Refusals the file walker produced before the core saw the files (symbolic links, escapes, oversize). */
   walkRefusals?: Refusal[];
+  /** Dot-leading paths the walker found and never read; counted, present for the manifest, refused when they are the engine's. */
+  hiddenPaths?: string[];
+  /** The walker's own bundle-level refusal, when the caps stopped it. */
+  walkFatal?: Refusal;
 }
 
 export interface Report {

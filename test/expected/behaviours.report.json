@@ -1,0 +1,87 @@
+{
+  "okf_catalog_report": 1,
+  "loadedAt": "2026-10-06T12:00:00.000Z",
+  "integrity": "checked",
+  "admitted": 17,
+  "excludedByStatus": 2,
+  "attachments": 1,
+  "hidden": 0,
+  "refusals": [],
+  "degradations": [
+    {
+      "path": "notes/html-body.md",
+      "code": "body-html",
+      "field": "body",
+      "detail": "2 HTML blocks, including a script-like element; indexed as text, never executed, kept out of the description"
+    },
+    {
+      "path": "notes/no-description.md",
+      "code": "description-from-body",
+      "field": "description",
+      "detail": "no description field; the body's first sentence is used"
+    },
+    {
+      "path": "notes/no-title-no-heading.md",
+      "code": "title-from-filename",
+      "field": "title",
+      "detail": "no title field and no heading; the file name \"no-title-no-heading\" is used"
+    },
+    {
+      "path": "notes/no-title.md",
+      "code": "title-from-heading",
+      "field": "title",
+      "detail": "no title field; the first heading \"Heading From Body\" is used"
+    },
+    {
+      "path": "terms/beta.md",
+      "code": "stale-after-unexpected-form",
+      "field": "stale_after",
+      "detail": "the 2026-08-15 text expects a date; 2000-06-01T18:00:00Z is a datetime"
+    },
+    {
+      "path": "terms/eta.md",
+      "code": "stale-after-unparseable",
+      "field": "stale_after",
+      "detail": "soon is not a date or a datetime; the page is never overdue"
+    },
+    {
+      "path": "terms/theta.md",
+      "code": "stale-after-no-offset",
+      "field": "stale_after",
+      "detail": "2000-06-01T18:00:00 has no offset and is read as UTC"
+    },
+    {
+      "path": "terms/theta.md",
+      "code": "stale-after-unexpected-form",
+      "field": "stale_after",
+      "detail": "the 2026-08-15 text expects a date; 2000-06-01T18:00:00 is a datetime"
+    },
+    {
+      "path": "terms/epsilon.md",
+      "code": "replacement-missing",
+      "field": "replacement",
+      "detail": "a deprecated page should link to the page that replaced it; no link was found"
+    }
+  ],
+  "unknownTypes": [],
+  "unknownStatuses": [
+    {
+      "path": "notes/unknown-status.md",
+      "value": "archived"
+    }
+  ],
+  "brokenLinks": [
+    {
+      "from": "terms/alpha.md",
+      "raw": "/terms/missing.md"
+    }
+  ],
+  "linksToUnserved": [],
+  "missingOnDisk": [],
+  "foldersWithoutIndex": [
+    "dist",
+    "notes"
+  ],
+  "encodedFolders": [],
+  "commit": "0000000000000000000000000000000000000000"
+}

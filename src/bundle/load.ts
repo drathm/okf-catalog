@@ -69,6 +69,23 @@ export function loadBundle(
     };
   };
 
+  if (options.walkFatal !== undefined) return empty(options.walkFatal);
+  // Hidden paths the walker never read: counted, and the engine's own folder refused by name.
+  for (const hidden of options.hiddenPaths ?? []) {
+    report.hidden += 1;
+    if (isEngineConfig(hidden)) {
+      report.refusals.push({
+        path: hidden,
+        rule: "engine-config",
+        detail: "the search engine's own configuration has no place in a bundle",
+      });
+    }
+  }
+  const presentButUnread = [
+    ...(options.hiddenPaths ?? []),
+    ...(options.walkRefusals ?? []).map((r) => r.path),
+  ];
+
   // Paths first: a path that is not a safe bundle path is refused before anything reads it.
   const sorted: BundleFile[] = [];
   for (const file of [...files].sort((a, b) => byPath(a.path, b.path))) {
@@ -131,7 +148,7 @@ export function loadBundle(
   if (manifest !== undefined) {
     report.commit = manifest.commit;
     if (options.integrity === "require-manifest") {
-      for (const problem of verifyManifest(manifest, sorted)) {
+      for (const problem of verifyManifest(manifest, sorted, presentButUnread)) {
         if (problem.problem === "missing-on-disk") report.missingOnDisk.push(problem.path);
         else if (!isHidden(problem.path)) {
           refusedPaths.add(problem.path);

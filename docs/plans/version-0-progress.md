@@ -242,3 +242,24 @@ interface Engine {
 Dropped from this bite: `fs/cache-dir.ts` and `fs/swap-tree.ts` (the adapter owns its generations; the cache layout and the per-company lock, D32, go to bite 4). Added: `engine/qmd-render.ts`, the no-yield pin test, the walker's special-file and hidden handling, the benchmark's run metadata.
 
 Decisions this bite adds or changes, proposed for the maintainer: D25 (the algorithm above replaces the fixed pool), D28 (single-flight refresh in the composition layer, no adapter lock), D31 (summed BM25 instead of reciprocal rank for the relaxed rung; tokenizer and CJK rule), D32 (one process per company enforced by a lock file, with a private fallback folder).
+
+### Build
+
+Order, each module red then green: `derive/derived-document.ts`; `engine/qmd-render.ts` (the rendered text and the path codec, golden-tested); `search/query.ts` (tokenizer, stopwords, CJK pairs); `search/engine.ts` and `search/search.ts` (the ladder as revised, on an in-memory engine with qmd's observable contract); `engine/qmd.ts` against a real store (generation folders, the symlink flip, the count check and `multiGet` diff, the no-yield pin); `fs/walk.ts` on hostile trees generated at test time; the walker inputs in `bundle/load.ts` and `bundle/manifest.ts`; `commands/check.ts` and `cli.ts` with golden `--json` reports for the four fixtures; `bench/`. 440 tests in 54 files pass twice, at UTC+14 and UTC−11; `npm run check` (Biome, TypeScript, dependency-cruiser) is green. The benchmark corpus was fetched and the benchmark run; its numbers and method are in `docs/research/benchmark-lexical.md`.
+
+Deviations from the revised plan, for the reviewers:
+
+| Item | What was built | Why |
+|---|---|---|
+| `bench/run.ts` | `bench/run.mjs`, plain ES modules importing the built `dist/` | Runs on the build the tests ran on, with no loader; the benchmark is not part of the dependency rule |
+| Four configurations | Question text or keyword form, relaxation on or off | F10 deferred the metadata block runs until a qmd release reads the block |
+| Pool semantics | Every engine query completes the tie group at its cut (`lexComplete`): one row beyond the pool is asked for, and a cut inside a group of equal scores widens the request until a lower score is seen, the engine runs out, or the cap is reached | Found by the benchmark: two runs on the same corpus disagreed on one question, because qmd orders equal scores by insertion order and inserts in unsorted glob order (facts note). A pool may now exceed `P` by the size of the group at the cut; at the cap the engine's cut stands |
+| Walker refusals | `special-file` added to the refusal rules | A named pipe is neither a link nor a regular file |
+| Manifest verification | Hidden folders the walker never read match manifest entries by prefix | A `.cache/` entry in a manifest is otherwise reported missing on disk |
+| `strategy` | The rung of the first hit, `none` when empty | Earlier draft reported `relaxed` whenever the relaxed rung ran, even when the first rung answered |
+| `filteredOut` | Distinct pages per reason | Earlier draft counted hits, so a page seen in several per-term pools counted several times |
+| `check` on `OKF_CATALOG_NOW` | A fixed clock from the environment | Golden reports and spawned-process tests need a pinned `loadedAt` |
+
+Decisions taken while building: a question whose terms are all stopwords answers `no-content-terms`; the type value and topic segments join every query as terms with the exact filters kept; `relax: false` exists only for the benchmark; the engine's company name must be one lower-case path segment; the benchmark admits drafts and runs with integrity off because the corpus is four source checkouts; the fixtures' index time and size and the corpus run's memory are recorded in the facts note.
+
+Open for the maintainer and the reviewers: the per-term pool on the relaxed rung is the first rung's pool, twenty rows at `limit` 5; the benchmark shows 119 of 214 question-term pools full without the gold page, so a larger relaxed pool is the first tuning to measure under D31. The tokenizer reads `1,000` as `000`. Twenty-five author-written questions are a smoke test of the ranking, not a user sample.

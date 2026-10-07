@@ -6,7 +6,7 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 corpus="$here/corpus"
 work="$here/clones"
-mkdir -p "$work"
+mkdir -p "$work" "$corpus"
 
 fetch() { # name url commit
   if [ ! -d "$work/$1/.git" ]; then git clone -q --no-checkout -- "$2" "$work/$1"; fi
