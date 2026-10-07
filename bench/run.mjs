@@ -12,6 +12,11 @@
 // bench/pull-models.mjs, which is the maintainer's approval (invariant 6). Writes one JSON line per question
 // per configuration, a summary with the run's metadata, and nothing else; the work folder is removed at the
 // end. Build first: npm run build.
+// The rank guard (D66): `--write-expect <file>` pins each question's gold rank and top five in every lexical
+// configuration; `--expect <file>` compares a run with that pin and exits 6 when a gold rank moved (a moved top
+// five only prints, as a tripwire). `bench/expected/lexical-ranks.json` is the corpus pin, and CI runs the
+// comparison on every push. For a bundle other than the public corpus the pin, like --out, stays outside this
+// checkout.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -33,6 +38,7 @@ import {
 import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { buildPin, comparePin, pinNotes, verdictOf } from "./lib/expect.mjs";
 import { approvalText, MODELS, MODES, missingModels, modelPath, modelsFor } from "./lib/models.mjs";
 import { blendOrder, missingScores, pickChunk, queryTermsOf, scoreOrder } from "./lib/rerank.mjs";
 
@@ -55,6 +61,8 @@ const bundleDir = option("--bundle");
 const configPath = option("--config");
 const questionsPath = option("--questions") ?? join(here, "questions.json");
 const outDir = option("--out");
+const writeExpect = option("--write-expect");
+const expectPath = option("--expect");
 const stubEmbedder = flag("--stub-embedder");
 const samples = Number(option("--samples") ?? 3);
 const fail = (code, message) => {
@@ -69,17 +77,35 @@ if (bundleDir !== undefined && configPath === undefined)
     EXIT_USAGE,
     "--bundle needs --config (the company configuration naming its admission and types)",
   );
+/** Whether a path lies inside this checkout (the checkout itself included). */
+const insideCheckout = (path) => {
+  const rel = relative(resolve(repo), resolve(path));
+  return !rel.startsWith("..") && !isAbsolute(rel);
+};
 if (bundleDir !== undefined) {
   if (outDir === undefined)
     fail(EXIT_USAGE, "--bundle needs --out, a folder outside this checkout");
-  const rel = relative(resolve(repo), resolve(outDir));
-  if (!rel.startsWith("..") && !isAbsolute(rel)) {
+  if (insideCheckout(outDir)) {
     fail(
       EXIT_USAGE,
       "--out must lie outside this checkout for a bundle that is not the public corpus",
     );
   }
+  // A pin names the gold pages of the questions, so a private bundle's pin stays where its results do.
+  if (writeExpect !== undefined && insideCheckout(writeExpect)) {
+    fail(
+      EXIT_USAGE,
+      "--write-expect must lie outside this checkout for a bundle that is not the public corpus",
+    );
+  }
 }
+if (writeExpect !== undefined && expectPath !== undefined)
+  fail(
+    EXIT_USAGE,
+    "--write-expect and --expect are two runs: pin once, then compare against the pin",
+  );
+if (expectPath !== undefined && !existsSync(expectPath))
+  fail(EXIT_USAGE, `no pin at ${expectPath}: write one with --write-expect`);
 
 // --- the modes' environment, settled before qmd is imported ------------------------------------------------
 // qmd reads its three model variables when it constructs an LLM instance and the Metal residency variable when
@@ -332,6 +358,8 @@ const tokensOf = (text) =>
   new Set((text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).map((w) => w));
 const textOf = (q, form) => (form === "question" ? q.question : q.keywords.join(" "));
 const ranks = new Map();
+/** One row per question per configuration, for the rank guard: the gold rank and the top five. */
+const guardRows = [];
 for (const config of CONFIGS) {
   const outcomes = new Map();
   ranks.set(config.key, outcomes);
@@ -349,6 +377,12 @@ for (const config of CONFIGS) {
     const position = r.hits.slice(0, 5).findIndex((h) => h.path === q.gold);
     const rank = position === -1 ? null : position + 1;
     outcomes.set(q.id, rank);
+    guardRows.push({
+      config: config.key,
+      id: q.id,
+      rank,
+      top5: r.hits.slice(0, 5).map((h) => h.path),
+    });
     if (config.key === "question/relaxed@20") {
       policyLists.set(q.id, { paths: r.hits.map((h) => h.path), terms: r.terms });
     }
@@ -1055,5 +1089,33 @@ writeFileSync(join(resultsDir, `${stamp}.summary.json`), `${JSON.stringify(resul
 process.stdout.write(
   `${JSON.stringify({ meta, summary, paired, modes: modesResult === null ? null : { requested: modes, perMode: modesResult.perMode } }, null, 2)}\n`,
 );
+// The rank guard, after the results are written: a pin to write, or a pin to compare with (lexical rows only).
+const guardFacts = {
+  clock: NOW.toISOString(),
+  qmd: meta.qmd,
+  node: meta.node,
+  os: meta.os,
+  questionsSha256: meta.questionsSha256,
+  corpus: meta.corpus,
+  okfCatalogCommit: meta.okfCatalog.commit ?? null,
+  okfCatalogDirty: meta.okfCatalog.dirty,
+};
+if (writeExpect !== undefined) {
+  mkdirSync(dirname(resolve(writeExpect)), { recursive: true });
+  writeFileSync(
+    resolve(writeExpect),
+    `${JSON.stringify(buildPin(guardRows, guardFacts), null, 2)}\n`,
+  );
+  process.stderr.write(
+    `rank guard: pinned ${guardRows.length} answers in ${CONFIGS.length} configurations to ${writeExpect}\n`,
+  );
+}
+if (expectPath !== undefined) {
+  const pin = JSON.parse(readFileSync(expectPath, "utf8"));
+  const verdict = verdictOf(comparePin(pin, guardRows));
+  for (const line of [...pinNotes(pin.pinned, guardFacts), ...verdict.lines])
+    process.stderr.write(`${line}\n`);
+  process.exitCode = verdict.code;
+}
 // The generation tree and the store are measurements' scaffolding, not results: a run leaves no work folder behind.
 removeWork();
