@@ -69,3 +69,16 @@ describe("readBody", () => {
     });
   });
 });
+
+describe("readBody: reference links and nested structures (review round 1)", () => {
+  it("leaves an undefined reference as text, which is how CommonMark reads it, and keeps a defined one", () => {
+    expect(readBody("See [beta][b] here.\n").links).toEqual([]);
+    expect(readBody("See [beta][b].\n\n[b]: /x.md\n").links.map((l) => l.url)).toEqual(["/x.md"]);
+  });
+
+  it("finds links in nested lists, around images, inside footnote definitions and in link-only headings", () => {
+    const body =
+      "- outer\n  - [a](/a.md)\n\n[![img](/i.png)](/b.md)\n\n# [c](/c.md)\n\nText.[^n]\n\n[^n]: See [d](/d.md).\n";
+    expect(readBody(body).links.map((l) => l.url)).toEqual(["/a.md", "/b.md", "/c.md", "/d.md"]);
+  });
+});

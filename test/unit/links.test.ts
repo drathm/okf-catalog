@@ -78,3 +78,17 @@ describe("resolveLink", () => {
     expect(resolveLink("/terms/missing.md", "root.md", index)).toEqual({ kind: "broken" });
   });
 });
+
+describe("resolveLink: percent-encoding edge cases (review round 1)", () => {
+  it("decodes before handling dot segments, so an encoded parent segment climbs", () => {
+    expect(resolveLink("/terms/%2E%2E/root.md", "root.md", index)).toEqual({
+      kind: "page",
+      target: "root.md",
+    });
+    expect(resolveLink("/%2E%2E/x.md", "root.md", index)).toEqual({ kind: "broken" });
+  });
+
+  it("does not let an encoded slash fabricate a path separator", () => {
+    expect(resolveLink("/terms%2Fbeta.md", "root.md", index)).toEqual({ kind: "broken" });
+  });
+});

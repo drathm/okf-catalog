@@ -38,3 +38,23 @@ describe("renderReport", () => {
     expect(renderReport(fatal.report).split("\n")[0]).toContain("FATAL");
   });
 });
+
+describe("renderReport: detail lines (review round 1)", () => {
+  it("prints each degradation with its path and detail, and says when integrity was skipped", () => {
+    const { report } = loadBundle(
+      "b",
+      readFixture("behaviours"),
+      {
+        admit: ["stable", "deprecated"],
+        dev: false,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    );
+    const text = renderReport(report);
+    expect(text).toContain("terms/epsilon.md: replacement-missing (");
+    expect(text).toMatch(/integrity was not checked/i);
+  });
+});

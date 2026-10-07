@@ -52,3 +52,11 @@ describe("parseReserved", () => {
     expect(r.degradations.map((d) => d.code)).toEqual(["okf-version-unknown"]);
   });
 });
+
+describe("parseReserved: review round 1 additions", () => {
+  it("does not lift okf_version from a folder index", () => {
+    const r = parseReserved("terms/index.md", '---\nokf_version: "0.2"\n---\n# Terms\n');
+    expect(r.okfVersion).toBeUndefined();
+    expect(r.frontmatter).toEqual({ okf_version: "0.2" });
+  });
+});

@@ -92,3 +92,27 @@ describe("provenanceOf", () => {
     expect(prov.verified).toEqual([]);
   });
 });
+
+describe("provenance on parsed fixture pages (review round 1)", () => {
+  it("judges beta and theta at noon on their day by the instant rule, not the calendar day", async () => {
+    const { loadBundle } = await import("../../src/bundle/load.js");
+    const { DEFAULT_CAPS } = await import("../../src/bundle/model.js");
+    const { readFixture } = await import("../helpers/fixtures.js");
+    const { catalog } = loadBundle(
+      "b",
+      readFixture("behaviours"),
+      {
+        admit: ["stable", "deprecated"],
+        dev: false,
+        integrity: "require-manifest",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      new Date("2000-06-01T12:00:00Z"),
+    );
+    const noon = new Date("2000-06-01T12:00:00Z");
+    expect(isOverdue(catalog.pages.get("terms/beta.md")?.staleAfter, noon)).toBe(false);
+    expect(isOverdue(catalog.pages.get("terms/theta.md")?.staleAfter, noon)).toBe(false);
+    expect(isOverdue(catalog.pages.get("terms/zeta.md")?.staleAfter, noon)).toBe(true);
+  });
+});

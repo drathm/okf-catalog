@@ -94,3 +94,18 @@ describe("manifest", () => {
     );
   });
 });
+
+describe("manifest: prototype keys (review round 1)", () => {
+  it("rejects a files key named __proto__ instead of letting the schema drop it silently", () => {
+    const text = `{"okf_catalog":1,"commit":"${META.commit}","published_at":"${META.publishedAt}","files":{"__proto__":{"sha256":"${"a".repeat(64)}","bytes":1}}}`;
+    const r = parseManifest(new TextEncoder().encode(text));
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.error).toMatch(/__proto__/);
+  });
+
+  it("refuses to build a manifest for a file whose path has a __proto__ segment", () => {
+    expect(() =>
+      buildManifest([{ path: "__proto__/x.md", bytes: new Uint8Array(1) }], META),
+    ).toThrow(/__proto__/);
+  });
+});

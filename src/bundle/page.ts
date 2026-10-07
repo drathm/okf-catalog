@@ -272,12 +272,14 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
     return link;
   });
 
+  // GFM lower-cases footnote identifiers; the join with sources[].id is therefore case-insensitive.
   const sourceIds = new Set(
-    sources.map((s) => s.id).filter((id): id is string => id !== undefined),
+    sources.map((s) => s.id?.toLowerCase()).filter((id): id is string => id !== undefined),
   );
   for (const id of facts.footnoteReferences) {
-    if (!sourceIds.has(id))
+    if (!sourceIds.has(id.toLowerCase())) {
       degrade("footnote-without-source", "sources", `footnote ${id} has no matching sources entry`);
+    }
   }
 
   if (facts.htmlBlocks > 0 || facts.hasScriptLike) {
@@ -331,7 +333,7 @@ function normaliseStatus(
   degrade(
     "status-unknown",
     "status",
-    `status "${raw}" is not draft, stable or deprecated; treated as draft and not served by default`,
+    `status "${raw}" is not draft, stable or deprecated; treated as draft`,
   );
   return { status: "draft", source: "frontmatter", raw };
 }

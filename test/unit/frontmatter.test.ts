@@ -97,3 +97,20 @@ describe("decodeUtf8", () => {
     expect(decodeUtf8(new Uint8Array([0x68, 0xff, 0x69]))).toEqual({ ok: false });
   });
 });
+
+describe("parseFrontmatter: hostile and odd inputs (review round 1)", () => {
+  it("keeps a __proto__ key as an own property of the source map and never throws", () => {
+    const r = parseFrontmatter("__proto__: hello\ntype: T\n");
+    expect(r.ok).toBe(true);
+    expect(r.ok && Object.hasOwn(r.sources, "__proto__")).toBe(true);
+    expect(r.ok && (r.sources as Record<string, string>)["__proto__"]).toBe("hello");
+    expect(r.ok && Object.hasOwn(r.data, "type")).toBe(true);
+  });
+
+  it("treats a file that is only three dashes as having no block, and leaves a fence inside the body alone", () => {
+    expect(splitFrontmatter("---").block).toBeUndefined();
+    const r = splitFrontmatter("---\ntype: T\n---\n```\n---\n```\n");
+    expect(r.block).toBe("type: T");
+    expect(r.body).toBe("```\n---\n```\n");
+  });
+});

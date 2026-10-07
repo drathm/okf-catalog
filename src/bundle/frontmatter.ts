@@ -73,7 +73,7 @@ export function parseFrontmatter(block: string): FrontmatterResult {
   } catch {
     return { ok: false, error: "frontmatter contains a cycle" };
   }
-  const sources: Record<string, string> = {};
+  const sources: Record<string, string> = Object.create(null) as Record<string, string>;
   if (isMap(doc.contents)) {
     for (const pair of doc.contents.items) {
       if (isScalar(pair.key) && isScalar(pair.value) && typeof pair.value.source === "string") {

@@ -193,3 +193,79 @@ describe("loadBundle on the refusal bundles", () => {
     expect(report.hidden).toBe(1);
   });
 });
+
+describe("loadBundle: review round 1 additions", () => {
+  const file = (path: string, text: string) => ({ path, bytes: new TextEncoder().encode(text) });
+  const pageText = (title: string) =>
+    `---\ntype: Note\ntitle: ${title}\ndescription: D\n---\n# ${title}\n\nBody.\n`;
+
+  it("links a nested subfolder from a generated parent index by its relative name", () => {
+    const files = [file("a/one.md", pageText("One")), file("a/b/two.md", pageText("Two"))];
+    const { catalog, report } = loadBundle("x", files, options({ integrity: "none" }), NOW);
+    expect(catalog.folders.get("a")?.subfolders).toEqual(["a/b"]);
+    expect(catalog.folders.get("a")?.index?.body).toContain("* [b](b/)");
+    expect(catalog.folders.get("a")?.index?.body).not.toContain("a/b/");
+    expect(report.foldersWithoutIndex).toEqual(["", "a", "a/b"]);
+  });
+
+  it("does not list excluded pages in a generated index", () => {
+    const { catalog } = loadBundle("behaviours", readFixture("behaviours"), options(), NOW);
+    const notes = catalog.folders.get("notes")?.index?.body ?? "";
+    expect(notes).not.toContain("draft.md");
+    expect(notes).not.toContain("unknown-status.md");
+  });
+
+  it("reports nothing as missing on disk for the refused bundle, whose engine folder is on disk", () => {
+    const { report } = loadBundle("refused", readFixture("refused"), options(), NOW);
+    expect(report.missingOnDisk).toEqual([]);
+  });
+
+  it("does not count a refused attachment, and counts hidden and engine files toward the caps", () => {
+    const big = "x".repeat(500);
+    const files = [
+      ...readFixture("no-manifest"),
+      file("ref/big.bin", big),
+      file(".hidden/a.md", big),
+      file(".qmd/index.yml", big),
+    ];
+    const { report } = loadBundle(
+      "x",
+      files,
+      options({ integrity: "none", caps: { fileBytes: 400, files: 100, treeBytes: 1_000_000 } }),
+      NOW,
+    );
+    expect(report.attachments).toBe(0);
+    expect(report.refusals.map((r) => [r.path, r.rule]).sort()).toEqual([
+      [".hidden/a.md", "oversize"],
+      [".qmd/index.yml", "engine-config"],
+      [".qmd/index.yml", "oversize"],
+      ["ref/big.bin", "oversize"],
+    ]);
+    const tooMany = loadBundle(
+      "x",
+      files,
+      options({ integrity: "none", caps: { fileBytes: 1000, files: 2, treeBytes: 1_000_000 } }),
+      NOW,
+    );
+    expect(tooMany.report.fatal).toMatchObject({ rule: "too-many-files" });
+  });
+
+  it("does not parse a reserved file the manifest refuses, and generates the index instead", () => {
+    const files = readFixture("behaviours").map((f) =>
+      f.path === "terms/index.md" ? file(f.path, "# Tampered\n") : f,
+    );
+    const { catalog, report } = loadBundle("behaviours", files, options(), NOW);
+    expect(report.refusals.map((r) => r.path)).toEqual(["terms/index.md"]);
+    expect(catalog.folders.get("terms")?.indexSource).toBe("generated");
+  });
+
+  it("says in the report whether integrity was checked or skipped", () => {
+    expect(loadBundle("b", readFixture("behaviours"), options(), NOW).report.integrity).toBe(
+      "checked",
+    );
+    expect(
+      loadBundle("b", readFixture("behaviours"), options({ integrity: "none" }), NOW).report
+        .integrity,
+    ).toBe("skipped");
+  });
+});

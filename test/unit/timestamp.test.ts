@@ -46,3 +46,23 @@ describe("parseTimestamp", () => {
     }
   });
 });
+
+describe("parseTimestamp: review round 1 additions", () => {
+  it("accepts a leap day in 2000 and rejects one in 1900", () => {
+    expect(parseTimestamp("2000-02-29")).toMatchObject({ kind: "date" });
+    expect(parseTimestamp("1900-02-29")).toMatchObject({ kind: "invalid" });
+  });
+
+  it("crosses UTC midnight for a negative offset and keeps fractional seconds", () => {
+    expect(parseTimestamp("2000-06-01T00:30:00-01:00")).toMatchObject({
+      at: new Date(Date.UTC(2000, 5, 1, 1, 30)),
+    });
+    expect(parseTimestamp("2000-06-01T23:30:00+02:00")).toMatchObject({
+      at: new Date(Date.UTC(2000, 5, 1, 21, 30)),
+    });
+    expect(parseTimestamp("2000-06-01T18:00:00.250Z")).toMatchObject({
+      at: new Date(Date.UTC(2000, 5, 1, 18, 0, 0, 250)),
+    });
+    expect(parseTimestamp("2000-06-01T23:59:60Z")).toMatchObject({ kind: "invalid" });
+  });
+});

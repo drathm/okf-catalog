@@ -181,6 +181,8 @@ export interface Report {
   commit?: string;
   /** A bundle-level refusal; when set, nothing should be served. */
   fatal?: Refusal;
+  /** Whether the manifest was verified against the files, or integrity was not required. */
+  integrity: "checked" | "skipped";
   admitted: number;
   excludedByStatus: number;
   attachments: number;

@@ -340,3 +340,23 @@ describe("decideReplacement", () => {
     expect(decideReplacement(page("terms/alpha.md"), admitted)).toEqual({});
   });
 });
+
+describe("parsePage: review round 1 additions", () => {
+  it("matches footnote ids to source ids without regard to case", () => {
+    const r = inline(
+      "x.md",
+      "---\ntype: T\ntitle: T\ndescription: D\nsources:\n  - { id: Alpha-Handbook, resource: https://x }\n---\nClaim.[^Alpha-Handbook]\n\n[^Alpha-Handbook]: A\n",
+    );
+    if (!r.ok) throw new Error(r.refusal.rule);
+    expect(r.page.degradations).toEqual([]);
+  });
+
+  it("under the 21 August text, the offset-less recheck datetime is reported for the offset only", () => {
+    expect(codes(page("terms/theta.md", "2026-08-21"))).toEqual(["stale-after-no-offset"]);
+  });
+
+  it("words the unknown-status detail without a claim about admission", () => {
+    const p = page("notes/unknown-status.md");
+    expect(p.degradations[0]?.detail).not.toMatch(/not served/);
+  });
+});

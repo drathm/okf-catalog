@@ -39,9 +39,10 @@ const byPath = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
  * Turns the files of a bundle into a catalog and a report. Pure: the files arrive in memory, the clock is a
- * parameter, and nothing here reads a disk or an engine. Reserved files are routed by name before any page
- * rule runs; non-Markdown files are attachments; hidden paths are skipped and counted; the engine's own
- * configuration is refused per path. Bundle-level refusals set `report.fatal` and leave the catalog empty.
+ * parameter, and nothing here reads a disk or an engine. Caps are measured over every file. Reserved files are
+ * routed by name before any page rule runs; non-Markdown files are attachments; hidden paths are skipped and
+ * counted; the engine's own configuration is refused per path. Bundle-level refusals set `report.fatal` and
+ * leave the catalog empty. A page that fails to parse for any reason is a refusal, never an exception.
  */
 export function loadBundle(
   company: string,
@@ -51,6 +52,7 @@ export function loadBundle(
 ): LoadResult {
   const report: Report = {
     loadedAt: now,
+    integrity: options.integrity === "require-manifest" ? "checked" : "skipped",
     admitted: 0,
     excludedByStatus: 0,
     attachments: 0,
@@ -73,13 +75,18 @@ export function loadBundle(
     };
   };
 
-  // Partition.
+  // Caps, over everything that arrived.
   const sorted = [...files].sort((a, b) => byPath(a.path, b.path));
+  const caps = capRefusals(sorted, options.caps);
+  if (caps.fatal !== undefined) return empty(caps.fatal);
+  const refusedPaths = new Set(caps.perFile.map((r) => r.path));
+  report.refusals.push(...caps.perFile);
+
+  // Partition.
   let manifestFile: BundleFile | undefined;
   const reservedFiles: BundleFile[] = [];
   const pageFiles: BundleFile[] = [];
   const attachmentPaths = new Set<string>();
-  const visible: BundleFile[] = [];
   for (const file of sorted) {
     if (isEngineConfig(file.path)) {
       report.refusals.push({
@@ -87,33 +94,27 @@ export function loadBundle(
         rule: "engine-config",
         detail: "the search engine's own configuration has no place in a bundle",
       });
+      refusedPaths.add(file.path);
       continue;
     }
     if (isHidden(file.path)) {
       report.hidden += 1;
       continue;
     }
-    visible.push(file);
     if (file.path === MANIFEST_NAME) manifestFile = file;
     else if (reservedKind(file.path) !== undefined) reservedFiles.push(file);
     else if (file.path.endsWith(".md")) pageFiles.push(file);
     else attachmentPaths.add(file.path);
   }
-  report.attachments = attachmentPaths.size;
 
-  // Caps.
-  const caps = capRefusals(visible, options.caps);
-  if (caps.fatal !== undefined) return empty(caps.fatal);
-  const refusedPaths = new Set(caps.perFile.map((r) => r.path));
-  report.refusals.push(...caps.perFile);
-
-  // Integrity.
+  // Integrity, against every file on disk, hidden and refused ones included: they are present, not missing.
   let manifest: Manifest | undefined;
   if (manifestFile !== undefined) {
     const parsed = parseManifest(manifestFile.bytes);
     if (parsed.ok) manifest = parsed.manifest;
-    else if (options.integrity === "require-manifest")
+    else if (options.integrity === "require-manifest") {
       return empty({ path: MANIFEST_NAME, rule: "manifest-invalid", detail: parsed.error });
+    }
   } else if (options.integrity === "require-manifest") {
     return empty({
       path: MANIFEST_NAME,
@@ -124,9 +125,9 @@ export function loadBundle(
   if (manifest !== undefined) {
     report.commit = manifest.commit;
     if (options.integrity === "require-manifest") {
-      for (const problem of verifyManifest(manifest, visible)) {
+      for (const problem of verifyManifest(manifest, sorted)) {
         if (problem.problem === "missing-on-disk") report.missingOnDisk.push(problem.path);
-        else {
+        else if (!isHidden(problem.path)) {
           refusedPaths.add(problem.path);
           report.refusals.push({
             path: problem.path,
@@ -142,6 +143,7 @@ export function loadBundle(
   const reservedKept = reservedFiles.filter(keep);
   const pagesKept = pageFiles.filter(keep);
   for (const path of refusedPaths) attachmentPaths.delete(path);
+  report.attachments = attachmentPaths.size;
 
   // Link index over everything that is still in play.
   const linkIndex: LinkIndex = {
@@ -150,8 +152,10 @@ export function loadBundle(
     attachments: attachmentPaths,
     folders: new Set<string>(),
   };
-  for (const file of visible)
+  for (const file of sorted) {
+    if (isHidden(file.path)) continue;
     for (const folder of ancestors(folderOf(file.path))) linkIndex.folders.add(folder);
+  }
 
   // Reserved files.
   const reserved = new Map<string, ReservedFile>();
@@ -165,17 +169,34 @@ export function loadBundle(
       });
       continue;
     }
-    const parsed = parseReserved(file.path, decoded.text);
-    reserved.set(file.path, parsed);
-    report.degradations.push(...parsed.degradations);
+    try {
+      const parsed = parseReserved(file.path, decoded.text);
+      reserved.set(file.path, parsed);
+      report.degradations.push(...parsed.degradations);
+    } catch (error) {
+      report.degradations.push({
+        path: file.path,
+        code: "reserved-frontmatter-unparseable",
+        field: "frontmatter",
+        detail: `the file could not be read: ${(error as Error).message}`,
+      });
+    }
   }
 
   // Pages.
   const pages: Page[] = [];
   for (const file of pagesKept) {
-    const result = parsePage(file, { linkIndex, specText: options.specText });
-    if (result.ok) pages.push(result.page);
-    else report.refusals.push(result.refusal);
+    try {
+      const result = parsePage(file, { linkIndex, specText: options.specText });
+      if (result.ok) pages.push(result.page);
+      else report.refusals.push(result.refusal);
+    } catch (error) {
+      report.refusals.push({
+        path: file.path,
+        rule: "frontmatter-unparseable",
+        detail: `the page could not be read: ${(error as Error).message}`,
+      });
+    }
   }
 
   // Admission, then replacements, then what is reported about the admitted pages.
@@ -231,10 +252,7 @@ export function loadBundle(
     const subfolders = [...folderNames]
       .filter(
         (f) =>
-          f !== name &&
-          f.startsWith(prefix) &&
-          !f.slice(prefix.length).includes("/") &&
-          (name !== "" || f !== ""),
+          f !== "" && f !== name && f.startsWith(prefix) && !f.slice(prefix.length).includes("/"),
       )
       .sort(byPath);
     const indexPath = name === "" ? "index.md" : `${name}/index.md`;
@@ -247,7 +265,12 @@ export function loadBundle(
     };
     if (fileIndex !== undefined) folder.index = fileIndex;
     else {
-      const body = generateIndex(name, indexPages, subfolders);
+      // Subfolder links in a generated index are relative to the folder, as §8 shows them.
+      const body = generateIndex(
+        name,
+        indexPages,
+        subfolders.map((f) => f.slice(prefix.length)),
+      );
       folder.index = {
         kind: "index",
         path: indexPath,

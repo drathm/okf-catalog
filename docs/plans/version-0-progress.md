@@ -112,3 +112,64 @@ Reviewer: an independent Opus agent, read-only, probing the installed `yaml`, `m
 | F11 | "One test per row" named functions from later bites and bundled five behaviours in one row; free-text degradations make assertions brittle | The checklist is the rows whose functions live in the core, one test per rule, and the inline variants named (BOM, CRLF, fence at end of file, tampered and truncated bytes, empty file, `---\n---`, unclosed fence, a 0xFF byte with a new `not-utf8` rule, duplicate key, `!!timestamp`, alias cycle, `type: 123`, malformed verified entries); `Degradation.code` is a union; core tests set a far-off system time; `unknownTypes` is empty when no types are declared; a folder with only attachments is not a page folder |
 
 Also from the hand-walked pages: `StaleAfter.form` gains `unparseable` so provenance can say the recheck date is unreadable rather than absent.
+
+## Bite 3. Derived documents, engine adapter, search policy, `check`
+
+### Plan
+
+Scope: `src/derive/derived-document.ts`, `src/search/{engine,query,policy,search}.ts` (core); `src/engine/qmd.ts` (adapter); `src/fs/{walk,cache-dir,swap-tree}.ts` (edges); `src/commands/check.ts` and the `check` wiring in `src/cli.ts`; `bench/`; tests. Done when a question against the fixture bundles returns the right page through qmd's lexical search with the OKF filters and the relaxation ladder applied, from a test, with no model download; `okf-catalog check <dir>` prints the report and exits non-zero only on refusals; and the four benchmark numbers are recorded.
+
+The layering, settled by the bite 1 review: an adapter may import the core and its own files, never an edge. So the engine does not write files. The port is:
+
+```ts
+interface DerivedDocument { path; title; description?; type; tags; metadata: Record<string, string | string[] | number>; body }   // core
+interface Engine {
+  render(doc: DerivedDocument): { relPath: string; text: string };   // pure; the adapter owns the text shape and the path codec
+  index(dir: string): Promise<{ indexed: number; removed: number }>;  // the folder the command wrote the rendered documents into
+  lex(terms: string[], limit: number): Promise<EngineHit[]>;         // hits carry decoded bundle paths
+  status(): Promise<{ documents: number }>;
+  close(): Promise<void>;
+}
+```
+
+The command composes: load → `deriveDocument` per admitted page → `engine.render` → `fs/swap-tree` writes the rendered tree under the cache and swaps it in → `engine.index(dir)` → searches. `search/search.ts` receives the catalog, the engine, a request and the clock, and never touches a path.
+
+Modules and their one job:
+
+| Module | Job |
+|---|---|
+| `derive/derived-document.ts` | `deriveDocument(page) → DerivedDocument`: title, description, type, tags; the `okf_*` metadata map (`okf_type`, `okf_status`, `okf_tags`, `okf_stale_after` raw string, `okf_trust`, `okf_verified_by` latest verifier, `okf_source_count`); the body with a leading heading equal to the title removed (case- and whitespace-insensitive compare) |
+| `search/query.ts` | `normaliseQuestion(question) → { terms; dropped }`: lower-case, punctuation to spaces, a fixed English stopword list of about 120 words including question words, duplicates removed, at most twelve terms, each at least two characters; hyphenated tokens kept whole |
+| `search/policy.ts` | `poolSize(limit, filtered) → number` (`limit × 4` unfiltered; `max(limit × 10, 100)` filtered; cap 500); filters by `type` (case-insensitive exact), `topic` (folder prefix), staleness (`isOverdue` unless `include_stale`); rank keeps engine order and tie-breaks equal scores by trust (human-reviewed, machine-confirmed, unverified); `shape(page, hit, now) → SearchHit` |
+| `search/search.ts` | `search(catalog, engine, request, now) → SearchResponse`: the ladder (all terms; if fewer than `limit` hits, one query per term fused by reciprocal rank with k = 60, appended after the all-terms hits, de-duplicated), the pool, the filters, the one-time widening to the cap when every candidate was filtered out, `topicExhausted`, `strategy`, `considered`, `filteredOut` |
+| `engine/qmd.ts` | `QmdEngine`: `createStore({ dbPath, config: { collections: { [company]: { path: dir, pattern: "**/*.md" } } } })`; `render` emits `# <title>`, the description line, `Type: <type>`, `Tags: a, b`, a blank line and the body, with the metadata rendered as a `qmd: metadata:` frontmatter block only when `renderMetadataBlock` is true (off by default, D30); the path codec encodes any segment qmd would skip (`node_modules`, `.git`, `.cache`, `vendor`, `dist`, `build`, or dot-leading) with an `_` prefix and decodes it on the way back; `lex` joins the terms with spaces, calls `searchLex` with no collection filter, maps `displayPath` by removing the single company segment and decoding; a read-write lock makes `lex` wait while `index` runs (D28); `status` from `getStatus()`; `close` closes the store |
+| `fs/walk.ts` | `walkBundle(root, caps) → { files: BundleFile[]; refusals: Refusal[] }`: `lstat` every entry, refuse symbolic links (`symlink`) and anything whose real path leaves the root (`path-escape`), refuse a file over `caps.fileBytes` without reading it (`oversize`), stop and refuse the bundle beyond `caps.files` or `caps.treeBytes` (reported as `fatal` by the loader through `walkRefusals`? No: the walker returns `tooMany` and `tooLarge` flags the command turns into the same fatal refusals the core would); never follows a path it did not list; skips nothing itself, since hidden handling is the core's |
+| `fs/cache-dir.ts` | `cacheRoot() → string` (`$XDG_CACHE_HOME`, else `~/Library/Caches` on macOS, else `~/.cache`), `companyCache(root, company) → { source, derived, dbPath, state }`; `ensureCache(dir)` refuses a folder not owned by the user or writable by group or others |
+| `fs/swap-tree.ts` | `swapTree(target, write: (stagingDir) => Promise<void>)`: write into a fresh sibling folder, rename the live folder aside, rename the new one in, delete the old one; on failure, leave the live folder untouched |
+| `commands/check.ts` | `okf-catalog check <dir> [--dev] [--integrity none] [--spec-text 2026-08-15\|2026-08-21] [--admit stable,deprecated] [--types a,b]`: walk → load → `renderReport` to stdout (this command's stdout is for people, not a protocol) → exit 1 on any refusal or fatal, else 0; `--json` prints the report as JSON |
+| `bench/` | `fetch-corpus.sh` clones the four public OKF repositories at pinned commits into `bench/corpus/` (gitignored); `questions.json` holds the twenty-five public-corpus questions with gold paths; `run.ts` loads the corpus, derives, indexes and runs the questions in four configurations (ladder on or off, metadata block on or off), printing hit@1, hit@3 and MRR |
+
+Tests first: golden derived documents and golden rendered text for the behaviours fixture, including the duplicate-heading rule and the codec; `normaliseQuestion` on sentences; `policy` pool sizes, filters, tie-break and shaping on synthetic hits; `walk` on a hostile tree generated at test time (a symbolic link, a path escape through a link to a folder outside the root, an oversize file, too many files); `swap-tree` with a failing writer; `cache-dir` resolution and the ownership check; an integration test that derives the fixtures into a temp cache, indexes them with a real qmd store and asserts the gold page for ten keyword questions and five sentence questions, recording the rung that answered and asserting that at least one sentence fails on the all-terms rung alone; the reindex lock under a concurrent search; `check` on the four fixtures with expected exit codes and a `--json` round trip.
+
+Measure and record: index time and database size for the fixtures and for the public corpus; the four benchmark runs.
+
+Review before build: an independent review of this plan. Review after build: an independent review of `qmd.ts`, `search.ts`, `walk.ts` and `swap-tree.ts`.
+
+### Build review, round 1 (Grok)
+
+Reviewer: Grok Build (grok-4.7), headless, read-only, with the specification fetched; 21 turns, about fifteen minutes, about $0.61. Verdict: not ready, on two high findings. Dispositions:
+
+| Finding | Severity | Disposition |
+|---|---|---|
+| A `__proto__` frontmatter key would abort the load | high | Applied in substance: the source map is a null-prototype object (probed: the assignment does not throw as the review said, the language drops the value silently, which is still a bug), and the loader now catches any exception from a page or reserved file and records a refusal or degradation instead |
+| A generated index below the root linked subfolders by their full path | high | Applied: relative names are passed to the generator; a nested-folder test added |
+| Files skipped before manifest verification were reported missing; refused attachments stayed in the count | medium | Applied: verification runs over every file on disk, the attachment count is taken after refusals |
+| Hidden files and `.qmd` never counted toward the caps | medium | Applied: caps are measured over everything that arrived; an oversize engine file carries both refusals |
+| Zod drops a `__proto__` manifest key silently | medium | Applied: the raw key is rejected as `manifest-invalid`; `buildManifest` refuses an unsafe path |
+| Percent-decoding ran after dot handling; `%2F` became a separator | medium | Applied: decode first, then dot rules, and a decoded separator is broken |
+| An undefined reference link was deleted | medium | Not a defect: probed, CommonMark reads `[a][b]` with no definition as plain text, so no link exists to keep; a test pins the behaviour |
+| Footnote ids are lower-cased by GFM while source ids are not | medium | Applied: case-insensitive join |
+| The text report dropped degradation paths and details | medium | Applied: one line per degradation, as for refusals |
+| Skipping integrity was silent | medium | Applied: `report.integrity` and a sentence in the report |
+
+Of the nineteen missing tests the review listed, seventeen were added (one bad page not taking the load down is covered by the refused bundle; the determinism run belongs to the Opus review's probes). 148 tests pass.

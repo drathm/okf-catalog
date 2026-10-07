@@ -41,11 +41,9 @@ export function readBody(body: string): BodyFacts {
     inlineHtml: 0,
     hasScriptLike: false,
   };
-  const pending: Array<{ identifier: string; text: string; position: number }> = [];
-  let order = 0;
+  const pending: Array<{ identifier: string; position: number }> = [];
 
   const visit = (node: Nodes, parent: Nodes | undefined, inSkipped: boolean): void => {
-    order += 1;
     switch (node.type) {
       case "definition":
         definitions.set(node.identifier, node.url);
@@ -63,11 +61,7 @@ export function readBody(body: string): BodyFacts {
         facts.links.push({ url: node.url, text: mdastToString(node) });
         break;
       case "linkReference":
-        pending.push({
-          identifier: node.identifier,
-          text: mdastToString(node),
-          position: facts.links.length,
-        });
+        pending.push({ identifier: node.identifier, position: facts.links.length });
         facts.links.push({ url: "", text: mdastToString(node) });
         break;
       case "footnoteReference":

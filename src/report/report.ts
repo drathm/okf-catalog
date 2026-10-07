@@ -17,10 +17,12 @@ export function renderReport(report: Report): string {
     lines.push("Refused:");
     for (const r of report.refusals) lines.push(`  ${r.path}: ${r.rule} (${r.detail})`);
   }
+  if (report.integrity === "skipped") {
+    lines.push("Integrity was not checked: the manifest was not required for this load.");
+  }
   if (report.degradations.length > 0) {
-    const counts = new Map<string, number>();
-    for (const d of report.degradations) counts.set(d.code, (counts.get(d.code) ?? 0) + 1);
-    lines.push(`Degraded: ${[...counts.entries()].map(([code, n]) => `${code} ×${n}`).join(", ")}`);
+    lines.push("Degraded:");
+    for (const d of report.degradations) lines.push(`  ${d.path}: ${d.code} (${d.detail})`);
   }
   if (report.unknownTypes.length > 0)
     lines.push(`Undeclared types: ${report.unknownTypes.join(", ")}`);

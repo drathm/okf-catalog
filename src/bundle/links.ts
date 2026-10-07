@@ -28,18 +28,19 @@ export function resolveLink(url: string, fromPath: string, index: LinkIndex): Re
   const base = absolute ? [] : fromPath.split("/").slice(0, -1);
   const stack = [...base];
   for (const rawSegment of withoutFragment.split("/")) {
-    if (rawSegment === "" || rawSegment === ".") continue;
-    if (rawSegment === "..") {
-      if (stack.length === 0) return { kind: "broken" };
-      stack.pop();
-      continue;
-    }
     let segment: string;
     try {
       segment = decodeURIComponent(rawSegment);
     } catch {
       return { kind: "broken" };
     }
+    if (segment === "" || segment === ".") continue;
+    if (segment === "..") {
+      if (stack.length === 0) return { kind: "broken" };
+      stack.pop();
+      continue;
+    }
+    if (/[/\\\0]/.test(segment)) return { kind: "broken" };
     stack.push(segment);
   }
   const target = stack.join("/");

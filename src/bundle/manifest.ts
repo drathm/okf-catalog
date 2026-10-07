@@ -7,7 +7,11 @@ export const MANIFEST_NAME = "manifest.json";
 /** A bundle-relative path: no leading slash, no backslash, no NUL, no empty, `.` or `..` segment. */
 export function isSafeRelativePath(path: string): boolean {
   if (path.length === 0 || path.startsWith("/") || /[\\\0]/.test(path)) return false;
-  return path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
+  return path
+    .split("/")
+    .every(
+      (segment) => segment !== "" && segment !== "." && segment !== ".." && segment !== "__proto__",
+    );
 }
 
 const PathKey = z.string().refine(isSafeRelativePath, "not a safe bundle-relative path");
@@ -40,6 +44,15 @@ export function parseManifest(
   } catch (error) {
     return { ok: false, error: `manifest is not JSON: ${(error as Error).message}` };
   }
+  if (typeof json === "object" && json !== null && Object.hasOwn(json, "files")) {
+    const files = (json as { files: unknown }).files;
+    if (typeof files === "object" && files !== null && Object.keys(files).includes("__proto__")) {
+      return {
+        ok: false,
+        error: "manifest invalid at files: a path key named __proto__ is not allowed",
+      };
+    }
+  }
   const result = ManifestSchema.safeParse(json);
   if (!result.success) {
     const first = result.error.issues[0];
@@ -57,6 +70,10 @@ export function buildManifest(
   files: BundleFile[],
   meta: { commit: string; publishedAt: string },
 ): Manifest {
+  for (const file of files) {
+    if (!isSafeRelativePath(file.path))
+      throw new Error(`cannot build a manifest for an unsafe path: ${file.path}`);
+  }
   const entries = files
     .filter((f) => f.path !== MANIFEST_NAME)
     .map((f) => [f.path, { sha256: sha256Hex(f.bytes), bytes: f.bytes.length }] as const)
