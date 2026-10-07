@@ -34,3 +34,19 @@ describe("snippet", () => {
     expect(snippet({ prose: "Short text." }, ["short"], 200)).toBe("Short text.");
   });
 });
+
+describe("snippet: the bite 4 build review", () => {
+  it("clips the description fallback to the width", () => {
+    const s = snippet(
+      { prose: "nothing relevant here", description: "d".repeat(500) },
+      ["zzzz"],
+      40,
+    );
+    expect(s.length).toBeLessThanOrEqual(41);
+  });
+  it("matches case-insensitively without shifting positions when lower-casing changes the length", () => {
+    const prose = `${"İ".repeat(20)}stanbul retail office hours are long and the text continues for a while here.`;
+    const s = snippet({ prose }, ["retail"], 30);
+    expect(s).toContain("retail");
+  });
+});

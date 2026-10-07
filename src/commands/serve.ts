@@ -34,6 +34,8 @@ exit codes: 0 the client closed the connection; 2 usage error or unsupported hos
 `;
 
 const LEVELS = new Set<Level>(["error", "warn", "info", "debug"]);
+/** How long a signal waits for in-flight calls before the process ends anyway (the lock dies with it). */
+const SHUTDOWN_DEADLINE_MS = 5_000;
 
 /**
  * Reserves stdout for the protocol (decision D36). Returns a stream bound to the original stdout writer for the
@@ -192,7 +194,10 @@ export async function runServe(argv: string[]): Promise<number> {
             uid: process.getuid?.() ?? 0,
             platform: process.platform,
           });
-          if (!ensured.ok) throw new Error(ensured.problem);
+          if (!ensured.ok) {
+            log.error("serve.refusing", { problem: ensured.detail });
+            throw new Error(ensured.problem);
+          }
           sweepPrivate(dir, processAlive);
           const lock = acquireLock(dir, clock());
           let work = dir;
@@ -242,6 +247,11 @@ export async function runServe(argv: string[]): Promise<number> {
     finished = resolve;
   });
   let closing: Promise<void> | undefined;
+  let signals = 0;
+  const cleanup = (): void => {
+    lockHandle?.close();
+    if (privateWork !== undefined) rmSync(privateWork, { recursive: true, force: true });
+  };
   const shutdown = (reason: string): Promise<void> => {
     if (closing !== undefined) return closing;
     closing = (async () => {
@@ -251,17 +261,34 @@ export async function runServe(argv: string[]): Promise<number> {
       } catch (error) {
         log.error("transport.error", { error: (error as Error).message });
       }
-      lockHandle?.close();
-      if (privateWork !== undefined) rmSync(privateWork, { recursive: true, force: true });
+      cleanup();
       await handle.close().catch(() => undefined);
       finished?.();
     })();
     return closing;
   };
-  process.stdin.on("end", () => void shutdown("stdin ended"));
-  process.stdin.on("close", () => void shutdown("stdin closed"));
+  /** A signal ends the process: the drain gets a deadline, and a second signal ends it at once. */
+  const onSignal = (signal: string): void => {
+    signals += 1;
+    if (signals > 1) {
+      cleanup();
+      process.exit(130);
+    }
+    const deadline = setTimeout(() => {
+      log.error("serve.shutdown", { reason: `${signal}: the drain did not finish in time` });
+      cleanup();
+      process.exit(0);
+    }, SHUTDOWN_DEADLINE_MS);
+    deadline.unref();
+    void shutdown(signal).then(() => {
+      clearTimeout(deadline);
+      process.exit(0);
+    });
+  };
+  process.stdin.on("end", () => void shutdown("stdin ended").then(() => process.exit(0)));
+  process.stdin.on("close", () => void shutdown("stdin closed").then(() => process.exit(0)));
   for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
-    process.on(signal, () => void shutdown(signal));
+    process.on(signal, () => onSignal(signal));
   }
   process.on("exit", () => {
     // Synchronous last resort: a crash must not leave a private copy behind.

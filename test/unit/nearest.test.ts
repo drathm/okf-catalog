@@ -36,3 +36,16 @@ describe("nearestPaths", () => {
     expect(performance.now() - started).toBeLessThan(500);
   });
 });
+
+describe("nearestPaths: cost (bite 4 build review)", () => {
+  it("answers within a small budget against a bundle at the file cap", () => {
+    const many = Array.from(
+      { length: 20_000 },
+      (_, i) => `folder${i % 40}/section${i % 7}/page-${i}.md`,
+    );
+    const started = performance.now();
+    const found = nearestPaths(many, "folder3/section2/page-9999.md".replace("9999", "999x"));
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(found).toHaveLength(3);
+  });
+});

@@ -43,19 +43,24 @@ export function snippet(
   width = 200,
 ): string {
   const prose = page.prose;
-  if (prose === undefined) return page.description ?? "";
+  const fallback = (): string => {
+    const description = page.description ?? "";
+    if (description.length > 0)
+      return description.length <= width ? description : clip(description, 0, width);
+    return prose === undefined ? "" : clip(prose, 0, width);
+  };
+  if (prose === undefined) return fallback();
   if (prose.length <= width) return prose;
-  const lower = prose.toLowerCase();
+  // Lower-casing can change a string's length (İ → i̇); when it does, match on the original case instead.
+  const lowered = prose.toLowerCase();
+  const lower = lowered.length === prose.length ? lowered : prose;
   const matches: Array<{ at: number; term: number }> = [];
   terms.forEach((term, index) => {
     const t = term.toLowerCase();
     if (t.length === 0) return;
     for (const at of positions(lower, t)) matches.push({ at, term: index });
   });
-  if (matches.length === 0) {
-    if (page.description !== undefined && page.description.length > 0) return page.description;
-    return clip(prose, 0, width);
-  }
+  if (matches.length === 0) return fallback();
   matches.sort((a, b) => a.at - b.at);
   let bestStart = matches[0]?.at ?? 0;
   let bestCount = 0;

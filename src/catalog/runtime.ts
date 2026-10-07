@@ -16,7 +16,7 @@ export type RefreshOutcome =
   | { outcome: "swapped"; generation: Generation }
   /** The reloaded bundle was refused; the previous generation stays. */
   | { outcome: "fatal"; report: Report }
-  /** Something threw; the previous generation stays, and the index was re-aligned with it. */
+  /** Something threw; the previous generation stays. The index is re-aligned with it when that is possible; when it is not, the runtime refuses until a refresh succeeds. */
   | { outcome: "failed"; error: string };
 
 export interface RuntimeStatus {

@@ -1,5 +1,13 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -88,4 +96,26 @@ describe("privateDir and sweepPrivate", () => {
     expect(existsSync(join(work, "private", String(process.pid)))).toBe(true);
     rmSync(work, { recursive: true, force: true });
   });
+});
+
+describe("acquireLock: owner file failure (bite 4 build review)", () => {
+  it.skipIf(process.getuid?.() === 0)(
+    "releases the lock when the owner file cannot be written",
+    () => {
+      const dir = mkdtempSync(join(tmpdir(), "okf-catalog-ownerfail-"));
+      // Take and release once so lock.sqlite exists, then forbid new files in the folder.
+      const first = acquireLock(dir, new Date());
+      if (first.kind === "exclusive") first.close();
+      chmodSync(dir, 0o500);
+      try {
+        expect(() => acquireLock(dir, new Date())).toThrow();
+      } finally {
+        chmodSync(dir, 0o700);
+      }
+      const after = acquireLock(dir, new Date());
+      expect(after.kind).toBe("exclusive");
+      if (after.kind === "exclusive") after.close();
+      rmSync(dir, { recursive: true, force: true });
+    },
+  );
 });

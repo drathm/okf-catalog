@@ -1,4 +1,5 @@
-import { existsSync, readdirSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
@@ -97,27 +98,53 @@ describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
     expect(existsSync(join(companyDir(b), "private"))).toBe(false);
   });
 
-  it("the purity assertion fails on a server that leaks to stdout (negative control)", async () => {
-    const b = box();
-    const run = rawServer(
-      b,
-      [],
-      ["--import", join(import.meta.dirname, "..", "helpers", "noisy-import.mjs")],
-    );
-    run.send(INITIALIZE);
-    await run.waitFor(1);
-    await new Promise((r) => setTimeout(r, 200));
-    await run.end();
-    expect(impureLines(run.stdout()).length).toBeGreaterThan(0);
+  it("catches a writer planted after its guard, and the purity assertion fails on a writer that bypasses the guard", async () => {
+    const helpers = join(import.meta.dirname, "..", "helpers");
+    const late = rawServer(box(), [], ["--import", join(helpers, "noisy-late.mjs")]);
+    late.send(INITIALIZE);
+    await late.waitFor(1);
+    await new Promise((r) => setTimeout(r, 900));
+    const lateExit = await late.end();
+    expect(lateExit.code).toBe(0);
+    expect(impureLines(late.stdout())).toEqual([]);
+    expect(late.stderr()).toContain("late leak through process.stdout.write");
+    const bypass = rawServer(box(), [], ["--import", join(helpers, "noisy-captured.mjs")]);
+    bypass.send(INITIALIZE);
+    await bypass.waitFor(1);
+    await new Promise((r) => setTimeout(r, 900));
+    await bypass.end();
+    expect(impureLines(bypass.stdout())).toEqual(["leak through a captured writer"]);
   });
 
-  it("survives SIGTERM during the first load and leaves a cache the next run can use", async () => {
-    const b = box();
+  it("exits cleanly on SIGTERM during the first load and leaves a cache the next run can use", async () => {
+    // A bundle big enough that the load is still running when the signal lands.
+    const bundle = join(mkdtempSync(join(tmpdir(), "okf-catalog-bigbundle-")), "kb");
+    mkdirSync(bundle);
+    for (let i = 0; i < 1500; i++) {
+      writeFileSync(
+        join(bundle, `p${i}.md`),
+        `---\ntype: Note\ntitle: Page ${i}\n---\n\n${"word ".repeat(300)}\n`,
+      );
+    }
+    const b = box(
+      "spec-example",
+      `company: fixture\nsource:\n  local: ${bundle}\nserve:\n  dev: true\n`,
+    );
     const run = rawServer(b);
     run.send(INITIALIZE);
+    await run.waitFor(1);
+    run.send(INITIALIZED);
+    run.send({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "status", arguments: {} },
+    });
+    await new Promise((r) => setTimeout(r, 150));
     run.child.kill("SIGTERM");
     const exit = await run.end();
-    expect([0, null]).toContain(exit.code);
+    expect(exit.code).toBe(0);
+    expect(impureLines(run.stdout())).toEqual([]);
     const again = rawServer(b);
     again.send(INITIALIZE);
     await again.waitFor(1);
@@ -129,8 +156,28 @@ describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
       params: { name: "status", arguments: {} },
     });
     const status = await again.waitFor(2);
-    expect(JSON.stringify(status)).toContain('"admitted":9');
+    expect(JSON.stringify(status)).toContain('"admitted":1500');
     await again.end();
+  });
+
+  it("exits at once on a second signal while the first shutdown is still draining", async () => {
+    const b = box();
+    const run = rawServer(b);
+    run.send(INITIALIZE);
+    await run.waitFor(1);
+    run.send(INITIALIZED);
+    run.send({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "status", arguments: {} },
+    });
+    await run.waitFor(2);
+    run.child.kill("SIGTERM");
+    run.child.kill("SIGTERM");
+    const exit = await run.end(5_000);
+    expect(exit.signal).not.toBe("SIGKILL");
+    expect([0, 130]).toContain(exit.code);
   });
 
   it("runs in a refusing mode when the configuration is missing, naming the fix in every tool", async () => {
@@ -150,6 +197,27 @@ describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
     expect(JSON.stringify(r)).toContain("nowhere.yaml");
     await run.end();
     expect(impureLines(run.stdout())).toEqual([]);
+  });
+
+  it("names the fix but never the cache path when the cache folder is unusable", async () => {
+    const b = box();
+    chmodSync(b.cacheRoot, 0o777);
+    const run = rawServer(b);
+    run.send(INITIALIZE);
+    await run.waitFor(1);
+    run.send(INITIALIZED);
+    run.send({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "status", arguments: {} },
+    });
+    const r = await run.waitFor(2);
+    expect(JSON.stringify(r)).toContain('"isError":true');
+    expect(JSON.stringify(r)).not.toContain(b.cacheRoot);
+    expect(JSON.stringify(r)).toMatch(/writable|sticky/);
+    await run.end();
+    expect(run.stderr()).toContain(b.cacheRoot);
   });
 
   it("falls back to a private folder when another process holds the company lock, and removes it on exit", async () => {

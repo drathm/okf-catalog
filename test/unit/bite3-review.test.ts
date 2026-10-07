@@ -114,3 +114,16 @@ describe("the core has no clock, environment, network or console of its own", ()
     }
   });
 });
+
+describe("paths and types with line breaks (bite 4 build review)", () => {
+  it("refuses a bundle path that carries a control or line-separator character", () => {
+    const files = [
+      { path: "notes/evil\npage.md", bytes: Buffer.from("---\ntype: Note\n---\n") },
+      { path: "notes/sep page.md", bytes: Buffer.from("---\ntype: Note\n---\n") },
+      { path: "notes/ok.md", bytes: Buffer.from("---\ntype: Note\n---\n") },
+    ];
+    const { report, catalog } = loadBundle("h", files, options({ integrity: "none" }), NOW);
+    expect(catalog.pages.size).toBe(1);
+    expect(report.refusals.map((r) => r.rule)).toEqual(["path-escape", "path-escape"]);
+  });
+});

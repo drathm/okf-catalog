@@ -1,7 +1,5 @@
 #!/usr/bin/env node
 import { createRequire } from "node:module";
-import { CHECK_USAGE, runCheck } from "./commands/check.js";
-import { runServe, SERVE_USAGE } from "./commands/serve.js";
 
 const USAGE = `usage: okf-catalog <command> [options]
 
@@ -14,12 +12,6 @@ options:
   --help      print this text
 `;
 
-function version(): string {
-  const require = createRequire(import.meta.url);
-  const pkg = require("../package.json") as { version: string };
-  return pkg.version;
-}
-
 const MIN_NODE: [number, number] = [22, 12];
 
 function nodeIsSupported(): boolean {
@@ -27,10 +19,23 @@ function nodeIsSupported(): boolean {
   return major > MIN_NODE[0] || (major === MIN_NODE[0] && minor >= MIN_NODE[1]);
 }
 
+function version(): string {
+  const require = createRequire(import.meta.url);
+  const pkg = require("../package.json") as { version: string };
+  return pkg.version;
+}
+
+/** The host is checked before any command module, and so any native binding, is loaded. */
 async function main(argv: string[]): Promise<number> {
   if (!nodeIsSupported()) {
     process.stderr.write(
       `okf-catalog needs Node ${MIN_NODE[0]}.${MIN_NODE[1]} or later; this is ${process.versions.node}\n`,
+    );
+    return 2;
+  }
+  if (process.platform === "win32") {
+    process.stderr.write(
+      "Windows is not a version 0 host: the cache folder's ownership and mode checks assume POSIX\n",
     );
     return 2;
   }
@@ -48,18 +53,22 @@ async function main(argv: string[]): Promise<number> {
     case "help":
       process.stdout.write(USAGE);
       return 0;
-    case "check":
+    case "check": {
+      const { CHECK_USAGE, runCheck } = await import("./commands/check.js");
       if (rest.includes("--help")) {
         process.stdout.write(CHECK_USAGE);
         return 0;
       }
       return runCheck(rest, io);
-    case "serve":
+    }
+    case "serve": {
+      const { SERVE_USAGE, runServe } = await import("./commands/serve.js");
       if (rest.includes("--help")) {
         process.stdout.write(SERVE_USAGE);
         return 0;
       }
       return runServe(rest);
+    }
     default:
       process.stderr.write(
         `${command === undefined ? "a command is required" : `unknown command or option: ${command}`}\n${USAGE}`,

@@ -31,22 +31,33 @@ function sharedLeadingSegments(a: string[], b: string[]): number {
  * The served paths nearest to one that was not found: more shared leading folders first, then the smaller edit
  * distance between what remains, then path order. Never more than `n`.
  */
+/** Full edit distances computed per call; beyond this the cheaper length bound decides, so a miss on a huge bundle stays fast. */
+const DISTANCE_BUDGET = 2_000;
+
 export function nearestPaths(paths: Iterable<string>, path: string, n = 3): string[] {
   const wanted = path.slice(0, COMPARE_CAP);
   const wantedSegments = wanted.split("/");
-  const ranked = [...paths]
+  // Shared folders first, then the length difference, which is a lower bound on the edit distance: the full
+  // distance is computed for the most promising candidates only.
+  const prepared = [...paths]
     .map((candidate) => {
       const segments = candidate.split("/");
       const shared = sharedLeadingSegments(segments, wantedSegments);
-      const distance = levenshtein(
-        segments.slice(shared).join("/").slice(0, COMPARE_CAP),
-        wantedSegments.slice(shared).join("/").slice(0, COMPARE_CAP),
-      );
-      return { candidate, shared, distance };
+      const a = segments.slice(shared).join("/").slice(0, COMPARE_CAP);
+      const b = wantedSegments.slice(shared).join("/").slice(0, COMPARE_CAP);
+      return { candidate, shared, a, b, bound: Math.abs(a.length - b.length) };
     })
     .sort(
-      (x, y) =>
-        y.shared - x.shared || x.distance - y.distance || byCodeUnit(x.candidate, y.candidate),
+      (x, y) => y.shared - x.shared || x.bound - y.bound || byCodeUnit(x.candidate, y.candidate),
     );
+  const ranked = prepared.map((p, i) => ({
+    candidate: p.candidate,
+    shared: p.shared,
+    distance: i < DISTANCE_BUDGET ? levenshtein(p.a, p.b) : p.bound + COMPARE_CAP,
+  }));
+  ranked.sort(
+    (x, y) =>
+      y.shared - x.shared || x.distance - y.distance || byCodeUnit(x.candidate, y.candidate),
+  );
   return ranked.slice(0, Math.max(0, n)).map((r) => r.candidate);
 }

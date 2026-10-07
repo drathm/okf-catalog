@@ -13,6 +13,7 @@ import {
   RESULT_BUDGET,
   SearchOutputSchema,
   StatusOutputSchema,
+  statusSummary,
 } from "../../src/catalog/outputs.js";
 import type { Generation } from "../../src/catalog/runtime.js";
 import type { SearchResponse } from "../../src/search/search.js";
@@ -176,12 +177,99 @@ describe("projections parse under their strict schemas and are JSON-safe", () =>
     expect(() => StatusOutputSchema.parse(out)).not.toThrow();
     expect(jsonSafe(out)).toBe(true);
     expect(out.loadedAt).toBe(NOW.toISOString());
-    expect(out.engine.encodedFolders).toEqual(["dist"]);
+    expect(out.engine.encodedFolders).toEqual({ count: 1, first: ["dist"] });
     expect(out.refusals.count).toBe(report.refusals.length);
     expect(out.degradations.first.length).toBeLessThanOrEqual(50);
     expect(out.degradations.count).toBe(report.degradations.length);
     expect(out.fatal).toBeNull();
     expect(out.refusing).toBeNull();
     expect(JSON.stringify(out)).not.toContain("/Users/");
+  });
+});
+
+describe("result bounds (bite 4 build review)", () => {
+  it("keeps a catalog's serialized output within the budget however many pages the folder holds", () => {
+    const files = [];
+    for (let i = 0; i < 300; i++) {
+      files.push({
+        path: `big/p${String(i).padStart(3, "0")}.md`,
+        bytes: Buffer.from(
+          `---\ntype: Note\ntitle: Page ${i}\ndescription: ${"d".repeat(500)}\n---\n\nbody\n`,
+        ),
+      });
+    }
+    const big = loadBundle(
+      "big",
+      files,
+      {
+        admit: ["stable"],
+        dev: false,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    ).catalog;
+    const out = projectCatalog(big, "big", 0, 40_000);
+    if (out === undefined) throw new Error("folder missing");
+    expect(JSON.stringify(out).length).toBeLessThanOrEqual(40_000);
+    expect(out.entries.length).toBeLessThan(300);
+    expect(out.truncated).toBe(true);
+    expect(out.nextOffset).toBeDefined();
+    const rest = projectCatalog(big, "big", out.nextOffset ?? 0, 40_000);
+    expect(rest?.entries.length ?? 0).toBeGreaterThan(0);
+    expect(rest?.entries[0]?.path).not.toBe(out.entries[0]?.path);
+  });
+
+  it("keeps a page's text block within the budget, framing lines included, and never splits a surrogate pair", () => {
+    const base = page("terms/alpha.md");
+    const long: Page = { ...base, body: `${"😀".repeat(30_000)}\n` };
+    const out = projectPage(long, NOW, 0, 1_000);
+    const text = `${out.citation}\n${out.notice}\n${out.body}`;
+    expect(text.length).toBeLessThanOrEqual(1_000);
+    expect(out.body).not.toMatch(/[\ud800-\udbff]$/);
+    expect(out.truncated).toBe(true);
+    const next = projectPage(long, NOW, out.nextOffset ?? 0, 1_000);
+    expect(next.body).not.toMatch(/^[\udc00-\udfff]/);
+  });
+
+  it("drops an oversize frontmatter from the provenance rather than returning it whole", () => {
+    const base = page("terms/alpha.md");
+    const bloated: Page = {
+      ...base,
+      frontmatter: { ...base.frontmatter, blob: "x".repeat(100_000) },
+    };
+    const out = projectPage(bloated, NOW, 0, RESULT_BUDGET);
+    expect(JSON.stringify(out.provenance?.frontmatter ?? {}).length).toBeLessThan(10_000);
+    expect(JSON.stringify(out).length).toBeLessThanOrEqual(RESULT_BUDGET + 5_000);
+  });
+
+  it("caps the engine's encoded folders in status like the other lists", () => {
+    const many: Generation = {
+      ...generation,
+      index: {
+        ...generation.index,
+        encodedFolders: Array.from({ length: 120 }, (_, i) => `dist${i}`),
+      },
+    };
+    const out = projectStatus(
+      many,
+      { lock: "exclusive" },
+      { company: "b", source: "./kb", dev: false, limitDefault: 8, resultBudget: RESULT_BUDGET },
+    );
+    expect(out.engine.encodedFolders.count).toBe(120);
+    expect(out.engine.encodedFolders.first).toHaveLength(50);
+  });
+
+  it("puts the last attempt and the list counts on the status text line", () => {
+    const out = projectStatus(
+      generation,
+      { lock: "exclusive", lastAttempt: { at: NOW, outcome: "failed" } },
+      { company: "b", source: "./kb", dev: false, limitDefault: 8, resultBudget: RESULT_BUDGET },
+    );
+    const line = statusSummary(out);
+    expect(line).toContain("last attempt failed at 2026-10-06T12:00:00.000Z");
+    expect(line).toMatch(/\d+ broken links?/);
+    expect(line).toMatch(/\d+ unknown types?/);
   });
 });

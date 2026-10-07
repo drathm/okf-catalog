@@ -18,7 +18,7 @@ import {
   statusSummary,
 } from "../catalog/outputs.js";
 import type { Generation, Runtime, ToolOptions } from "../catalog/runtime.js";
-import { DATA_SENTENCE } from "../catalog/text.js";
+import { DATA_SENTENCE, safe } from "../catalog/text.js";
 import type { Log } from "../log.js";
 import type { Engine } from "../search/engine.js";
 import { search } from "../search/search.js";
@@ -27,6 +27,8 @@ type ToolResult = {
   content: Array<{ type: "text"; text: string }>;
   structuredContent?: Record<string, unknown>;
   isError?: boolean;
+  /** Extra fields for the `tool.call` log record, stripped before the result leaves. */
+  logFields?: Record<string, number>;
 };
 
 const FOLDER_LIST_CAP = 50;
@@ -48,7 +50,9 @@ const normaliseFolder = (value: string): string => value.trim().replace(/^\/+|\/
 const normalisePath = (value: string): string => value.trim().replace(/^(\.\/|\/)/, "");
 
 function folderList(catalog: Catalog): string {
-  const names = [...catalog.folders.keys()].sort(byCodeUnit).map((f) => (f === "" ? "(root)" : f));
+  const names = [...catalog.folders.keys()]
+    .sort(byCodeUnit)
+    .map((f) => (f === "" ? "(root)" : safe(f)));
   const shown = names.slice(0, FOLDER_LIST_CAP).join(", ");
   return names.length > FOLDER_LIST_CAP ? `${shown} … (${names.length} folders)` : shown;
 }
@@ -57,7 +61,7 @@ function refused(generation: Generation): ToolResult | undefined {
   const fatal = generation.report.fatal;
   if (fatal === undefined) return undefined;
   return fail(
-    `the bundle was refused and nothing is served: ${fatal.rule}${fatal.path ? ` (${fatal.path})` : ""}: ${fatal.detail}`,
+    `the bundle was refused and nothing is served: ${safe(fatal.rule)}${fatal.path ? ` (${safe(fatal.path)})` : ""}: ${safe(fatal.detail)}`,
   );
 }
 
@@ -121,14 +125,15 @@ export function registerTools(
         );
       }
       try {
-        const result = await runtime.lease<ToolResult>(async (generation, engine) =>
-          fn(args, generation, engine),
+        const { logFields, ...result } = await runtime.lease<ToolResult>(
+          async (generation, engine) => fn(args, generation, engine),
         );
         const hits = (result.structuredContent as { hits?: unknown[] } | undefined)?.hits?.length;
         log?.info("tool.call", {
           tool,
           ms: Math.round(performance.now() - started),
           ...(hits === undefined ? {} : { hits }),
+          ...(logFields ?? {}),
           ...(result.isError === true ? { error: "answered-with-error" } : {}),
         });
         return result;
@@ -184,7 +189,7 @@ export function registerTools(
         type = types.find((t) => t.toLowerCase() === wantedType.toLowerCase());
         if (type === undefined) {
           return fail(
-            `no page has the type ${JSON.stringify(wantedType)}; the types in use are: ${types.join(", ") || "(none)"}`,
+            `no page has the type ${JSON.stringify(safe(wantedType))}; the types in use are: ${types.map(safe).join(", ") || "(none)"}`,
           );
         }
       }
@@ -194,7 +199,7 @@ export function registerTools(
         topic = normaliseFolder(wantedTopic);
         if (topic.length > 0 && !generation.catalog.folders.has(topic)) {
           return fail(
-            `there is no folder ${JSON.stringify(topic)}; the folders are: ${folderList(generation.catalog)}`,
+            `there is no folder ${JSON.stringify(safe(topic))}; the folders are: ${folderList(generation.catalog)}`,
           );
         }
         if (topic.length === 0) topic = undefined;
@@ -218,7 +223,10 @@ export function registerTools(
         );
       }
       const output = projectSearch(response, generation.catalog, now, { dev: options.dev });
-      return ok([output.summary, ...output.hits.map((h) => h.citation)].join("\n"), output);
+      return {
+        ...ok([output.summary, ...output.hits.map((h) => h.citation)].join("\n"), output),
+        logFields: { engineQueries: response.engineQueries, rowsFetched: response.rowsFetched },
+      };
     }),
   );
 
@@ -267,7 +275,7 @@ export function registerTools(
       }
       const nearest = nearestPaths(servedPaths(generation.catalog), path);
       return fail(
-        `no page at ${JSON.stringify(path)}; the nearest served paths are: ${nearest.join(", ") || "(none)"}`,
+        `no page at ${JSON.stringify(safe(path))}; the nearest served paths are: ${nearest.map(safe).join(", ") || "(none)"}`,
       );
     }),
   );
@@ -307,14 +315,14 @@ export function registerTools(
       );
       if (output === undefined) {
         return fail(
-          `there is no folder ${JSON.stringify(folder)}; the folders are: ${folderList(generation.catalog)}`,
+          `there is no folder ${JSON.stringify(safe(folder))}; the folders are: ${folderList(generation.catalog)}`,
         );
       }
       const tail =
         output.truncated && output.nextOffset !== undefined
           ? `\n[truncated at the result budget; continue with offset ${output.nextOffset}]`
           : "";
-      const head = `catalog of ${folder === "" ? "the bundle root" : folder} (${output.source} index, ${output.entries.length} pages)`;
+      const head = `catalog of ${folder === "" ? "the bundle root" : safe(folder)} (${output.source} index, ${output.entries.length} pages)`;
       return ok(`${head}\n${output.notice}\n${output.text}${tail}`, output);
     }),
   );

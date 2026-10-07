@@ -231,3 +231,29 @@ describe("reservedHeader, searchHeader and the fixed strings", () => {
     expect(DATA_SENTENCE).toMatch(/data/);
   });
 });
+
+describe("safe and pageHeader: the bite 4 build review", () => {
+  it("escapes Unicode line and paragraph separators and the remaining direction marks", () => {
+    const hostile = `a${String.fromCodePoint(0x2028)}b${String.fromCodePoint(0x2029)}c${String.fromCodePoint(0x200e)}d${String.fromCodePoint(0x206a)}e`;
+    expect(safe(hostile)).toBe("a\\u2028b\\u2029c\\u200ed\\u206ae");
+    for (const code of [0x2028, 0x2029, 0x200e, 0x206a, 0x0a]) {
+      expect(safe(hostile)).not.toContain(String.fromCodePoint(code));
+    }
+  });
+
+  it("names the sources and the resource in the page header, or says there are none", () => {
+    const base = page("terms/alpha.md");
+    const withSources: Page = {
+      ...base,
+      sources: [
+        { resource: "https://example.test/spec", id: "spec" },
+        { resource: "docs/notes.pdf" },
+      ],
+      resource: "https://example.test/alpha",
+    };
+    const header = pageHeader(withSources, NOW);
+    expect(header).toContain("sources: spec https://example.test/spec; docs/notes.pdf");
+    expect(header).toContain("resource: https://example.test/alpha");
+    expect(pageHeader({ ...base, sources: [] }, NOW)).toContain("no sources");
+  });
+});

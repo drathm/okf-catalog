@@ -48,16 +48,28 @@ export function acquireLock(companyDir: string, now: Date): Lock {
     );
   } catch (error) {
     db.close();
-    if ((error as { code?: string }).code === "SQLITE_BUSY") {
+    if (String((error as { code?: string }).code ?? "").startsWith("SQLITE_BUSY")) {
       const owner = readOwner(companyDir);
       return owner === undefined ? { kind: "held" } : { kind: "held", owner };
     }
     throw error;
   }
   HELD.add(db);
-  const tmp = join(companyDir, `${OWNER}.${process.pid}.tmp`);
-  writeFileSync(tmp, `${JSON.stringify({ pid: process.pid, startedAt: now.toISOString() })}\n`);
-  renameSync(tmp, join(companyDir, OWNER));
+  try {
+    const tmp = join(companyDir, `${OWNER}.${process.pid}.tmp`);
+    writeFileSync(tmp, `${JSON.stringify({ pid: process.pid, startedAt: now.toISOString() })}\n`);
+    renameSync(tmp, join(companyDir, OWNER));
+  } catch (error) {
+    // The lock must not outlive a failure to describe it.
+    try {
+      db.exec("ROLLBACK");
+    } catch {
+      // closing releases the lock either way
+    }
+    db.close();
+    HELD.delete(db);
+    throw error;
+  }
   let closed = false;
   return {
     kind: "exclusive",
@@ -71,6 +83,7 @@ export function acquireLock(companyDir: string, now: Date): Lock {
       }
       db.close();
       HELD.delete(db);
+      rmSync(join(companyDir, OWNER), { force: true });
     },
   };
 }

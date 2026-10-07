@@ -1,4 +1,4 @@
-import { chmodSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, sep } from "node:path";
 
 /** The cache root: an absolute XDG_CACHE_HOME, else the platform's cache folder. A relative XDG value is ignored and noted. */
@@ -49,7 +49,8 @@ export function judgeFolder(stat: FolderStat, uid: number, isRoot: boolean): str
   return undefined;
 }
 
-export type EnsureResult = { ok: true } | { ok: false; problem: string };
+/** `problem` is for the model and names no path; `detail` is for the log and does. */
+export type EnsureResult = { ok: true } | { ok: false; problem: string; detail: string };
 
 /**
  * Makes the company folder under the cache root with mode 0700, tightens the folders it owns between the root
@@ -60,42 +61,84 @@ export function ensureCache(
   root: string,
   options: { uid: number; platform: NodeJS.Platform },
 ): EnsureResult {
+  const refuse = (problem: string, detail: string): EnsureResult => ({
+    ok: false,
+    problem,
+    detail,
+  });
   if (options.platform === "win32") {
-    return {
-      ok: false,
-      problem:
-        "Windows is not a version 0 host: the cache folder's ownership and mode checks assume POSIX",
-    };
+    const text =
+      "Windows is not a version 0 host: the cache folder's ownership and mode checks assume POSIX";
+    return refuse(text, text);
   }
-  try {
-    mkdirSync(dir, { recursive: true, mode: 0o700 });
-  } catch (error) {
-    return {
-      ok: false,
-      problem: `the cache folder ${dir} could not be created (${(error as NodeJS.ErrnoException).code ?? "error"})`,
-    };
+  // Judge what exists before anything is written: the root, then each existing folder down to the company's.
+  const judgeRoot = (): EnsureResult | undefined => {
+    try {
+      const rootStat = lstatSync(realpathSync(root));
+      const fault = judgeFolder(
+        { uid: rootStat.uid, mode: rootStat.mode, isSymbolicLink: rootStat.isSymbolicLink() },
+        options.uid,
+        true,
+      );
+      if (fault !== undefined) {
+        return refuse(
+          `the cache root ${fault}; set XDG_CACHE_HOME to a folder only you can write`,
+          `the cache root ${root} ${fault}`,
+        );
+      }
+      return undefined;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? "error";
+      return refuse(
+        `the cache root cannot be read (${code}); set XDG_CACHE_HOME to a folder you own`,
+        `the cache root ${root} cannot be read (${code})`,
+      );
+    }
+  };
+  const rootExists = existsSync(root);
+  if (rootExists) {
+    const fault = judgeRoot();
+    if (fault !== undefined) return fault;
   }
-  let realRoot: string;
-  try {
-    realRoot = realpathSync(root);
-    const rootStat = lstatSync(realRoot);
-    const fault = judgeFolder(
-      { uid: rootStat.uid, mode: rootStat.mode, isSymbolicLink: rootStat.isSymbolicLink() },
-      options.uid,
-      true,
-    );
-    if (fault !== undefined) return { ok: false, problem: `the cache root ${root} ${fault}` };
-  } catch (error) {
-    return {
-      ok: false,
-      problem: `the cache root ${root} cannot be read (${(error as NodeJS.ErrnoException).code ?? "error"})`,
-    };
-  }
-  // Every folder between the root and the company folder, nearest the root first.
   const below = relative(root, dir)
     .split(sep)
     .filter((s) => s.length > 0);
   let current = root;
+  for (const segment of below) {
+    current = join(current, segment);
+    let stat: ReturnType<typeof lstatSync> | undefined;
+    try {
+      stat = lstatSync(current);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        const code = (error as NodeJS.ErrnoException).code ?? "error";
+        return refuse(
+          `a cache folder cannot be read (${code}); check the cache root's permissions`,
+          `the cache folder ${current} cannot be read (${code})`,
+        );
+      }
+    }
+    if (stat?.isSymbolicLink()) {
+      return refuse(
+        "a cache folder is a symbolic link; remove it so the server can create its own",
+        `the cache folder ${current} is a symbolic link`,
+      );
+    }
+  }
+  try {
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? "error";
+    return refuse(
+      `the cache folder could not be created (${code}); check the cache root's permissions`,
+      `the cache folder ${dir} could not be created (${code})`,
+    );
+  }
+  if (!rootExists) {
+    const fault = judgeRoot();
+    if (fault !== undefined) return fault;
+  }
+  current = root;
   for (const segment of below) {
     current = join(current, segment);
     try {
@@ -110,13 +153,17 @@ export function ensureCache(
         false,
       );
       if (fault !== undefined) {
-        return { ok: false, problem: `the cache folder ${current} ${fault}; remove it or fix it` };
+        return refuse(
+          `a cache folder ${fault}; remove it or fix it so the server can own it`,
+          `the cache folder ${current} ${fault}`,
+        );
       }
     } catch (error) {
-      return {
-        ok: false,
-        problem: `the cache folder ${current} cannot be read (${(error as NodeJS.ErrnoException).code ?? "error"})`,
-      };
+      const code = (error as NodeJS.ErrnoException).code ?? "error";
+      return refuse(
+        `a cache folder cannot be read (${code})`,
+        `the cache folder ${current} cannot be read (${code})`,
+      );
     }
   }
   return { ok: true };

@@ -1,4 +1,12 @@
-import { chmodSync, lstatSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -100,5 +108,23 @@ describe("ensureCache on real folders", () => {
       platform: "win32",
     });
     expect(!win.ok && win.problem).toMatch(/Windows/);
+  });
+});
+
+describe("ensureCache: no write before the judgement (bite 4 build review)", () => {
+  it("leaves the target of a link at okf-catalog untouched when it refuses", () => {
+    const work = mkdtempSync(join(tmpdir(), "okf-catalog-cache2-"));
+    const root = join(work, "root");
+    const elsewhere = join(work, "elsewhere");
+    mkdirSync(root);
+    mkdirSync(elsewhere);
+    symlinkSync(elsewhere, join(root, "okf-catalog"));
+    const r = ensureCache(companyDir(root, "acme"), root, {
+      uid: process.getuid?.() ?? 0,
+      platform: "linux",
+    });
+    expect(r.ok).toBe(false);
+    expect(readdirSync(elsewhere)).toEqual([]);
+    rmSync(work, { recursive: true, force: true });
   });
 });

@@ -173,3 +173,14 @@ describe("discoverConfigPath and readCompanyConfig", () => {
     expect(folder.ok).toBe(false);
   });
 });
+
+describe("readCompanyConfig: size (bite 4 build review)", () => {
+  it("refuses a configuration file over one megabyte without reading it whole", () => {
+    const dir = mkdtempSync(join(tmpdir(), "okf-catalog-bigconfig-"));
+    const path = join(dir, "okf-catalog.yaml");
+    writeFileSync(path, `company: acme\nsource:\n  local: ./kb\n# ${"x".repeat(1_100_000)}\n`);
+    const r = readCompanyConfig(path, "/home/x");
+    expect(!r.ok && r.problems.join(" ")).toMatch(/too large|over/);
+    rmSync(dir, { recursive: true, force: true });
+  });
+});

@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod/v4";
@@ -190,9 +190,21 @@ export function discoverConfigPath(
 }
 
 /** Reads and parses a configuration file; relative paths inside it resolve against the file's folder. */
+/** A configuration is a short file; anything over this is refused unread. */
+export const CONFIG_SIZE_CAP = 1024 * 1024;
+
 export function readCompanyConfig(path: string, home: string): ConfigResult {
   let text: string;
   try {
+    const stat = statSync(path);
+    if (stat.isFile() && stat.size > CONFIG_SIZE_CAP) {
+      return {
+        ok: false,
+        problems: [
+          `the configuration file ${path} is too large (${stat.size} bytes, over ${CONFIG_SIZE_CAP})`,
+        ],
+      };
+    }
     text = readFileSync(path, "utf8");
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;

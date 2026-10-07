@@ -12,6 +12,7 @@ import {
   MARKER,
   pageHeader,
   reservedHeader,
+  safe,
   searchHeader,
 } from "./text.js";
 
@@ -26,16 +27,28 @@ export interface Cut {
   nextOffset?: number;
 }
 
-/** The text from `offset`, cut at a line boundary within `budget` when it does not fit. */
+const isHighSurrogate = (text: string, at: number): boolean => {
+  const code = text.charCodeAt(at);
+  return code >= 0xd800 && code <= 0xdbff;
+};
+
+/** The text from `offset`, cut at a line boundary within `budget` when it does not fit, never inside a surrogate pair. */
 export function cutText(text: string, offset: number, budget: number): Cut {
   const from = Math.max(0, Math.floor(offset));
   if (from >= text.length) return { slice: "", truncated: false };
   const rest = text.slice(from);
-  if (rest.length <= budget) return { slice: rest, truncated: false };
-  const newline = rest.lastIndexOf("\n", budget - 1);
-  const end = newline > 0 ? newline + 1 : budget;
+  const room = Math.max(1, budget);
+  if (rest.length <= room) return { slice: rest, truncated: false };
+  const newline = rest.lastIndexOf("\n", room - 1);
+  let end = newline > 0 ? newline + 1 : room;
+  if (end > 1 && isHighSurrogate(rest, end - 1)) end -= 1;
   return { slice: rest.slice(0, end), truncated: true, nextOffset: from + end };
 }
+
+/** Characters a provenance's frontmatter may take in a result before it is replaced by a note. */
+export const FRONTMATTER_BUDGET = 8_000;
+/** Characters of a catalog entry's description kept in a result. */
+const ENTRY_DESCRIPTION_CAP = 200;
 
 const Status = z.enum(["draft", "stable", "deprecated"]);
 const Trust = z.enum(["unverified", "machine-confirmed", "human-reviewed"]);
@@ -157,7 +170,7 @@ export const StatusOutputSchema = z.strictObject({
     documents: z.number(),
     notIndexed: z.number(),
     collisions: z.number(),
-    encodedFolders: z.array(z.string()),
+    encodedFolders: list(z.string()),
     resetOnOpen: z.string().nullable(),
   }),
   lock: z.enum(["exclusive", "private"]),
@@ -212,13 +225,24 @@ export function projectSearch(
   });
 }
 
+/** Room left for a body once the citation, the notice and a truncation tail are counted inside the budget. */
+const bodyRoom = (budget: number, citation: string): number =>
+  Math.max(1, budget - citation.length - NOTICE.length - 80);
+
 export function projectPage(page: Page, now: Date, offset: number, budget: number): PageOutput {
-  const cut = cutText(page.body, offset, budget);
+  const citation = pageHeader(page, now);
+  const cut = cutText(page.body, offset, bodyRoom(budget, citation));
+  const provenance = provenanceOf(page, now);
+  if (JSON.stringify(provenance.frontmatter).length > FRONTMATTER_BUDGET) {
+    provenance.frontmatter = {
+      omitted: `the frontmatter is over ${FRONTMATTER_BUDGET} characters and is not returned here`,
+    };
+  }
   const output: PageOutput = {
     path: page.path,
     kind: "page",
-    provenance: provenanceOf(page, now),
-    citation: pageHeader(page, now),
+    provenance,
+    citation,
     notice: NOTICE,
     body: cut.slice,
     truncated: cut.truncated,
@@ -233,12 +257,13 @@ export function projectReserved(
   offset: number,
   budget: number,
 ): PageOutput {
-  const cut = cutText(file.body, offset, budget);
+  const citation = reservedHeader(file.kind, source, file.folder);
+  const cut = cutText(file.body, offset, bodyRoom(budget, citation));
   const output: PageOutput = {
     path: file.path,
     kind: file.kind,
     source,
-    citation: reservedHeader(file.kind, source, file.folder),
+    citation,
     notice: NOTICE,
     body: cut.slice,
     truncated: cut.truncated,
@@ -247,7 +272,12 @@ export function projectReserved(
   return PageOutputSchema.parse(output);
 }
 
-/** A folder's catalog: its entries from the catalog's own pages, and the index text framed by the marker. Undefined for an unknown folder. */
+/**
+ * A folder's catalog: its entries from the catalog's own pages and the index text framed by the marker, the whole
+ * result held within the budget. `offset` counts entries first, then characters of the text: a cut result says
+ * where to continue, and the continuation carries the remaining entries, then the remaining text. Undefined for
+ * an unknown folder.
+ */
 export function projectCatalog(
   catalog: Catalog,
   folder: string,
@@ -256,21 +286,56 @@ export function projectCatalog(
 ): CatalogOutput | undefined {
   const entry = catalog.folders.get(folder);
   if (entry === undefined) return undefined;
-  const entries = [...entry.pages].sort(byCodeUnit).map((path) => {
+  const all = [...entry.pages].sort(byCodeUnit).map((path) => {
     const page = catalog.pages.get(path);
-    return { path, title: page?.title ?? path, description: page?.description ?? null };
+    const description = page?.description ?? null;
+    return {
+      path,
+      title: page?.title ?? path,
+      description:
+        description !== null && description.length > ENTRY_DESCRIPTION_CAP
+          ? `${description.slice(0, ENTRY_DESCRIPTION_CAP)}…`
+          : description,
+    };
   });
-  const text = `${MARKER}\n${entry.index?.body ?? ""}`;
-  const cut = cutText(text, offset, budget);
-  const output: CatalogOutput = {
+  const from = Math.max(0, Math.floor(offset));
+  const base: Omit<CatalogOutput, "entries" | "text" | "truncated"> = {
     folder,
     source: entry.indexSource,
-    entries,
     notice: NOTICE,
-    text: cut.slice,
-    truncated: cut.truncated,
   };
-  if (cut.nextOffset !== undefined) output.nextOffset = cut.nextOffset;
+  const frame =
+    JSON.stringify({ ...base, entries: [], text: "", truncated: true, nextOffset: 0 }).length + 80;
+  const entries: CatalogOutput["entries"] = [];
+  let used = frame;
+  let index = Math.min(from, all.length);
+  while (index < all.length) {
+    const item = all[index] as CatalogOutput["entries"][number];
+    const cost = JSON.stringify(item).length + 1;
+    if (used + cost > budget && entries.length > 0) break;
+    entries.push(item);
+    used += cost;
+    index += 1;
+  }
+  const fullText = `${MARKER}\n${entry.index?.body ?? ""}`;
+  // Text offsets start where the entries end: `all.length` entries consumed, then characters of the text.
+  const textFrom = Math.max(0, from - all.length);
+  const output: CatalogOutput = {
+    ...base,
+    entries,
+    text: "",
+    truncated: false,
+  };
+  if (index < all.length) {
+    // The entries alone filled the budget: the text comes with a later continuation.
+    output.truncated = true;
+    output.nextOffset = index;
+    return CatalogOutputSchema.parse(output);
+  }
+  const cut = cutText(fullText, textFrom, Math.max(1, budget - used));
+  output.text = cut.slice;
+  output.truncated = cut.truncated;
+  if (cut.nextOffset !== undefined) output.nextOffset = all.length + cut.nextOffset;
   return CatalogOutputSchema.parse(output);
 }
 
@@ -314,7 +379,7 @@ export function projectStatus(
       documents: generation.index.documents,
       notIndexed: generation.index.notIndexed.length,
       collisions: generation.index.collisions.length,
-      encodedFolders: generation.index.encodedFolders,
+      encodedFolders: capped(generation.index.encodedFolders),
       resetOnOpen: null,
     },
     lock: runtime.lock,
@@ -326,19 +391,24 @@ export function projectStatus(
   });
 }
 
-/** One line for the `status` text block. */
+/** One line for the `status` text block: the counts, the engine, the lock, the last attempt, and the report's lists as counts. */
 export function statusSummary(out: StatusOutput): string {
+  const n = (count: number, word: string): string => `${count} ${word}${count === 1 ? "" : "s"}`;
   const parts = [
-    `${out.company}: ${out.admitted} pages admitted, ${out.excludedByStatus} excluded by status, ${out.refusals.count} refused, ${out.degradations.count} degraded`,
+    `${out.company}: ${out.admitted} pages admitted, ${out.excludedByStatus} excluded by status, ${n(out.refusals.count, "refusal")}, ${n(out.degradations.count, "degradation")}`,
     `integrity ${out.integrity}`,
-    `${out.engine.documents} documents indexed`,
+    `${out.engine.documents} documents indexed, ${out.engine.notIndexed} not indexed, ${n(out.engine.collisions, "collision")}`,
     `lock ${out.lock}`,
     `loaded ${out.loadedAt}`,
+    `${n(out.unknownTypes.count, "unknown type")}, ${n(out.unknownStatuses.count, "unknown status")}, ${n(out.brokenLinks.count, "broken link")}, ${n(out.linksToUnserved.count, "link to an unserved page")}, ${n(out.foldersWithoutIndex.count, "folder without an index")}, ${n(out.missingOnDisk.count, "manifest entry missing on disk")}`,
   ];
-  if (out.fatal !== null)
+  if (out.lastAttempt !== null)
+    parts.push(`last attempt ${out.lastAttempt.outcome} at ${out.lastAttempt.at}`);
+  if (out.fatal !== null) {
     parts.push(
-      `FATAL ${out.fatal.rule}${out.fatal.path ? ` (${out.fatal.path})` : ""}: ${out.fatal.detail}`,
+      `FATAL ${safe(out.fatal.rule)}${out.fatal.path ? ` (${safe(out.fatal.path)})` : ""}: ${safe(out.fatal.detail)}`,
     );
-  if (out.refusing !== null) parts.push(`refusing: ${out.refusing}`);
+  }
+  if (out.refusing !== null) parts.push(`refusing: ${safe(out.refusing)}`);
   return parts.join("; ");
 }

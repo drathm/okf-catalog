@@ -39,16 +39,23 @@ function memorySource(initial: BundleFile[]) {
 }
 
 /** An engine over the rendered documents it is given: prefix match on every term, counting the calls, failing once on request. */
-function countingEngine(): Engine & { indexCalls: number; failNext: boolean; docs: string[] } {
+function countingEngine(): Engine & {
+  indexCalls: number;
+  failNext: boolean;
+  failAgain: boolean;
+  docs: string[];
+} {
   let texts = new Map<string, string[]>();
   const state = {
     indexCalls: 0,
     failNext: false,
+    failAgain: false,
     docs: [] as string[],
     async index(docs: Parameters<Engine["index"]>[0]): Promise<IndexResult> {
       state.indexCalls += 1;
       if (state.failNext) {
-        state.failNext = false;
+        state.failNext = state.failAgain;
+        state.failAgain = false;
         throw new Error("the store broke");
       }
       state.docs = docs.map((d) => d.path).sort();
@@ -232,5 +239,27 @@ describe("createRuntime", () => {
     await closing;
     expect(released).toBe(true);
     await lease;
+  });
+});
+
+describe("createRuntime: a re-index that fails too (bite 4 build review)", () => {
+  it("refuses until a refresh succeeds when the index cannot be re-aligned after a failed refresh", async () => {
+    const files = readFixture("behaviours");
+    const source = memorySource(files);
+    const engine = countingEngine();
+    const { runtime } = build(source, engine);
+    runtime.start();
+    await runtime.ready();
+    engine.failNext = true;
+    engine.failAgain = true;
+    const failed = await runtime.refresh();
+    expect(failed.outcome).toBe("failed");
+    expect(runtime.status().refusing).toMatch(/re-aligned|realign/i);
+    await expect(runtime.lease(async () => 1)).rejects.toThrow(/re-aligned|realign/i);
+    const recovered = await runtime.refresh();
+    expect(recovered.outcome).toBe("swapped");
+    expect(runtime.status().refusing).toBeUndefined();
+    expect(await runtime.lease(async () => 1)).toBe(1);
+    await runtime.shutdown();
   });
 });

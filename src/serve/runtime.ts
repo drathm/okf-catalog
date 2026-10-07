@@ -127,12 +127,13 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
       try {
         index = await live.index(prepared.docs);
       } catch (error) {
-        // The engine may now hold the new tree while the old catalog stays served: put them back together.
+        // The engine may now hold the new tree while the old catalog stays served: put them back together. If
+        // that fails too, nothing may be served until a refresh succeeds (D39).
         if (current !== undefined) {
           try {
             await live.index([...current.catalog.pages.values()].map(deriveDocument));
-          } catch {
-            // the next successful refresh re-aligns them
+          } catch (again) {
+            refusing = `the index could not be re-aligned with the served pages after a failed refresh (${(again as Error).message}); nothing is served until a refresh succeeds`;
           }
         }
         throw error;
@@ -245,7 +246,8 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
     if (refreshing !== undefined) return refreshing;
     refreshing = (async (): Promise<RefreshOutcome> => {
       try {
-        await ready();
+        if (firstLoad === undefined) throw new Error("the first load has not started");
+        await firstLoad;
         const next = await prepareDocs();
         if (next.kind === "fatal") {
           lastAttempt = { at: deps.clock(), outcome: "fatal" };
@@ -257,6 +259,7 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
           return { outcome: "fatal", report: next.report };
         }
         const generation = await commit(next);
+        refusing = undefined;
         lastAttempt = { at: deps.clock(), outcome: "swapped" };
         deps.log.info("refresh.done", counts(generation.report, generation.index));
         return { outcome: "swapped", generation };

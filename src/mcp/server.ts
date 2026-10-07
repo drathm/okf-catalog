@@ -24,7 +24,9 @@ export function createServerFactory(
   return () => {
     const server = new McpServer({ name: "okf-catalog", version }, { instructions: INSTRUCTIONS });
     registerTools(server, runtime, options, clock, log);
-    // The first load starts once a client has completed the handshake; a probe connection never gets this far.
+    // The first load starts when a client sends `notifications/initialized` (the 2025-era handshake) or, for a
+    // current-protocol client that adopts the discovery result and sends neither, on its first tool call; a probe
+    // connection never gets this far.
     const inner = server.server as { oninitialized?: () => void };
     const previous = inner.oninitialized;
     inner.oninitialized = () => {
