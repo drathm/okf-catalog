@@ -368,6 +368,7 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
     footnoteReferences: facts.footnoteReferences,
     frontmatter: data,
     body: split.body,
+    ...(facts.prose === undefined ? {} : { prose: facts.prose }),
     degradations,
   };
   if (description !== undefined) page.description = description;

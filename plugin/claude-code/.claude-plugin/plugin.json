@@ -1,0 +1,22 @@
+{
+  "name": "okf-catalog",
+  "version": "0.0.0",
+  "description": "Serves a company's Open Knowledge Format bundle to Claude: search, read pages whole, cite path, trust and recheck date.",
+  "author": { "name": "okf-catalog maintainers" },
+  "license": "Apache-2.0",
+  "keywords": ["okf", "knowledge", "mcp"],
+  "userConfig": {
+    "install_path": {
+      "type": "directory",
+      "title": "okf-catalog install folder",
+      "description": "The folder holding the built okf-catalog (its dist/cli.js); the server runs with node from there.",
+      "required": true
+    },
+    "config_path": {
+      "type": "file",
+      "title": "Company configuration file",
+      "description": "The company's okf-catalog.yaml: which bundle to serve and how.",
+      "required": true
+    }
+  }
+}

@@ -150,6 +150,8 @@ export interface Page {
   footnoteReferences: string[];
   frontmatter: Record<string, unknown>;
   body: string;
+  /** The body's prose for snippets, captured once at load; absent when the body could not be analysed. */
+  prose?: string;
   degradations: Degradation[];
 }
 

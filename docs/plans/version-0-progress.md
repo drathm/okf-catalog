@@ -475,3 +475,31 @@ Measure and record: cold start from spawn to `tools/list` answered, and to the f
 Review after build: an independent review of `serve/runtime.ts`, `mcp/tools.ts`, `catalog/text.ts`, `catalog/outputs.ts`, `search/snippet.ts`, `fs/company-lock.ts`, `fs/cache-dir.ts`, `config/company-config.ts` and `commands/serve.ts`.
 
 Decisions this bite adds, proposed for the maintainer: D32 made concrete as D40 (the company lock is an exclusive SQLite transaction the operating system releases with the process; `better-sqlite3` becomes a direct dependency at qmd's version; the private fallback folder lives under the company folder and dead ones are swept at start); D33 the snippet rule over prose stored at load, with the description as the fallback; D34 the framing control: the marker line and the data-not-instructions sentence in the text block, the `notice` in the structured output and the server `instructions`, named as the whole technical control against a page that gives orders; D35 the nearest-path metric; D36 stdout reserved for the protocol from the first statement of `serve`, with the transport on its own stream and every console method a log record, and the closed log allowlist; D37 `serve` accepts only `source.local` until bite 5; D38 the handshake is answered before any bundle work, and the first load starts on `initialize` or the first tool call, never for a probe; D39 a refused bundle keeps the server answering with the refusal in `status`; D41 every tool result carries both channels, each self-sufficient, and a result budget of 40 000 characters with `offset` continuation; D42 a missing or invalid configuration puts the server in a refusing mode that returns the fix instead of exiting, while usage errors and an unsupported runtime still exit 2.
+
+### Build
+
+Order, each module red then green: the core (`catalog/text.ts`, `catalog/outputs.ts`, `catalog/nearest.ts`, `catalog/runtime.ts`, `search/snippet.ts`, and the prose captured by `readBody` onto the page); the edges (`config/company-config.ts`, `fs/cache-dir.ts`, `fs/company-lock.ts`, `source/local.ts`, `log.ts`); the adapter (`mcp/tools.ts`, `mcp/server.ts`, `mcp/stdio.ts`) against a fake runtime over the fixtures, in process, through the SDK client in both protocol eras; the composition (`serve/runtime.ts`) against a counting engine; the `serve` command and the CLI, tested by spawning the built binary; the plugin files and the skill; the acceptance document. 342 tests in 41 files pass, each at UTC+14 and UTC−11 (vitest counts 684), and the gates are green, with the composition layer added to the dependency rules.
+
+Found and fixed during the build, for the reviewers:
+
+| Finding | What was done |
+|---|---|
+| The SQLite lock vanished while its process still ran: the connection object was referenced only from the returned closure, was garbage-collected, and the binding closed it, so a fresh process always acquired the lock a holder believed it held (probed: 20 of 20 fresh processes got through, 0 of 20 after the fix) | Every holding connection is kept in a module-level set until `close()`; the lock also writes a row inside its exclusive transaction, since an empty database would not keep a second process out |
+| A tool call arriving while the first load ran was counted as a lease, the load's swap waited for leases to drain, and the lease waited for the load: a deadlock the stdio test found | Leases are counted from their request for shutdown, but only become active once they read a generation; a swap waits for active leases only |
+| The MCP SDK forbids nothing about stdout, so the stdio wiring had to live in the adapter for the dependency rule | `mcp/stdio.ts` wraps `serveStdio` and the transport; the command passes it the reserved stdout stream |
+
+Deviations from the revised plan: the channel probe (Opus F1) could not be run, because the Claude Code CLI's login on the build machine had expired, which only the maintainer can renew; the stub server and the command are in the acceptance document, and both channels are self-sufficient regardless. The first load starts on `initialize` through the server's `oninitialized` hook, an internal field of the SDK's server object, with the first tool call as the fallback. `status.engine.resetOnOpen` is always null for now: the adapter's finding is logged as `engine.reset` and not threaded into the generation. The refusing mode also covers environment failures during the first load (an unwritable cache folder, a bundle folder that does not exist), since they surface after the handshake. Every console method is redirected into the log at warn or debug level. Two planned tests were not written: a 300-page folder through `catalog` (the budget cut is tested on a 6 000-line page), and a raw recheck date carrying the marker string (titles and verifiers are tested). The `private/` parent folder is created with the default mode inside the 0700 company folder.
+
+Decisions taken while building: a question whose terms are all common words is an error naming the fix (the plan's D41 reading of §2.8); the type filter matches the catalog's types case-insensitively and passes the canonical name on; reserved files are candidates for the nearest-path suggestion; the catalog text starts with a head line naming the folder, the index source and the page count; the `status` text is one line of counts.
+
+Measurements (this machine, macOS arm64, Node 24.15.0; the serve command spawned and driven over stdio):
+
+| Measure | spec-example (9 pages) | public corpus (736 pages, development mode) |
+|---|---|---|
+| Spawn to `tools/list` answered | 186 ms | 135 ms (the handshake no longer waits for the load) |
+| Spawn to the first `search` answered | 276 ms | 1 998 ms |
+| Resident memory after start | 111 MiB | 298 MiB |
+| Resident memory after 200 searches | 132 MiB | 460 MiB |
+| `search` round trip, median and p95 | 8 ms, 10 ms | 23 ms, 37 ms |
+
+The stored prose for the corpus is 3.0 million characters (at most 5.7 MiB as strings); the whole load adds 16 MiB to the heap. The growth under searches is the engine returning every row's body (bite 3's residual), not a leak as far as measured.

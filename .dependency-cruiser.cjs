@@ -3,6 +3,7 @@ const CORE = "^src/(bundle|catalog|derive|search)/";
 const ADAPTERS = "^src/(engine|mcp)/";
 const EDGES = "^src/(source|fs|config|report)/|^src/log\\.ts$";
 const COMMANDS = "^src/commands/";
+const COMPOSITION = "^src/serve/";
 const CORE_NPM =
   "^node_modules/(yaml|zod|mdast-util-from-markdown|mdast-util-to-string|mdast-util-gfm-footnote|mdast-util-gfm-table|micromark-extension-gfm-footnote|micromark-extension-gfm-table|@types/mdast|@types/unist)/";
 
@@ -66,7 +67,21 @@ module.exports = {
       comment: "Edges import the core and Node, never an adapter, a command or the entry point.",
       severity: "error",
       from: { path: EDGES },
-      to: { path: `${ADAPTERS}|${COMMANDS}|^src/cli\\.ts$` },
+      to: { path: `${ADAPTERS}|${COMPOSITION}|${COMMANDS}|^src/cli\\.ts$` },
+    },
+    {
+      name: "composition-imports-everything-but-commands",
+      comment:
+        "src/serve/ composes the core, the adapters and the edges; nothing above it (commands, cli) is imported, and only commands import it.",
+      severity: "error",
+      from: { path: COMPOSITION },
+      to: { path: `${COMMANDS}|^src/cli\\.ts$` },
+    },
+    {
+      name: "only-commands-import-composition",
+      severity: "error",
+      from: { pathNot: `${COMPOSITION}|${COMMANDS}` },
+      to: { path: COMPOSITION },
     },
     {
       name: "cli-only-commands",

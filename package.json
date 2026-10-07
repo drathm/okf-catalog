@@ -28,6 +28,7 @@
   "dependencies": {
     "@modelcontextprotocol/server": "2.3.1",
     "@tobilu/qmd": "2.8.3",
+    "better-sqlite3": "13.0.3",
     "mdast-util-from-markdown": "2.1.0",
     "mdast-util-gfm-footnote": "2.1.0",
     "mdast-util-gfm-table": "2.0.0",
@@ -40,6 +41,7 @@
   "devDependencies": {
     "@biomejs/biome": "2.5.15",
     "@modelcontextprotocol/client": "2.3.1",
+    "@types/better-sqlite3": "9.6.0",
     "@types/mdast": "4.0.4",
     "@types/node": "22.20.5",
     "@types/unist": "3.0.3",

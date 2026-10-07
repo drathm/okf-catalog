@@ -1,0 +1,208 @@
+import { readFileSync } from "node:fs";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { parse as parseYaml } from "yaml";
+import { z } from "zod/v4";
+import { type Caps, DEFAULT_CAPS, type SpecText, type Status } from "../bundle/model.js";
+
+/** Configuration as the server uses it: paths resolved, defaults applied, `dev` mapped onto drafts and integrity. */
+export interface CompanyConfig {
+  company: string;
+  source:
+    | { kind: "local"; path: string; configured: string }
+    | { kind: "git"; repository: string; branch: string; bundlePath: string };
+  serve: { admit: Status[]; dev: boolean; pullIntervalMs: number; limitDefault: number };
+  integrity: "require-manifest" | "none";
+  caps: Caps;
+  types?: string[];
+  specText: SpecText;
+}
+
+export type ConfigResult = { ok: true; config: CompanyConfig } | { ok: false; problems: string[] };
+
+const COMPANY = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const DURATION = /^(\d+)(s|m|h)$/;
+const MIN_INTERVAL_MS = 30_000;
+const MAX_INTERVAL_MS = 24 * 60 * 60 * 1000;
+const CAP_CEILINGS = {
+  file_bytes: 64 * 1024 * 1024,
+  files: 200_000,
+  tree_bytes: 8 * 1024 * 1024 * 1024,
+};
+
+const Raw = z.strictObject({
+  company: z.string(),
+  source: z.strictObject({
+    local: z.string().min(1).optional(),
+    repository: z.string().min(1).optional(),
+    branch: z.string().min(1).optional(),
+    bundle_path: z.string().min(1).optional(),
+  }),
+  serve: z
+    .strictObject({
+      admit: z.array(z.string()).optional(),
+      dev: z.boolean().optional(),
+      pull_interval: z.string().optional(),
+      limit_default: z.number().int().min(1).max(25).optional(),
+    })
+    .optional(),
+  caps: z
+    .strictObject({
+      file_bytes: z.number().int().min(1).max(CAP_CEILINGS.file_bytes).optional(),
+      files: z.number().int().min(1).max(CAP_CEILINGS.files).optional(),
+      tree_bytes: z.number().int().min(1).max(CAP_CEILINGS.tree_bytes).optional(),
+    })
+    .optional(),
+  types: z.array(z.string().min(1)).optional(),
+  spec_text: z.enum(["2026-08-15", "2026-08-21"]).optional(),
+});
+
+function issueText(issue: z.core.$ZodIssue): string {
+  const path = issue.path.map(String).join(".");
+  if (issue.code === "unrecognized_keys") {
+    return issue.keys.map((k) => `${path === "" ? k : `${path}.${k}`}: unknown key`).join("; ");
+  }
+  return `${path === "" ? "document" : path}: ${issue.message}`;
+}
+
+/** `~/x` against the home folder, an absolute path as is, anything else against the configuration file's folder. */
+function resolvePath(value: string, configDir: string, home: string): string {
+  if (value === "~") return home;
+  if (value.startsWith("~/")) return join(home, value.slice(2));
+  if (isAbsolute(value)) return value;
+  return resolve(configDir, value);
+}
+
+function durationMs(text: string): number | undefined {
+  const m = DURATION.exec(text);
+  if (m === null) return undefined;
+  const n = Number(m[1]);
+  const unit = m[2] === "s" ? 1000 : m[2] === "m" ? 60_000 : 3_600_000;
+  return n * unit;
+}
+
+/** Parses one company's YAML configuration. Every problem is a sentence naming the key; nothing is guessed. */
+export function parseCompanyConfig(text: string, configDir: string, home: string): ConfigResult {
+  let document: unknown;
+  try {
+    document = parseYaml(text, { version: "1.2" });
+  } catch (error) {
+    return {
+      ok: false,
+      problems: [`the configuration is not valid YAML: ${(error as Error).message}`],
+    };
+  }
+  if (document === null || typeof document !== "object" || Array.isArray(document)) {
+    return { ok: false, problems: ["the configuration must be a mapping of keys to values"] };
+  }
+  const parsed = Raw.safeParse(document);
+  if (!parsed.success) return { ok: false, problems: parsed.error.issues.map(issueText) };
+  const raw = parsed.data;
+  const problems: string[] = [];
+  if (!COMPANY.test(raw.company)) {
+    problems.push(
+      "company: must be one lower-case path segment (letters, digits and hyphens, starting with a letter or digit, at most 63 characters)",
+    );
+  }
+  const hasLocal = raw.source.local !== undefined;
+  const hasGit = raw.source.repository !== undefined;
+  if (hasLocal && hasGit) problems.push("source: exactly one of local or repository, not both");
+  if (!hasLocal && !hasGit) problems.push("source: local or repository is required");
+  if (hasLocal && (raw.source.branch !== undefined || raw.source.bundle_path !== undefined)) {
+    problems.push("source: branch and bundle_path belong to a repository source");
+  }
+  const admit = raw.serve?.admit ?? ["stable", "deprecated"];
+  if (admit.length === 0) problems.push("serve.admit: at least one status is required");
+  for (const status of admit) {
+    if (status === "draft") problems.push("serve.admit: draft is admitted only through serve.dev");
+    else if (status !== "stable" && status !== "deprecated")
+      problems.push(`serve.admit: ${JSON.stringify(status)} is not a status`);
+  }
+  const dev = raw.serve?.dev ?? false;
+  if (dev && !hasLocal) problems.push("serve.dev: allowed only with source.local");
+  let pullIntervalMs = 600_000;
+  if (raw.serve?.pull_interval !== undefined) {
+    const ms = durationMs(raw.serve.pull_interval);
+    if (ms === undefined) {
+      problems.push("serve.pull_interval: write a number and a unit, such as 30s, 10m or 2h");
+    } else if (ms < MIN_INTERVAL_MS || ms > MAX_INTERVAL_MS) {
+      problems.push("serve.pull_interval: must be between 30s and 24h");
+    } else pullIntervalMs = ms;
+  }
+  if (problems.length > 0) return { ok: false, problems };
+  const caps: Caps = {
+    fileBytes: raw.caps?.file_bytes ?? DEFAULT_CAPS.fileBytes,
+    files: raw.caps?.files ?? DEFAULT_CAPS.files,
+    treeBytes: raw.caps?.tree_bytes ?? DEFAULT_CAPS.treeBytes,
+  };
+  const config: CompanyConfig = {
+    company: raw.company,
+    source:
+      raw.source.local !== undefined
+        ? {
+            kind: "local",
+            path: resolvePath(raw.source.local, configDir, home),
+            configured: raw.source.local,
+          }
+        : {
+            kind: "git",
+            repository: raw.source.repository ?? "",
+            branch: raw.source.branch ?? "published",
+            bundlePath: raw.source.bundle_path ?? ".",
+          },
+    serve: {
+      admit: admit as Status[],
+      dev,
+      pullIntervalMs,
+      limitDefault: raw.serve?.limit_default ?? 8,
+    },
+    integrity: dev ? "none" : "require-manifest",
+    caps,
+    specText: raw.spec_text ?? "2026-08-15",
+  };
+  if (raw.types !== undefined && raw.types.length > 0) config.types = raw.types;
+  return { ok: true, config };
+}
+
+export type Discovery = { path: string; rule: "flag" | "env" | "cwd" } | { error: string };
+
+/**
+ * Where the configuration is: the flag, then `OKF_CATALOG_CONFIG`, then `okf-catalog.yaml` in the working
+ * folder. A variable that is set but empty, or that still holds a `${...}` placeholder, is an error and never
+ * falls through, so a checked-out repository can never choose the bundle by accident.
+ */
+export function discoverConfigPath(
+  flag: string | undefined,
+  env: NodeJS.ProcessEnv,
+  cwd: string,
+): Discovery {
+  if (flag !== undefined) return { path: resolve(cwd, flag), rule: "flag" };
+  if (Object.hasOwn(env, "OKF_CATALOG_CONFIG")) {
+    const value = (env.OKF_CATALOG_CONFIG ?? "").trim();
+    if (value.length === 0 || value.includes("${")) {
+      return {
+        error:
+          "OKF_CATALOG_CONFIG is empty or still holds a placeholder; run /plugin configure okf-catalog to set the configuration path, or pass --config",
+      };
+    }
+    return { path: resolve(cwd, value), rule: "env" };
+  }
+  return { path: join(cwd, "okf-catalog.yaml"), rule: "cwd" };
+}
+
+/** Reads and parses a configuration file; relative paths inside it resolve against the file's folder. */
+export function readCompanyConfig(path: string, home: string): ConfigResult {
+  let text: string;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    const why =
+      code === "ENOENT"
+        ? "does not exist"
+        : code === "EISDIR"
+          ? "is a folder, not a file"
+          : `cannot be read (${code ?? "error"})`;
+    return { ok: false, problems: [`the configuration file ${path} ${why}`] };
+  }
+  return parseCompanyConfig(text, dirname(path), home);
+}

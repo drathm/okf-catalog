@@ -360,3 +360,18 @@ describe("parsePage: review round 1 additions", () => {
     expect(p.degradations[0]?.detail).not.toMatch(/not served/);
   });
 });
+
+describe("parsePage: prose (bite 4)", () => {
+  it("stores the body's prose on the page for snippets", () => {
+    const result = parsePage(
+      {
+        path: "p.md",
+        bytes: Buffer.from(
+          "---\ntype: Note\ntitle: P\n---\n\nOne sentence here.\n\nAnother one.\n",
+        ),
+      },
+      { linkIndex, specText: "2026-08-15" },
+    );
+    expect(result.ok && result.page.prose).toBe("One sentence here. Another one.");
+  });
+});

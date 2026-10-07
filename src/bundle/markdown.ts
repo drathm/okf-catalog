@@ -17,6 +17,8 @@ export interface BodyFacts {
   unanalysed: boolean;
   /** Only the first part of the body was analysed. */
   truncated: boolean;
+  /** The body's text with blocks separated by one space, HTML and footnote marks left out; absent when unanalysed. */
+  prose?: string;
 }
 
 const SENTENCE_CAP = 200;
@@ -87,6 +89,38 @@ function proseOf(node: Nodes): string {
     else if (isParent(current))
       for (let i = current.children.length - 1; i >= 0; i--)
         stack.push(current.children[i] as Nodes);
+  }
+  return parts.join("").replace(/\s+/g, " ").trim();
+}
+
+const BLOCKS = new Set([
+  "paragraph",
+  "heading",
+  "blockquote",
+  "list",
+  "listItem",
+  "code",
+  "table",
+  "tableRow",
+  "tableCell",
+  "thematicBreak",
+  "footnoteDefinition",
+]);
+
+/** The whole tree's prose, one space between blocks, HTML and footnote marks left out, whitespace collapsed. */
+function proseWithBlocks(tree: Nodes): string {
+  const parts: string[] = [];
+  const stack: Nodes[] = [tree];
+  while (stack.length > 0) {
+    const current = stack.pop() as Nodes;
+    if (current.type === "html" || current.type === "footnoteReference") continue;
+    if (BLOCKS.has(current.type)) parts.push(" ");
+    if ("value" in current && typeof current.value === "string") parts.push(current.value);
+    else if (isParent(current)) {
+      for (let i = current.children.length - 1; i >= 0; i--)
+        stack.push(current.children[i] as Nodes);
+    }
+    if (BLOCKS.has(current.type)) parts.push(" ");
   }
   return parts.join("").replace(/\s+/g, " ").trim();
 }
@@ -181,5 +215,6 @@ export function readBody(body: string): BodyFacts {
     if (slot !== undefined) slot.url = definitions.get(ref.identifier) ?? "";
   }
   facts.links = facts.links.filter((l) => l.url !== "");
+  facts.prose = proseWithBlocks(tree);
   return facts;
 }

@@ -68,6 +68,7 @@ describe("readBody", () => {
       hasScriptLike: false,
       unanalysed: false,
       truncated: false,
+      prose: "",
     });
   });
 });
@@ -82,5 +83,19 @@ describe("readBody: reference links and nested structures (review round 1)", () 
     const body =
       "- outer\n  - [a](/a.md)\n\n[![img](/i.png)](/b.md)\n\n# [c](/c.md)\n\nText.[^n]\n\n[^n]: See [d](/d.md).\n";
     expect(readBody(body).links.map((l) => l.url)).toEqual(["/a.md", "/b.md", "/c.md", "/d.md"]);
+  });
+});
+
+describe("readBody: prose for snippets (bite 4)", () => {
+  it("captures the prose once, with blocks separated by a space and HTML and footnote marks left out", () => {
+    const facts = readBody(
+      "# Title\n\nFirst paragraph.\nStill first.\n\n- item one\n- item two\n\n<div>html</div>\n\nLast[^1] words.\n\n[^1]: a note\n",
+    );
+    expect(facts.prose).toBe(
+      "Title First paragraph. Still first. item one item two Last words. a note",
+    );
+  });
+  it("has no prose for an unanalysed body", () => {
+    expect(readBody(`${">".repeat(10_000)} deep\n`).prose).toBeUndefined();
   });
 });
