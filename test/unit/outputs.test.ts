@@ -271,6 +271,7 @@ describe("result bounds (bite 4 build review)", () => {
     const bloated: Page = {
       ...base,
       contract,
+      timestamp: { raw: "2026-05-28T22:53:05+00:00" },
       frontmatter: { ...base.frontmatter, blob: "x".repeat(100_000) },
     };
     const out = projectPage(bloated, NOW, 0, RESULT_BUDGET);
@@ -279,6 +280,7 @@ describe("result bounds (bite 4 build review)", () => {
     });
     expect(out.provenance?.contract).toEqual(contract);
     expect(out.provenance?.usageWindow).toEqual({ from: "2000-01-01", to: "2000-01-31" });
+    expect(out.provenance?.timestamp).toBe("2026-05-28T22:53:05+00:00");
     expect(() => PageOutputSchema.parse(out)).not.toThrow();
   });
 
@@ -294,6 +296,7 @@ describe("result bounds (bite 4 build review)", () => {
       ...base,
       contract: { runtime: "bigquery", parameters },
       usageWindow: wide,
+      timestamp: { raw: "t".repeat(2_500) },
       sources: [{ resource: "a" }],
     };
     const out = projectPage(heavy, NOW, 0, RESULT_BUDGET);
@@ -305,6 +308,9 @@ describe("result bounds (bite 4 build review)", () => {
     });
     expect(out.provenance?.usageWindow).toEqual({
       omitted: "the usageWindow field is over 2000 characters and is not returned here",
+    });
+    expect(out.provenance?.timestamp).toEqual({
+      omitted: "the timestamp field is over 2000 characters and is not returned here",
     });
     // An inherited window is capped on every source too, so one wide window cannot be copied once per source.
     expect(out.provenance?.sources[0]?.effectiveWindow).toEqual({

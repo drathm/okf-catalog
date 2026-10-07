@@ -3,6 +3,7 @@ import type { LinkIndex } from "../../src/bundle/links.js";
 import type { BundleFile, Page, SpecText } from "../../src/bundle/model.js";
 import { decideReplacement, parsePage } from "../../src/bundle/page.js";
 import { reservedKind } from "../../src/bundle/reserved.js";
+import { APPENDIX_A_V01 } from "../helpers/appendix-a.js";
 import { readFixture } from "../helpers/fixtures.js";
 
 function indexOf(files: BundleFile[]): LinkIndex {
@@ -522,5 +523,89 @@ describe("parsePage: the contract fields and the page window (R2, R3)", () => {
       ]);
     }
     expect(page("terms/alpha.md").usageWindow).toEqual({ from: "2000-01-01", to: "2000-01-31" });
+  });
+});
+
+// R4, R5, R6: a usage count that is not a number, and the two OKF 0.1 fallbacks (§13.1; D63, D79).
+describe("parsePage: usage counts and the OKF 0.1 fallbacks (R4, R5, R6)", () => {
+  const parsed = (text: string): Page => {
+    const r = inline("metrics/income-statement.md", text);
+    if (!r.ok) throw new Error(r.refusal.rule);
+    return r.page;
+  };
+
+  it("reports a usage_count that is not a number and keeps the source", () => {
+    for (const value of ['"12"', "[1]", "{ n: 1 }", "true"]) {
+      const p = parsed(
+        `---\ntype: T\ntitle: T\ndescription: D\nsources:\n  - { resource: https://x.test/a, usage_count: ${value} }\n---\n`,
+      );
+      expect(p.sources, value).toEqual([{ resource: "https://x.test/a" }]);
+      expect(p.degradations, value).toEqual([
+        expect.objectContaining({
+          code: "source-malformed",
+          field: "sources",
+          detail: expect.stringContaining("sources[0].usage_count is"),
+        }),
+      ]);
+    }
+    const counted = parsed(
+      "---\ntype: T\ntitle: T\ndescription: D\nsources:\n  - { resource: https://x.test/a, usage_count: 7 }\n---\n",
+    );
+    expect(counted.sources).toEqual([{ resource: "https://x.test/a", usageCount: 7 }]);
+    expect(counted.degradations).toEqual([]);
+  });
+
+  it("keeps an OKF 0.1 timestamp as its own field only when generated is absent", () => {
+    const legacy = parsed(APPENDIX_A_V01);
+    expect(legacy.timestamp).toEqual({
+      raw: "2026-05-28T22:53:05+00:00",
+      at: new Date("2026-05-28T22:53:05Z"),
+    });
+    expect(legacy.generated).toBeUndefined();
+    expect(codes(legacy)).toContain("legacy-timestamp");
+    const both = parsed(
+      APPENDIX_A_V01.replace(
+        "timestamp:",
+        "generated: { by: human:x, at: 2026-06-01T00:00:00Z }\ntimestamp:",
+      ),
+    );
+    expect(both.timestamp).toBeUndefined();
+    expect(both.generated?.by).toBe("human:x");
+    expect(codes(both)).not.toContain("legacy-timestamp");
+    const unreadable = parsed("---\ntype: T\ntitle: T\ndescription: D\ntimestamp: soon\n---\n");
+    expect(unreadable.timestamp).toEqual({ raw: "soon" });
+    expect(codes(unreadable)).toEqual(["timestamp-invalid", "legacy-timestamp"]);
+  });
+
+  it("reads a level-one # Citations list as sources only on a page with no generated, verified or sources", () => {
+    const legacy = parsed(APPENDIX_A_V01);
+    expect(legacy.sources).toEqual([
+      { resource: "https://wiki.acme/finance/fpa-handbook" },
+      { resource: "https://wiki.acme/finance/revenue-recognition" },
+      { resource: "https://wiki.acme/finance/cost-allocation" },
+    ]);
+    expect(codes(legacy)).toContain("legacy-citations");
+    const linked = parsed(
+      "---\ntype: T\ntitle: T\ndescription: D\n---\n\n# Citations\n- [Policy](https://x.test/p)\n- plain words\n",
+    );
+    expect(linked.sources).toEqual([
+      { resource: "https://x.test/p", title: "Policy" },
+      { resource: "plain words" },
+    ]);
+    // Beside any of the three v0.2 keys, or under a lower heading, the list is body text only.
+    for (const key of [
+      "generated: { by: human:x }",
+      "verified: { by: human:x, at: 2026-01-01T00:00:00Z }",
+      "sources: []",
+    ]) {
+      const v02 = parsed(APPENDIX_A_V01.replace("timestamp:", `${key}\ntimestamp:`));
+      expect(v02.sources, key).toEqual([]);
+      expect(codes(v02), key).not.toContain("legacy-citations");
+    }
+    const subsection = parsed(
+      "---\ntype: T\ntitle: T\ndescription: D\n---\n\n# Notes\n\n## Citations\n- https://x.test/a\n",
+    );
+    expect(subsection.sources).toEqual([]);
+    expect(codes(subsection)).not.toContain("legacy-citations");
   });
 });

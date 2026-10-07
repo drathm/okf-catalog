@@ -32,6 +32,8 @@ export interface Provenance {
   usageWindow?: UsageWindow;
   /** The contract fields (§10.2), typed, for a page of any type. */
   contract?: Contract;
+  /** The OKF 0.1 `timestamp` as written, on a page without `generated` (D79). */
+  timestamp?: string;
   resource?: string;
   replacement?: PagePath;
   /** A copy of the page's frontmatter in full, so nothing the page carries is lost. */
@@ -80,6 +82,7 @@ export function provenanceOf(page: Page, now: Date): Provenance {
   };
   if (page.usageWindow !== undefined) provenance.usageWindow = { ...page.usageWindow };
   if (page.contract !== undefined) provenance.contract = structuredClone(page.contract);
+  if (page.timestamp !== undefined) provenance.timestamp = page.timestamp.raw;
   if (page.generated !== undefined) provenance.generated = asWritten(page.generated);
   if (page.latestVerification !== undefined)
     provenance.latestVerification = asWritten(page.latestVerification);

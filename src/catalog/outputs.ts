@@ -120,6 +120,7 @@ export const ProvenanceSchema = z.strictObject({
   sources: z.array(SourceSchema),
   usageWindow: orOmitted(Window).optional(),
   contract: ContractSchema.optional(),
+  timestamp: orOmitted(z.string()).optional(),
   resource: z.string().optional(),
   replacement: z.string().optional(),
   frontmatter: z.record(z.string(), z.unknown()),
@@ -312,7 +313,7 @@ function typedField<T>(field: string, value: T): T | { omitted: string } {
  * field held to its own budget, so a page's typed fields survive the frontmatter's omission (D62, D78).
  */
 function projectProvenance(page: Page, now: Date): ProjectedProvenance {
-  const { sources, usageWindow, contract, ...rest } = provenanceOf(page, now);
+  const { sources, usageWindow, contract, timestamp, ...rest } = provenanceOf(page, now);
   const projected: ProjectedProvenance = {
     ...rest,
     sources: sources.map(({ effectiveWindow, ...source }) =>
@@ -327,6 +328,7 @@ function projectProvenance(page: Page, now: Date): ProjectedProvenance {
     };
   }
   if (usageWindow !== undefined) projected.usageWindow = typedField("usageWindow", usageWindow);
+  if (timestamp !== undefined) projected.timestamp = typedField("timestamp", timestamp);
   if (contract !== undefined) {
     const typed: NonNullable<ProjectedProvenance["contract"]> = {};
     if (contract.runtime !== undefined) typed.runtime = typedField("runtime", contract.runtime);

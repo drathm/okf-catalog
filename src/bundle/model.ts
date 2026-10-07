@@ -104,6 +104,8 @@ export type DegradationCode =
   | "body-html"
   | "body-unanalysed"
   | "body-truncated"
+  | "legacy-timestamp"
+  | "legacy-citations"
   | "index-lists-unserved"
   | "replacement-missing"
   | "replacement-broken"
@@ -170,6 +172,8 @@ export interface Page {
   statusRaw?: string;
   staleAfter?: StaleAfter;
   generated?: { by: string; at?: Timestamp };
+  /** The OKF 0.1 top-level `timestamp`, kept only when `generated` is absent (§13.1, D79); never a generator. */
+  timestamp?: Timestamp;
   verified: Verification[];
   /** The verification with the latest instant; among entries without one, the last listed. */
   latestVerification?: Verification;

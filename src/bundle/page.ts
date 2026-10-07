@@ -233,6 +233,9 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
     }
   }
 
+  /** A key written with no value is absent, as for every optional field. */
+  const absent = (key: string): boolean => data[key] === undefined || data[key] === null;
+
   const timestamp = (value: unknown, field: string): Timestamp => {
     const raw = typeof value === "string" ? value : JSON.stringify(value);
     const ts = parseTimestamp(raw);
@@ -256,6 +259,18 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
         `generated is ${kindOf(g)} without a by actor; ignored`,
       );
     }
+  }
+
+  // The OKF 0.1 `timestamp` (§13.1, D79): the page's last change when `generated` is absent, kept as its own field
+  // and reported. No generator is made from it, since `generated` needs a `by` (§5.2).
+  let legacyTimestamp: Timestamp | undefined;
+  if (absent("generated") && !absent("timestamp")) {
+    legacyTimestamp = timestamp(data.timestamp, "timestamp");
+    degrade(
+      "legacy-timestamp",
+      "timestamp",
+      "the OKF 0.1 timestamp is kept as the page's last change, since generated is absent; no generator is assumed",
+    );
   }
 
   const verified: Verification[] = [];
@@ -305,15 +320,21 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
             source.id = String(entry.id);
           if (typeof entry.title === "string") source.title = entry.title;
           if (typeof entry.author === "string") source.author = entry.author;
-          if (typeof entry.usage_count === "number") {
-            if (Number.isFinite(entry.usage_count)) source.usageCount = entry.usage_count;
-            else
-              degrade(
-                "source-malformed",
-                "sources",
-                `sources[${i}].usage_count is not a finite number; ignored`,
-              );
-          }
+          // A count that is not a finite number is dropped and reported, whatever it is (R4).
+          const count = entry.usage_count;
+          if (typeof count === "number" && Number.isFinite(count)) source.usageCount = count;
+          else if (typeof count === "number")
+            degrade(
+              "source-malformed",
+              "sources",
+              `sources[${i}].usage_count is not a finite number; ignored`,
+            );
+          else if (count !== undefined && count !== null)
+            degrade(
+              "source-malformed",
+              "sources",
+              `sources[${i}].usage_count is ${kindOf(count)}, not a number; ignored`,
+            );
           if (typeof entry.last_modified === "string") source.lastModified = entry.last_modified;
           const w = entry.usage_window;
           if (isRecord(w) && typeof w.from === "string" && typeof w.to === "string")
@@ -326,6 +347,28 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
     } else {
       degrade("source-malformed", "sources", `sources is ${kindOf(s)}, not a list; ignored`);
     }
+  }
+  // The OKF 0.1 `# Citations` list (§13.1, D63): sources only on a page that carries none of the v0.2 fields that
+  // replaced it, so a v0.2 page's own list of citations stays body text. One link gives a resource and a title;
+  // anything else, a bare URL included (autolinks are not parsed), gives its text as the resource.
+  if (
+    absent("generated") &&
+    absent("verified") &&
+    absent("sources") &&
+    facts.citations.length > 0
+  ) {
+    for (const citation of facts.citations) {
+      sources.push(
+        citation.url === undefined
+          ? { resource: citation.text }
+          : { resource: citation.url, title: citation.text },
+      );
+    }
+    degrade(
+      "legacy-citations",
+      "sources",
+      `${facts.citations.length} item${facts.citations.length === 1 ? "" : "s"} of an OKF 0.1 # Citations list read as sources, since the page has no generated, verified or sources`,
+    );
   }
 
   let usageWindow: Page["usageWindow"];
@@ -402,6 +445,7 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
   if (statusResult.raw !== undefined) page.statusRaw = statusResult.raw;
   if (staleAfter !== undefined) page.staleAfter = staleAfter;
   if (generated !== undefined) page.generated = generated;
+  if (legacyTimestamp !== undefined) page.timestamp = legacyTimestamp;
   const latest = latestVerification(verified);
   if (latest !== undefined) page.latestVerification = latest;
   if (usageWindow !== undefined) page.usageWindow = usageWindow;

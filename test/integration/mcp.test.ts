@@ -5,9 +5,11 @@ import {
 } from "@modelcontextprotocol/client";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
+import { PageOutputSchema } from "../../src/catalog/outputs.js";
 import type { Generation, Runtime, ToolOptions } from "../../src/catalog/runtime.js";
 import { MARKER } from "../../src/catalog/text.js";
 import { createServerFactory, INSTRUCTIONS } from "../../src/mcp/server.js";
+import { APPENDIX_A_V01 } from "../helpers/appendix-a.js";
 import { fakeRuntime, loadGeneration } from "../helpers/fake-runtime.js";
 import { NOW, readFixture } from "../helpers/fixtures.js";
 
@@ -473,6 +475,36 @@ describe("bite 4 build review, round 2", () => {
     expect(orders?.resource).toMatch(/bigquery/);
     expect(orders?.citation).toContain("2 sources");
     expect(orders?.citation).toContain("resource: https://console.cloud.google.com/bigquery");
+  });
+});
+
+describe("get_page and the OKF 0.1 fallbacks (R5, R6)", () => {
+  it("serves Appendix A's v0.1 page through get_page with its timestamp and sources", async () => {
+    const generation = loadGeneration(
+      [{ path: "metrics/income-statement.md", bytes: Buffer.from(APPENDIX_A_V01) }],
+      { integrity: "none" },
+      NOW,
+    );
+    expect(generation.catalog.pages.size).toBe(1);
+    const s = await session(fakeRuntime(generation));
+    const r = await s.call("get_page", { path: "metrics/income-statement.md" });
+    expect(r.isError).not.toBe(true);
+    const structured = r.structuredContent as {
+      provenance: {
+        timestamp?: unknown;
+        generated?: unknown;
+        sources: Array<{ resource: string }>;
+      };
+    };
+    expect(structured.provenance.timestamp).toBe("2026-05-28T22:53:05+00:00");
+    expect(structured.provenance.generated).toBeUndefined();
+    expect(structured.provenance.sources.map((x) => x.resource)).toEqual([
+      "https://wiki.acme/finance/fpa-handbook",
+      "https://wiki.acme/finance/revenue-recognition",
+      "https://wiki.acme/finance/cost-allocation",
+    ]);
+    expect(() => PageOutputSchema.parse(structured)).not.toThrow();
+    expect(text(r).split("\n")[0]).toContain("sources: https://wiki.acme/finance/fpa-handbook");
   });
 });
 
