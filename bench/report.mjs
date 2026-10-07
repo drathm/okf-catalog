@@ -132,7 +132,8 @@ out.push("## Where the gold page was not first\n");
 out.push(
   "| Configuration | Question | Style | Gold rank | Rung | Terms sent | First hit |\n|---|---|---|---|---|---|---|",
 );
-for (const r of rows) {
+// The lexical note reads the lexical rows only; a run with modes appends mode rows to the same file.
+for (const r of rows.filter((x) => x.config !== undefined)) {
   if (r.rank !== 1) {
     out.push(
       `| ${r.config} | ${r.id} | ${r.style} | ${r.rank ?? "miss"} | ${r.rung} | ${r.terms.join(" ")} | ${r.top5[0] ? `\`${r.top5[0]}\`` : "(no hits)"} |`,
@@ -159,19 +160,21 @@ out.push(
 out.push(
   `| Process RSS after the run | ${Math.round(m.memory.rssAfterBytes / 1024 / 1024)} MiB (walked files, catalog and qmd store all resident) |`,
 );
+const lexicalRows = rows.filter((x) => x.config !== undefined);
 const byConfig = new Map();
-for (const r of rows) byConfig.set(r.config, [...(byConfig.get(r.config) ?? []), r.ms]);
+for (const r of lexicalRows) byConfig.set(r.config, [...(byConfig.get(r.config) ?? []), r.ms]);
 for (const [k, v] of byConfig)
   out.push(
     `| Query latency, ${k} | median ${median(v).toFixed(1)} ms, max ${Math.max(...v).toFixed(1)} ms |`,
   );
 const rowsBy = new Map();
-for (const r of rows) rowsBy.set(r.config, [...(rowsBy.get(r.config) ?? []), r.rowsFetched ?? 0]);
+for (const r of lexicalRows)
+  rowsBy.set(r.config, [...(rowsBy.get(r.config) ?? []), r.rowsFetched ?? 0]);
 for (const [k, v] of rowsBy)
   out.push(
     `| Rows fetched per search, ${k} | median ${median(v)}, max ${Math.max(...v)} (every row carries its page body) |`,
   );
-const relaxedRows = rows.filter((r) => r.config === "question/relaxed");
+const relaxedRows = lexicalRows.filter((r) => r.config === "question/relaxed");
 out.push(
   `| Questions with a term at the frequency floor (question/relaxed) | ${relaxedRows.filter((r) => (r.floored ?? []).length > 0).length} of ${relaxedRows.length} |`,
 );
