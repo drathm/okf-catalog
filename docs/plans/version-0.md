@@ -307,7 +307,7 @@ Every row of the field table in intent §6 maps to one function and one test. Th
 | `generated` in provenance | `provenance.ts` | `provenance.test.ts` |
 | Trust tier per §5.3; bare mapping as a one-element list; tie-break | `page.ts deriveTrust`, `search.ts rank` | `page.test.ts trust/*`, `search.test.ts tiebreak` |
 | Sources with ids and credibility signals; footnote resolution | `page.ts parseSources`, `provenance.ts` | `provenance.test.ts sources` |
-| `resource` returned | `provenance.ts` | |
+| `resource` returned on `get_page` and on hits, with the source count | `provenance.ts`, `search.ts shape`, `text.ts hitLine` | `bite4-review.test.ts`, `mcp.test.ts` ("carries the source count…") |
 | Links resolved, bundle-absolute and relative; broken reported, never refused | `links.ts resolve`, `contract.ts` | `links.test.ts`, `contract.test.ts broken-link` |
 | `index.md` routed as a reserved file, served, excluded from the index, generated when missing; root `okf_version` kept | `reserved.ts`, `index-file.ts parse/generate`, `catalog/model.ts` | `reserved.test.ts`, `index-file.test.ts roundtrip`, `load.test.ts folder-without-index` |
 | `log.md` routed as a reserved file, excluded, served on request | `reserved.ts`, `mcp/tools.ts get_page` | `reserved.test.ts log` |
@@ -450,11 +450,13 @@ search:   { question: string (1..500)  "Keywords, or a short question; one conce
                                          and when nothing matches every word the match is relaxed and the result says so.",
             type?: string, topic?: string, include_stale?: boolean = false, limit?: integer 1..25 = config.limit_default }
           → structuredContent: SearchResponse; content: one text block, a header line with the strategy and the terms used,
-            then one line per hit:
-            "<path> — <title> [<type>, <status>, <trust>, <recheck <raw> | overdue since <raw> | no recheck date>] <snippet>"
+            then one line per hit ("0 hits: no page matched" when there is none):
+            "<path> — <title> [<type>, <status>, <trust>, <recheck <raw> | overdue since <raw> | no recheck date>,
+                               <N sources | no sources>(, resource: <uri>)?] "<snippet, its quotation marks escaped>"
 get_page: { path: string } → structuredContent: { provenance: Provenance; body: string }; content: a provenance header, then the body
 catalog:  { folder?: string } → content: the index text; structuredContent: { folder, source: 'file' | 'generated', entries }
-status:   {} → structuredContent: Report & { commit, pulledAt, engine }; content: a short text summary
+status:   {} → structuredContent: Report & { commit, pulledAt, engine, overdue, lock, lastAttempt, refusing }; content: one line of counts
+          (admitted, excluded, overdue, refusals, degradations, integrity, engine, lock, loaded, last attempt, the lists as counts)
 ```
 
 All four carry `annotations: { readOnlyHint: true }` and an `outputSchema`. The provenance header names the verifier and date when `verified` is non-empty and says `unverified` otherwise.
