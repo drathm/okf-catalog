@@ -175,11 +175,16 @@ describe("the publish loop", { timeout: 120_000 }, () => {
     ]);
     // okflint 0.5.0 resolves the manifest's roots against the manifest's folder and fails on a target outside them,
     // so the packed folder is checked through a copy of the manifest whose root path holds a copy of the pack.
-    const mirrored = /^okflint validate --manifest (.+)\/okf-base\.yaml \1\/src\/kb$/.exec(calls[2] ?? "");
+    const mirrored = /^okflint validate --manifest (.+)\/okf-base\.yaml \1\/src\/kb$/.exec(
+      calls[2] ?? "",
+    );
     expect(mirrored, calls[2]).not.toBeNull();
     expect(mirrored?.[1]).not.toBe(root);
     expect(calls[3]).toBe("okflint saw-manifest");
-    expect(calls.slice(4)).toEqual([`okf-schema validate --path ${packed1}`, "okf-schema saw-manifest"]);
+    expect(calls.slice(4)).toEqual([
+      `okf-schema validate --path ${packed1}`,
+      "okf-schema saw-manifest",
+    ]);
     expect(JSON.parse(readFileSync(join(packed1, "manifest.json"), "utf8")).commit).toBe(sha1);
 
     // push.sh: the published branch appears, parent-linked from now on.
