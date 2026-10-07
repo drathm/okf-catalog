@@ -21,7 +21,7 @@ export interface MissingModel {
 }
 export const MODELS: readonly ModelEntry[];
 export const MODES: Readonly<
-  Record<"vector" | "fused" | "hybrid" | "full", readonly ModelEntry["key"][]>
+  Record<"vector" | "fused" | "hybrid" | "full" | "rerank", readonly ModelEntry["key"][]>
 >;
 export function modelsFor(modes: readonly string[]): ModelEntry[];
 export function modelPath(dir: string, entry: ModelEntry): string;

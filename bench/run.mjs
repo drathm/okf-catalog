@@ -5,7 +5,9 @@
 // as the filter, with its type as the filter, and with a relaxed per-term pool of 100. With --modes it then
 // opens qmd's store itself over the same index and runs the modes decision D7 waits for: `vector` (the
 // embedding model alone), `fused` (okf-catalog's production ladder fused with the vectors by reciprocal rank
-// in this harness), `hybrid` (qmd's own pipeline without the reranker) and `full` (qmd's pipeline with it).
+// in this harness), `hybrid` (qmd's own pipeline without the reranker), `full` (qmd's pipeline with it) and,
+// from bite 7, `rerank` (the ladder's twenty candidates, in the question and the keyword form, re-ranked by the
+// reranker alone, reported by raw score and by qmd's position blend).
 // The models are never downloaded here: they must already be in bench/.models/, put there by
 // bench/pull-models.mjs, which is the maintainer's approval (invariant 6). Writes one JSON line per question
 // per configuration, a summary with the run's metadata, and nothing else; the work folder is removed at the
@@ -93,6 +95,7 @@ if (modes.length > 0) {
     "QMD_LLAMA_GPU",
     "QMD_FORCE_CPU",
     "NODE_LLAMA_CPP_GPU",
+    "QMD_RERANK_CONTEXT_SIZE",
   ];
   const preset = guarded.filter((v) => process.env[v] !== undefined);
   if (preset.length > 0) {
@@ -303,8 +306,14 @@ const CONFIGS = [
   },
   // The ladder twenty deep, cut to five for the rank: the control for the fusion mode, which fuses this list.
   { key: "question/relaxed@20", form: "question", limit: 20, request: () => ({ relax: true }) },
+  // The keyword form twenty deep, cut to five: production's input (D31) and the control for its re-ranking.
+  { key: "keywords/relaxed@20", form: "keywords", limit: 20, request: () => ({ relax: true }) },
+  // The production limit, eight, cut to five for the rank, in both forms (bite 7 review R6).
+  { key: "question/relaxed@8", form: "question", limit: 8, request: () => ({ relax: true }) },
+  { key: "keywords/relaxed@8", form: "keywords", limit: 8, request: () => ({ relax: true }) },
 ];
 const policyLists = new Map();
+const keywordLists = new Map();
 /** Content terms of the question (as the ladder sent them) that the gold page's own text carries. */
 const sharedTerms = new Map();
 const tokensOf = (text) =>
@@ -330,6 +339,9 @@ for (const config of CONFIGS) {
     outcomes.set(q.id, rank);
     if (config.key === "question/relaxed@20") {
       policyLists.set(q.id, { paths: r.hits.map((h) => h.path), terms: r.terms });
+    }
+    if (config.key === "keywords/relaxed@20") {
+      keywordLists.set(q.id, { paths: r.hits.map((h) => h.path), terms: r.terms });
     }
     if (config.key === "question/relaxed") {
       const page = catalog.pages.get(q.gold);
@@ -501,14 +513,21 @@ if (modes.length > 0) {
     if (known !== undefined && decodeDisplay(`bench/${encodePath(known)}`) !== known) {
       throw new Error(`the codec does not round-trip ${known}`);
     }
-    const embedStarted = performance.now();
-    const embedded = await store.embed({ collection: "bench" });
-    const embedMs = Math.round(performance.now() - embedStarted);
-    const status = await store.getStatus();
-    if (embedded.errors !== 0 || !status.hasVectorIndex || status.needsEmbedding !== 0) {
-      throw new Error(
-        `embedding incomplete: ${embedded.errors} errors, vector index ${status.hasVectorIndex}, ${status.needsEmbedding} still to embed`,
-      );
+    // The vector index is built only for the modes that read it: `rerank` alone leaves the embedder untouched
+    // (bite 7 review R4), so a run of it neither loads an unhashed model nor builds an index it never uses.
+    const needsEmbedder = modes.some((mode) => MODES[mode].includes("embed"));
+    let embedded = null;
+    let embedMs = null;
+    if (needsEmbedder) {
+      const embedStarted = performance.now();
+      embedded = await store.embed({ collection: "bench" });
+      embedMs = Math.round(performance.now() - embedStarted);
+      const status = await store.getStatus();
+      if (embedded.errors !== 0 || !status.hasVectorIndex || status.needsEmbedding !== 0) {
+        throw new Error(
+          `embedding incomplete: ${embedded.errors} errors, vector index ${status.hasVectorIndex}, ${status.needsEmbedding} still to embed`,
+        );
+      }
     }
     memory.afterEmbed = rss();
     const dbBytesAfterEmbed = statSync(dbPath).size;
@@ -603,16 +622,167 @@ if (modes.length > 0) {
         lexString: [...ftsQueries].join(" | "),
       };
     };
+    // --- the ladder re-ranked (bite 7) ------------------------------------------------------------------------
+    // The reranker gets what qmd's own pipeline hands it: one chunk per candidate, cut by qmd's chunker from the
+    // derived document as indexed, the chunk with the most query terms (terms longer than two characters, as a
+    // substring), and the reranker's own token budget; nothing else is capped here. One scoring pass per question
+    // and form gives two orders: the raw score (ties in ladder order) and qmd's Step 7 blend over the ladder's
+    // positions (0.75, 0.60 and 0.40 by rank band), which never displaces the ladder's first result.
+    const RERANK_FORMS = ["question", "keywords"];
+    const rerankKeys = RERANK_FORMS.flatMap((form) => [`rerank/${form}`, `rerank-blend/${form}`]);
+    const rerankCalls = { count: 0, documents: 0 };
+    if (modes.includes("rerank")) {
+      const inner = llm.rerank.bind(llm);
+      llm.rerank = async (query, documents, options) => {
+        rerankCalls.count += 1;
+        rerankCalls.documents += documents.length;
+        return inner(query, documents, options);
+      };
+    }
+    const derivedText = (path) => {
+      const file = join(work, "derived", encodePath(path));
+      if (!existsSync(file)) throw new Error(`no derived document for ${path} at ${file}`);
+      return readFileSync(file, "utf8");
+    };
+    const bestChunk = async (path, queryTerms) => {
+      const chunks = await storeModule.chunkDocumentAsync(
+        derivedText(path),
+        undefined,
+        undefined,
+        undefined,
+        encodePath(path),
+        "regex",
+      );
+      if (chunks.length === 0) throw new Error(`the chunker returned nothing for ${path}`);
+      let bestIdx = 0;
+      let bestScore = -1;
+      for (let i = 0; i < chunks.length; i += 1) {
+        const lower = chunks[i].text.toLowerCase();
+        const score = queryTerms.reduce((acc, term) => acc + (lower.includes(term) ? 1 : 0), 0);
+        if (score > bestScore) {
+          bestScore = score;
+          bestIdx = i;
+        }
+      }
+      return {
+        path,
+        index: bestIdx,
+        length: chunks[bestIdx].text.length,
+        count: chunks.length,
+        text: chunks[bestIdx].text,
+      };
+    };
+    const blendWeight = (rank) => (rank <= 3 ? 0.75 : rank <= 10 ? 0.6 : 0.4);
+    const rerankList = async (query, candidates, validate = true) => {
+      const queryTerms = query
+        .toLowerCase()
+        .split(/\s+/)
+        .filter((t) => t.length > 2);
+      const chunks = [];
+      for (const path of candidates) chunks.push(await bestChunk(path, queryTerms));
+      const documents = chunks.map((c) => ({ file: c.path, text: c.text }));
+      // qmd caches a score by query, model and chunk text and skips the model for a cached chunk, so every pass
+      // here starts from an empty cache and is a real scoring pass; identical chunk texts are scored once.
+      if (validate) store.internal.clearCache();
+      const distinctTexts = new Set(documents.map((d) => d.text)).size;
+      const before = { ...rerankCalls };
+      const started = performance.now();
+      const scored = await store.internal.rerank(query, documents);
+      const rerankMs = Math.round((performance.now() - started) * 10) / 10;
+      const scoreOf = new Map(scored.map((r) => [r.file, r.score]));
+      const scores = candidates.map((path) => scoreOf.get(path));
+      if (validate) {
+        // A reranker that never ran, missed a candidate, or scored them all alike (qmd's 0.5 fallback, or a
+        // no-op) would sort the list back into ladder order and look like a result; it fails the run instead.
+        if (
+          rerankCalls.count === before.count ||
+          rerankCalls.documents - before.documents < distinctTexts
+        )
+          throw new Error(`the reranker did not score every candidate of ${JSON.stringify(query)}`);
+        if (scores.some((x) => typeof x !== "number" || Number.isNaN(x)))
+          throw new Error(`a candidate of ${JSON.stringify(query)} came back without a score`);
+        if (scores.length > 1 && new Set(scores).size === 1)
+          throw new Error(
+            `the reranker scored every candidate of ${JSON.stringify(query)} alike (${scores[0]}): a no-op or qmd's fallback`,
+          );
+      }
+      const order = (score) =>
+        candidates
+          .map((path, i) => ({ path, i, score: score(i) }))
+          .sort((a, b) => b.score - a.score || a.i - b.i)
+          .map((x) => x.path);
+      const byScore = order((i) => scores[i]);
+      const blended = order((i) => {
+        const rank = i + 1;
+        const w = blendWeight(rank);
+        return w * (1 / rank) + (1 - w) * scores[i];
+      });
+      return {
+        scores,
+        chunks: chunks.map(({ text: _text, ...rest }) => rest),
+        byScore,
+        blended,
+        rerankMs,
+      };
+    };
     const runs = [];
-    const modeSamples = (mode) => (mode === "hybrid" || mode === "full" ? samples : 1);
+    const modeSamples = (mode) =>
+      mode === "hybrid" || mode === "full" || mode === "rerank" ? samples : 1;
     const modeLoad = {};
+    const modeMemory = {};
     for (const mode of modes) {
       // The first call of a mode loads its models; timed apart from the questions, on a query no question uses.
       store.internal.clearCache();
+      modeMemory[mode] = { rssBeforeWarmUp: rss() };
       const loadStarted = performance.now();
       if (mode === "vector" || mode === "fused") await vectorPaths("warm up the embedding model");
+      else if (mode === "rerank")
+        await rerankList("warm up the reranker", [questions[0].gold], false);
       else await qmdPipeline("warm up the language models", mode === "hybrid");
       modeLoad[mode] = Math.round(performance.now() - loadStarted);
+      modeMemory[mode].rssAfterWarmUp = rss();
+      if (mode === "rerank") {
+        for (let sample = 1; sample <= modeSamples(mode); sample += 1) {
+          store.internal.clearCache();
+          const outcomes = Object.fromEntries(rerankKeys.map((k) => [k, new Map()]));
+          for (const q of questions) {
+            for (const form of RERANK_FORMS) {
+              const list =
+                (form === "question" ? policyLists : keywordLists).get(q.id)?.paths ?? [];
+              const query = textOf(q, form);
+              const r = await rerankList(query, list);
+              const goldAt = list.indexOf(q.gold);
+              const goldInCandidates = goldAt === -1 ? null : goldAt + 1;
+              for (const [key, ordered] of [
+                [`rerank/${form}`, r.byScore],
+                [`rerank-blend/${form}`, r.blended],
+              ]) {
+                const top5 = ordered.slice(0, 5);
+                const position = top5.indexOf(q.gold);
+                const rank = position === -1 ? null : position + 1;
+                outcomes[key].set(q.id, rank);
+                emit({
+                  mode: key,
+                  sample,
+                  id: q.id,
+                  style: q.style,
+                  form,
+                  shared: sharedTerms.get(q.id) ?? null,
+                  rank,
+                  top5,
+                  candidates: list,
+                  goldInCandidates,
+                  ...(key.startsWith("rerank/") ? { scores: r.scores, chunks: r.chunks } : {}),
+                  rerankMs: r.rerankMs,
+                  ms: r.rerankMs,
+                });
+              }
+            }
+          }
+          for (const key of rerankKeys) runs.push({ mode: key, sample, outcomes: outcomes[key] });
+        }
+        continue;
+      }
       for (let sample = 1; sample <= modeSamples(mode); sample += 1) {
         store.internal.clearCache();
         const outcomes = new Map();
@@ -665,7 +835,8 @@ if (modes.length > 0) {
       return { min: s[0], median, max: s[s.length - 1] };
     };
     const perMode = {};
-    for (const mode of modes) {
+    const modeKeys = modes.flatMap((mode) => (mode === "rerank" ? rerankKeys : [mode]));
+    for (const mode of modeKeys) {
       const own = runs.filter((r) => r.mode === mode);
       const summaries = own.map((r) => summarise(r.outcomes));
       const against = {};
@@ -674,6 +845,9 @@ if (modes.length > 0) {
         "question/relaxed@20",
         "question/strict",
         "keywords/relaxed",
+        "keywords/relaxed@20",
+        "question/relaxed@8",
+        "keywords/relaxed@8",
       ]) {
         against[base] = own.map((r) => pairOutcomes(r.outcomes, ranks.get(base)));
       }
@@ -685,7 +859,7 @@ if (modes.length > 0) {
       const metric = (pick) => stats(summaries.map((s) => pick(s)));
       perMode[mode] = {
         samples: own.length,
-        modelLoadMs: modeLoad[mode],
+        modelLoadMs: modeLoad[mode.startsWith("rerank") ? "rerank" : mode],
         each: summaries,
         overall: {
           "hit@1": metric((s) => s.all["hit@1"]),
@@ -727,12 +901,26 @@ if (modes.length > 0) {
       ).version,
       device,
       llama: llama === null ? null : { gpu: llama.gpu },
-      embed: {
-        ms: embedMs,
-        docsProcessed: embedded.docsProcessed,
-        chunksEmbedded: embedded.chunksEmbedded,
-        errors: embedded.errors,
-      },
+      embed:
+        embedded === null
+          ? null
+          : {
+              ms: embedMs,
+              docsProcessed: embedded.docsProcessed,
+              chunksEmbedded: embedded.chunksEmbedded,
+              errors: embedded.errors,
+            },
+      memoryByMode: modeMemory,
+      rerank: modes.includes("rerank")
+        ? {
+            contextSize: llmModule.LlamaCpp.RERANK_CONTEXT_SIZE,
+            contexts: llm.rerankContexts?.length ?? null,
+            chunkChars: storeModule.CHUNK_SIZE_CHARS,
+            samples: modeSamples("rerank"),
+            calls: rerankCalls,
+            forms: RERANK_FORMS,
+          }
+        : null,
       dbBytesBefore,
       dbBytesAfterEmbed,
       dbBytesAfterModes: statSync(dbPath).size,
@@ -795,7 +983,10 @@ for (const q of questions) {
 // `bench/report.mjs` rewrites from this run and which are therefore never the code that produced it.
 const porcelain = (git(["status", "--porcelain", "--untracked-files=no"], repo) ?? "")
   .split("\n")
-  .filter((line) => line.length > 0 && !/docs\/research\/benchmark-(lexical|modes)\.md$/.test(line))
+  .filter(
+    (line) =>
+      line.length > 0 && !/docs\/research\/benchmark-(lexical|modes|rerank)\.md$/.test(line),
+  )
   .join("\n");
 const meta = {
   ran: new Date().toISOString(),

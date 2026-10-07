@@ -196,8 +196,12 @@ if (onCorpus) {
   process.stdout.write("a run over another bundle: the lexical note is not rewritten\n");
 }
 
-if (S.modes !== null && S.modes !== undefined) {
-  const M = S.modes;
+const M = S.modes ?? null;
+const bite6Modes =
+  M === null ? [] : ["vector", "fused", "hybrid", "full"].filter((k) => k in M.perMode);
+// Bite 6's note is written only by a run that measured one of its modes; a `rerank`-only run (bite 7) leaves
+// it alone and writes its own note below, so the numbers D51 and D7 quote are never re-sampled by accident.
+if (M !== null && bite6Modes.length > 0) {
   const fmtStat = (s) => (s.min === s.max ? `${s.min}` : `${s.min} / ${s.median} / ${s.max}`);
   const fmtMode = (v) =>
     `${fmtStat(v["hit@1"])} | ${fmtStat(v["hit@3"])} | ${fmtStat({ min: v["MRR@5"].min.toFixed(2), median: v["MRR@5"].median.toFixed(2), max: v["MRR@5"].max.toFixed(2) })}`;
@@ -351,6 +355,177 @@ if (S.modes !== null && S.modes !== undefined) {
   const target = onCorpus
     ? join(here, "..", "docs", "research", "benchmark-modes.md")
     : join(dirname(summaryPath), "benchmark-modes.md");
+  writeFileSync(target, note.join("\n"));
+  process.stdout.write(`wrote ${target} from ${summaryPath}\n`);
+}
+
+if (M !== null && Object.keys(M.perMode).some((k) => k.startsWith("rerank"))) {
+  const R = M.rerank ?? {};
+  const forms = R.forms ?? ["question", "keywords"];
+  const controlFor = { question: "question/relaxed@20", keywords: "keywords/relaxed@20" };
+  const rerankKeys = Object.keys(M.perMode)
+    .filter((k) => k.startsWith("rerank"))
+    .sort();
+  const rerankRows = rows.filter((r) => typeof r.mode === "string" && r.mode.startsWith("rerank"));
+  const sampleCount = new Set(rerankRows.map((r) => r.sample)).size;
+  const controlRank = (config, id) =>
+    rows.find((r) => r.config === config && r.id === id)?.rank ?? null;
+  const fmtStat = (x) => (x.min === x.max ? `${x.min}` : `${x.min} / ${x.median} / ${x.max}`);
+  const fmtMode = (v) =>
+    `${fmtStat(v["hit@1"])} | ${fmtStat(v["hit@3"])} | ${fmtStat({ min: v["MRR@5"].min.toFixed(2), median: v["MRR@5"].median.toFixed(2), max: v["MRR@5"].max.toFixed(2) })}`;
+  const mb = (bytes) => `${Math.round(bytes / 1_048_576)} MB`;
+  const note = [];
+  note.push("# The ladder re-ranked, bite 7\n");
+  note.push(
+    `Run ${m.ran.slice(0, 10)} on ${m.os}, Node ${m.node}, qmd ${m.qmd}, node-llama-cpp ${M.nodeLlamaCpp}, ${commitLine}${M.stub ? ", with the STUB reranker (a measurement of the harness, not of a model)" : ""}.\n`,
+  );
+  note.push("## Why\n");
+  note.push(
+    "Bite 6 compared the production lexical ladder with qmd's vector, fused, hybrid and full modes and left D7's reservation narrowed but open. It never measured the cheapest middle option: the ladder's own twenty candidates re-ranked by the reranker model alone, with no embedding index and no expansion model. This note is that measurement. Its bar was written before the run (`docs/plans/version-0-progress.md`, bite 7 plan, revised), and the run is a separate process from bite 6's, whose note stands as it was.\n",
+  );
+  note.push("## Method\n");
+  note.push(
+    `For each of the ${m.pages.questions} questions, in two forms (the question text and the keyword string, production's input), the ladder's list twenty deep (\`question/relaxed@20\`, \`keywords/relaxed@20\`) is handed to qmd's reranker as qmd's own pipeline hands it: one chunk per candidate, cut by qmd's chunker from the derived document as indexed (${R.chunkChars ?? "3600"} characters a chunk), the chunk with the most query terms longer than two characters, and the reranker's own token budget (context ${R.contextSize ?? "?"} tokens${R.contexts === null || R.contexts === undefined ? "" : `, ${R.contexts} contexts`}). qmd's cache is emptied before every pass, so every pass is a real scoring pass; the run fails when a candidate comes back unscored or every score is alike. From one pass two orders are reported: \`rerank\` (the raw score, ties in ladder order) and \`rerank-blend\` (qmd's Step 7 rule over the ladder's positions, weights 0.75, 0.60 and 0.40 by rank band, which cannot displace the ladder's first result). The rank is the gold page's position in the top five; the controls are the same lists cut to five, D51's anchor \`question/relaxed\`, and the production limit (\`@8\`). ${sampleCount} sample(s), the cache emptied between them.\n`,
+  );
+  note.push("## Results\n");
+  note.push("| List or order | samples | hit@1 | hit@3 | MRR@5 |\n|---|---|---|---|---|");
+  for (const base of [
+    "question/relaxed",
+    "question/relaxed@8",
+    "question/relaxed@20",
+    "keywords/relaxed",
+    "keywords/relaxed@8",
+    "keywords/relaxed@20",
+  ]) {
+    const v = S.summary[base]?.all;
+    if (v)
+      note.push(
+        `| ${base} (lexical) | 1 | ${v["hit@1"]}/${v.n} | ${v["hit@3"]}/${v.n} | ${v["MRR@5"].toFixed(2)} |`,
+      );
+  }
+  for (const key of rerankKeys)
+    note.push(`| ${key} | ${M.perMode[key].samples} | ${fmtMode(M.perMode[key].overall)} |`);
+  for (const form of forms) {
+    const first = rerankRows.filter((r) => r.mode === `rerank/${form}` && r.sample === 1);
+    const present = first.filter((r) => r.goldInCandidates !== null).length;
+    note.push(
+      `\nCeiling, ${form} form: the gold page is among the twenty candidates for ${present} of ${first.length} questions (its positions in ladder order: ${first.map((r) => r.goldInCandidates ?? "none").join(", ")}); no re-ranking of this list can lift hit@1 above ${present}.`,
+    );
+  }
+  for (const form of forms) {
+    note.push(`\n### Per question, ${form} form, sample 1\n`);
+    note.push(
+      "| Question | style | ladder @20, cut to five | rerank | rerank-blend | gold at | gold score | top score | gold chunk (index of count, chars) | ms |\n|---|---|---|---|---|---|---|---|---|---|",
+    );
+    for (const r of rerankRows.filter((x) => x.mode === `rerank/${form}` && x.sample === 1)) {
+      const blend = rerankRows.find(
+        (b) => b.mode === `rerank-blend/${form}` && b.sample === 1 && b.id === r.id,
+      );
+      const gi = r.goldInCandidates === null ? -1 : r.goldInCandidates - 1;
+      const goldScore = gi >= 0 ? r.scores[gi] : null;
+      const top = r.scores.length > 0 ? Math.max(...r.scores) : null;
+      const chunk = gi >= 0 ? r.chunks[gi] : null;
+      note.push(
+        `| ${r.id} | ${r.style} | ${controlRank(controlFor[form], r.id) ?? "none"} | ${r.rank ?? "none"} | ${blend?.rank ?? "none"} | ${r.goldInCandidates ?? "none"} | ${goldScore === null ? "–" : goldScore.toFixed(3)} | ${top === null ? "–" : top.toFixed(3)} | ${chunk ? `${chunk.index + 1} of ${chunk.count}, ${chunk.length}` : "–"} | ${r.rerankMs} |`,
+      );
+    }
+  }
+  note.push("\n## Paired by question, per sample (first better / first worse / same)\n");
+  note.push(
+    "| Order | against the same list cut to five | against question/relaxed | against keywords/relaxed |\n|---|---|---|---|",
+  );
+  for (const key of rerankKeys) {
+    const form = key.split("/")[1];
+    const v = M.perMode[key];
+    const cell = (list) => (list ?? []).map((p) => `${p.better}/${p.worse}/${p.same}`).join(", ");
+    note.push(
+      `| ${key} | ${cell(v.paired[controlFor[form]])} | ${cell(v.paired["question/relaxed"])} | ${cell(v.paired["keywords/relaxed"])} |`,
+    );
+  }
+  // The bar, as written before the run, on the raw-score order against the same list cut to five.
+  const hitChanges = (form, k) => {
+    const out = [];
+    for (let sample = 1; sample <= sampleCount; sample += 1) {
+      let gains = 0;
+      let losses = 0;
+      for (const r of rerankRows.filter(
+        (x) => x.mode === `rerank/${form}` && x.sample === sample,
+      )) {
+        const c = controlRank(controlFor[form], r.id);
+        const controlHit = c !== null && c <= k;
+        const hit = r.rank !== null && r.rank <= k;
+        if (hit && !controlHit) gains += 1;
+        if (controlHit && !hit) losses += 1;
+      }
+      out.push({ gains, losses });
+    }
+    return out;
+  };
+  const mrrOf = (ranks) =>
+    ranks.reduce((a, r) => a + (r === null ? 0 : 1 / r), 0) / (ranks.length || 1);
+  const mrrDelta = (form) => {
+    const out = [];
+    for (let sample = 1; sample <= sampleCount; sample += 1) {
+      const own = rerankRows.filter((x) => x.mode === `rerank/${form}` && x.sample === sample);
+      const delta =
+        mrrOf(own.map((r) => r.rank)) - mrrOf(own.map((r) => controlRank(controlFor[form], r.id)));
+      out.push(Math.round(delta * 1000) / 1000);
+    }
+    return out;
+  };
+  const latencies = rerankRows
+    .filter((r) => r.mode.startsWith("rerank/"))
+    .map((r) => r.rerankMs)
+    .sort((a, b) => a - b);
+  const medianMs = latencies.length ? latencies[Math.floor(latencies.length / 2)] : null;
+  const maxMs = latencies.length ? latencies[latencies.length - 1] : null;
+  const mem = M.memoryByMode?.rerank;
+  const growth = mem ? mem.rssAfterWarmUp - mem.rssBeforeWarmUp : null;
+  const kw1 = hitChanges("keywords", 1);
+  const kw3 = hitChanges("keywords", 3);
+  const q1 = hitChanges("question", 1);
+  const kwMrr = mrrDelta("keywords");
+  const c1 = kw1.every((x) => x.losses <= 1) && kw3.every((x, i) => x.gains >= 1 || kwMrr[i] > 0);
+  const c2 = q1.every((x) => x.gains >= 3 && x.losses <= 1);
+  const c3 = medianMs !== null && medianMs <= 1000;
+  const c4 = growth !== null && growth <= 1073741824;
+  const verdict = (ok) => (ok ? "met" : "not met");
+  note.push("\n## Against the bar\n");
+  note.push(
+    `Four conditions, written before the run, on the raw-score order against the same list cut to five; every sample must meet each.\n\n1. Keyword form: at most one question lost at hit@1 (lost per sample: ${kw1.map((x) => x.losses).join(", ")}; gained: ${kw1.map((x) => x.gains).join(", ")}), and at least one gained at hit@3 (per sample: ${kw3.map((x) => x.gains).join(", ")}) or a higher MRR@5 (delta per sample: ${kwMrr.join(", ")}): ${verdict(c1)}.\n2. Question form: at least three questions gained at hit@1 and at most one lost (gained: ${q1.map((x) => x.gains).join(", ")}; lost: ${q1.map((x) => x.losses).join(", ")}): ${verdict(c2)}.\n3. Latency: median per pass at most 1 000 ms (median ${medianMs} ms, maximum ${maxMs} ms, over ${latencies.length} passes with the model loaded): ${verdict(c3)}.\n4. Memory: the resident set grows by at most 1.0 GiB when the reranker loads (${growth === null ? "not recorded" : `${mb(mem.rssBeforeWarmUp)} before the warm-up, ${mb(mem.rssAfterWarmUp)} after, ${mb(growth)} more`}): ${verdict(c4)}.\n\n**Verdict: ${c1 && c2 && c3 && c4 ? "the bar is met; the proposal is an optional rerank step over the ladder behind a configuration flag, as D7's narrowed reservation" : "the bar is not met; the lexical default stands, and D7 records that a reranker over the ladder was measured and declined, with these numbers"}.**`,
+  );
+  note.push(
+    `\nDeterminism: across ${sampleCount} sample(s), questions whose rank varied: ${rerankKeys.map((k) => `${k} ${M.perMode[k].questionsWhoseRankVaried}`).join("; ")}.`,
+  );
+  note.push("\n## Cost\n");
+  note.push("| What | Value |\n|---|---|");
+  for (const x of M.models.filter((e) => e.key === "rerank"))
+    note.push(`| Model | ${x.uri}, ${x.bytes} bytes, sha256 ${x.sha256}, at ${x.path} |`);
+  if (M.models.length === 0) note.push("| Model | none: the stub reranker |");
+  note.push(
+    `| Reranker | context ${R.contextSize ?? "?"} tokens, ${R.contexts ?? "?"} context(s), chunks of ${R.chunkChars ?? "?"} characters; ${R.calls?.count ?? "?"} calls scoring ${R.calls?.documents ?? "?"} chunks |`,
+  );
+  note.push(`| Load | ${M.perMode[rerankKeys[0]]?.modelLoadMs ?? "?"} ms for the first call |`);
+  note.push(`| Latency per pass | median ${medianMs} ms, maximum ${maxMs} ms |`);
+  if (mem)
+    note.push(
+      `| Resident set | ${mb(mem.rssBeforeWarmUp)} before the warm-up, ${mb(mem.rssAfterWarmUp)} after |`,
+    );
+  note.push(`| Device | ${JSON.stringify(M.device)} |`);
+  note.push(
+    `| Environment | ${
+      Object.entries(M.environment)
+        .map(([k, v]) => `${k}=${v}`)
+        .join(", ") || "none"
+    } |`,
+  );
+  note.push("\n## What this does not show\n");
+  note.push(
+    "Twenty-five questions over one corpus, written by the system's author and tuned for the ladder, not for the reranker: even a perfect five gained and none lost is a sign test near p = 0.06, so the bar is a bar, not a significance claim. The raw-score order is not qmd's: qmd blends the score with the candidate's position, which is the second order reported. The latency is a laptop GPU's, not a container's. The reranker scores one chunk per page, as qmd does; a whole page or a different chunk rule was not measured. Stronger or other rerankers, other inputs, and a bundle with questions written by someone else remain open under D7.\n",
+  );
+  const target = onCorpus
+    ? join(here, "..", "docs", "research", "benchmark-rerank.md")
+    : join(dirname(summaryPath), "benchmark-rerank.md");
   writeFileSync(target, note.join("\n"));
   process.stdout.write(`wrote ${target} from ${summaryPath}\n`);
 }

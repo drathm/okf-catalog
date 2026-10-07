@@ -66,6 +66,8 @@ describe("the bench's model entries", () => {
     expect(MODES.fused).toEqual(["embed"]);
     expect(MODES.hybrid).toEqual(["embed", "expand"]);
     expect(MODES.full).toEqual(["embed", "rerank", "expand"]);
+    expect(MODES.rerank).toEqual(["rerank"]);
+    expect(modelsFor(["rerank"]).map((m) => m.key)).toEqual(["rerank"]);
     expect(modelsFor(["full", "vector"]).map((m) => m.key)).toEqual(["embed", "rerank", "expand"]);
     expect(() => modelsFor(["lexical"])).toThrow(/unknown mode/);
   });

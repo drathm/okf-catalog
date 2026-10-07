@@ -1,8 +1,9 @@
 // A deterministic stand-in for qmd's LlamaCpp with an embedding model and nothing else: hashed bag-of-words
 // vectors of a fixed dimension, a whitespace tokeniser, no native binding, no file, no network. It lets the
 // suite exercise the harness's `vector` and `fused` modes (the second store, embed(), the vector search, the
-// decoding and the fusion) without a model; the reranker and the expansion model are not stubbed, so `hybrid`
-// and `full` run only on a machine with the real files. Installed into qmd's default instance (the tokeniser
+// decoding and the fusion) and the `rerank` mode (a reranker that prefers the shortest chunk, so that its order
+// is never the ladder's) without a model; the expansion model is not stubbed, so `hybrid` and `full` run only
+// on a machine with the real files. Installed into qmd's default instance (the tokeniser
 // used for chunking) and into the store's own instance.
 import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
@@ -85,8 +86,12 @@ export async function createStubLlm() {
     async expandQuery() {
       throw new Error("the stub has no expansion model");
     }
-    async rerank() {
-      throw new Error("the stub has no reranker");
+    /** qmd's shape: results keyed by the input `file`, sorted by score; the shortest text scores highest. */
+    async rerank(_query, documents) {
+      const results = documents
+        .map((d, index) => ({ file: d.file, score: 1 / (1 + d.text.length), index }))
+        .sort((a, b) => b.score - a.score);
+      return { results, model: "stub:shortest-chunk" };
     }
     async generate() {
       throw new Error("the stub has no generation model");

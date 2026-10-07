@@ -48,6 +48,8 @@ export const MODES = Object.freeze({
   fused: Object.freeze(["embed"]),
   hybrid: Object.freeze(["embed", "expand"]),
   full: Object.freeze(["embed", "rerank", "expand"]),
+  // Bite 7: the production ladder's candidates re-ranked by the reranker alone; no index, no expansion.
+  rerank: Object.freeze(["rerank"]),
 });
 
 const GGUF_MAGIC = [0x47, 0x47, 0x55, 0x46];
