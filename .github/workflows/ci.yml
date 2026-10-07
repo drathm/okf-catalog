@@ -39,3 +39,26 @@ jobs:
         run: npm run build
       - name: Test
         run: npm test
+
+  # The rank guard (D66, D81): the lexical harness over the public corpus at its pinned commits, compared with the
+  # gold ranks pinned in bench/expected/lexical-ranks.json, so a change of qmd or of the search cannot pass
+  # unmeasured. Lexical only: no model is fetched.
+  corpus-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install
+        run: npm ci --foreground-scripts
+      - name: Build
+        run: npm run build
+      - name: Corpus
+        run: sh bench/fetch-corpus.sh
+      - name: Rank guard
+        run: node bench/run.mjs --expect bench/expected/lexical-ranks.json
