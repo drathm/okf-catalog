@@ -2,7 +2,7 @@
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in `package.json` names the release. 0.1.0 was published on 2026-10-07, before the clean-account run of the acceptance list in `docs/acceptance/version-0.md`, by the maintainer's choice; what that run finds goes into a later patch release.
 
-## [Unreleased]
+## [0.1.3] - 2026-10-07
 
 ### Fixed
 
