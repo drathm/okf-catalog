@@ -113,6 +113,50 @@ Reviewer: an independent Opus agent, read-only, probing the installed `yaml`, `m
 
 Also from the hand-walked pages: `StaleAfter.form` gains `unparseable` so provenance can say the recheck date is unreadable rather than absent.
 
+### Build
+
+Order, each module red then green: `model.ts` (types only), then `timestamp.ts`, `frontmatter.ts`, `markdown.ts`, `links.ts` (41 tests), then `reserved.ts`, `manifest.ts`, `index-file.ts` (19), then `page.ts` with `contract.ts` (33), then `catalog/model.ts`, `catalog/provenance.ts`, `load.ts` and `report/report.ts` (20). Three of my own inline test expectations were too narrow (pages written without a title or description legitimately earned extra degradations) and were corrected; the implementations stood. Committed as 16e88b8 with 126 tests.
+
+Decisions taken while building, for the reviewers: two degradation codes beyond the plan's list, `frontmatter-warning` and `field-ignored`, and three refusal rules beyond it, `not-utf8`, `frontmatter-unparseable` and `manifest-invalid`; a numeric or boolean scalar in `type`, `title`, `description`, `resource` or `stale_after` is read as its source text and reported (`scalar-coerced`); `verified: null` and `verified: "text"` are reported and leave the page unverified while `[]` is simply empty; status values are trimmed and lower-cased and an unknown value becomes `draft` with `statusRaw` kept and `unknownStatuses` filled whether or not the page is admitted; links resolve against every page in play and admission decides replacements afterwards; folders are the ancestors of admitted pages plus any folder holding a reserved file; with integrity not required a valid manifest still supplies the commit but is not verified.
+
+### Build review, round 1 (Grok)
+
+Reviewer: Grok Build (grok-4.7), headless, read-only, with the specification fetched; 21 turns, about fifteen minutes, about $0.61. Verdict: not ready, on two high findings. Dispositions:
+
+| Finding | Severity | Disposition |
+|---|---|---|
+| A `__proto__` frontmatter key would abort the load | high | Applied in substance: the source map is a null-prototype object (probed: the assignment does not throw as the review said, the language drops the value silently, which is still a bug), and the loader now catches any exception from a page or reserved file and records a refusal or degradation instead |
+| A generated index below the root linked subfolders by their full path | high | Applied: relative names are passed to the generator; a nested-folder test added |
+| Files skipped before manifest verification were reported missing; refused attachments stayed in the count | medium | Applied: verification runs over every file on disk, the attachment count is taken after refusals |
+| Hidden files and `.qmd` never counted toward the caps | medium | Applied: caps are measured over everything that arrived; an oversize engine file carries both refusals |
+| Zod drops a `__proto__` manifest key silently | medium | Applied: the raw key is rejected as `manifest-invalid`; `buildManifest` refuses an unsafe path |
+| Percent-decoding ran after dot handling; `%2F` became a separator | medium | Applied: decode first, then dot rules, and a decoded separator is broken |
+| An undefined reference link was deleted | medium | Not a defect: probed, CommonMark reads `[a][b]` with no definition as plain text, so no link exists to keep; a test pins the behaviour |
+| Footnote ids are lower-cased by GFM while source ids are not | medium | Applied: case-insensitive join |
+| The text report dropped degradation paths and details | medium | Applied: one line per degradation, as for refusals |
+| Skipping integrity was silent | medium | Applied: `report.integrity` and a sentence in the report |
+
+Of the nineteen missing tests the review listed, seventeen were added (one bad page not taking the load down is covered by the refused bundle; the determinism run belongs to the Opus review's probes). 148 tests pass.
+
+### Build review, round 2 (Opus)
+
+Reviewer: an independent Opus agent that built both commits from `git archive` and ran twenty-two probes against each. Verdict: 16e88b8 not ready; 8e2dc1c ready with changes. Dispositions, applied in the second correction round:
+
+| # | Finding | Disposition |
+|---|---|---|
+| F1 | A body nested a few thousand levels deep overflowed the recursive Markdown walk; the catch filed it under the frontmatter and made admission depend on stack depth | Applied: the walk is iterative; a deterministic pre-scan of block-quote and bracket nesting above 256 levels leaves the body unanalysed with `body-unanalysed`, and the page is admitted; the last-resort catch files under `body-unreadable` |
+| F2 | The GFM autolink extension cost 35 seconds on a 98 KiB page of nested brackets, with no bound, inside the serving process | Applied: only the footnote and table extensions are used, as separate pinned packages; analysis is bounded at 256 KiB with `body-truncated`; a timed test pins a hundred kilobytes of brackets under a second; bare URLs no longer become links, so a bare email cannot decide a replacement |
+| F3 | Generated indexes pasted titles, descriptions and links raw | Applied: brackets and backslashes escaped, markup disarmed, whitespace collapsed, link targets percent-encoded; a test round-trips generate, parse and resolve for awkward titles and names |
+| F4 | A fence with trailing whitespace refused the page while both checkers accept it | Applied: spaces and tabs after either fence; an unclosed block says so |
+| F5 | Numeric source ids were dropped and a missing id was reported once per citation | Applied: scalar ids read as text; one degradation per missing id |
+| F6 | A verification without `at` passed silently; nothing computed the latest verifier | Applied: `verification-without-at`; `latestVerification` on the page and in provenance, by instant, undated entries last |
+| F7 | Integrity and caps over visible files only; degradations hidden in the text report | Fixed in round 1, confirmed by the reviewer's re-probe |
+| F8 | Detail strings misled: positions off by one with a dangling colon, duplicate keys unnamed, wrong-type values described as missing, no entry indices, a zero count printed | Applied: file-line positions, the key named, "is a list, not text", `sources[3]`-style indices, counts printed only when non-zero, `replacement-not-a-page` for a folder, attachment or index |
+| F9 | Years 0001 to 0099 rejected; a leap second rejected; `±hhmm` and `±hh` offsets rejected, all on the unsafe side | Applied: dates built with `setUTCFullYear`; `:60` reads as the last millisecond; both offset forms accepted |
+| F10 | Reports asserted field by field let a false "missing" pass; one time zone; a misnamed test | Applied in part: two test projects at +14 and −11 run every test twice; the test renamed; whole-report golden files are deferred to bite 3's `check --json`, which fixes the serialisation they need |
+| F11 | The plan's §2.3 types, the bite 2 interface and the intent's integrity wording lagged the code; the record filed the first build review under bite 3 and had no bite 2 build section | Applied: all three documents aligned; the record restructured |
+| F12 | Inline HTML unreported and copied into descriptions; company indexes never checked; unsafe paths accepted; SHA-256 commits refused; duplicated helpers; a literal byte-order mark; a mutable catalog | Applied: inline HTML counted and kept out of the description; `index-lists-unserved` on a company index whose entries point at unserved pages; `path-escape` for absolute, empty, parent and backslash paths; 40- or 64-character commits; shared `paths.ts`; the mark written as an escape; provenance returns copies and the report keeps its own date. Not applied: `buildManifest` still throws on an unsafe path, which the loader has already refused by then; it is a programming guard, not a content path |
+
 ## Bite 3. Derived documents, engine adapter, search policy, `check`
 
 ### Plan
@@ -155,21 +199,46 @@ Measure and record: index time and database size for the fixtures and for the pu
 
 Review before build: an independent review of this plan. Review after build: an independent review of `qmd.ts`, `search.ts`, `walk.ts` and `swap-tree.ts`.
 
-### Build review, round 1 (Grok)
+### Plan review
 
-Reviewer: Grok Build (grok-4.7), headless, read-only, with the specification fetched; 21 turns, about fifteen minutes, about $0.61. Verdict: not ready, on two high findings. Dispositions:
+Reviewer: an independent Opus agent, read-only on the repository, running fourteen Node probes against the installed qmd 2.8.3 (no model ever called), three shell checks, and reading qmd's compiled source. Verdict: ready with changes. Dispositions, all applied to the design below before the first test:
 
-| Finding | Severity | Disposition |
+| # | Finding | Disposition |
 |---|---|---|
-| A `__proto__` frontmatter key would abort the load | high | Applied in substance: the source map is a null-prototype object (probed: the assignment does not throw as the review said, the language drops the value silently, which is still a bug), and the loader now catches any exception from a page or reserved file and records a refusal or degradation instead |
-| A generated index below the root linked subfolders by their full path | high | Applied: relative names are passed to the generator; a nested-folder test added |
-| Files skipped before manifest verification were reported missing; refused attachments stayed in the count | medium | Applied: verification runs over every file on disk, the attachment count is taken after refusals |
-| Hidden files and `.qmd` never counted toward the caps | medium | Applied: caps are measured over everything that arrived; an oversize engine file carries both refusals |
-| Zod drops a `__proto__` manifest key silently | medium | Applied: the raw key is rejected as `manifest-invalid`; `buildManifest` refuses an unsafe path |
-| Percent-decoding ran after dot handling; `%2F` became a separator | medium | Applied: decode first, then dot rules, and a decoded separator is broken |
-| An undefined reference link was deleted | medium | Not a defect: probed, CommonMark reads `[a][b]` with no definition as plain text, so no link exists to keep; a test pins the behaviour |
-| Footnote ids are lower-cased by GFM while source ids are not | medium | Applied: case-insensitive join |
-| The text report dropped degradation paths and details | medium | Applied: one line per degradation, as for refusals |
-| Skipping integrity was silent | medium | Applied: `report.integrity` and a sentence in the report |
+| F1 | The walker as planned would read every checkout's `.git`, count it against the caps, and hang on a named pipe; `lstat` refuses links before any escape check can fire; a realpath check against an un-realpathed root refuses everything under macOS temp folders | Applied: the walker never descends into or reads a dot-leading entry and returns those paths as `hidden`; it reads regular files only (`special-file` for anything else), opened without following links and non-blocking, reading at most the cap plus one byte; the root is realpathed once; too-many and too-large become `walkFatal`; hidden and walker-refused paths count as present for manifest verification; `path-escape` is documented as reachable only through a race; hard links are accepted and recorded as a residual risk |
+| F2 | qmd empties or thins the index without an error (a missing or empty folder deactivates every document; a file with a backslash is skipped and counted only), and the planned port dropped that evidence; the rename-aside swap has a window with no live folder | Applied: the adapter checks the generation folder before `update()`, compares `getStatus().totalDocuments` with the rendered count after it and names the gap through `multiGet` as `not-indexed`; `index()` returns the full counts; the live tree is a symbolic link to a generation folder flipped by `symlink` then `rename`, with older generations removed; a start-up always re-derives before indexing |
+| F3 | Two servers for one company would share one derived tree and one database, and one could silently empty the other's index | Taken as a working default, flagged for the maintainer's ruling as D32: an exclusive per-company lock file holding the process id, treated as stale when that process is gone; a process that cannot take it uses a private per-process folder removed at exit. `cache-dir` moves to bite 4, where `serve` first needs it; `check` needs no cache |
+| F4 | Reciprocal-rank fusion on the relaxed rung lets terms present in every page (the collection name in the path column, the planned `Type:` and `Tags:` label words) vote as loudly as real terms, because SQLite floors their inverse document frequency; per-term BM25 values sum exactly to the AND query's value | Applied: the relaxed rung sums BM25 recovered from qmd's score (`b = s / (1 − s)`), ranks by terms matched then by summed BM25, drops hits below one percent of the best, and both rungs report the same raw scale; the rendered copy writes type and tag values without label words and collapses whitespace; ties break by trust within a tolerance, then by path; qmd's "Notes" title quirk is pinned in the golden test; the facts note's explanation of the 0.000 score is corrected |
+| F5 | The normaliser could emit queries qmd answers with nothing: a leading hyphen means NOT, a token of only apostrophes or underscores poisons an AND query, a Chinese run is one phrase with nothing to relax, and an all-stopword question has no defined answer | Applied: tokens must match `^[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*$` with length in code points; CJK runs split into overlapping two-character pairs; an empty term list answers with no hits and the reason `no-content-terms`; the English stopword list stays, documented as a limitation; twelve terms in question order |
+| F6 | The adapter lock is not needed on qmd 2.8.3, whose write loop never yields to the event loop, and with the planned signature it makes a request see a catalog older than the index | Applied: no lock in the adapter; refresh is single-flight in the composition layer, and the generation reference is swapped right after `index()` resolves; `close()` waits for a refresh in flight; an integration test pins that no macrotask runs during `update()`, so a qmd that starts yielding fails the suite; D28's rationale is replaced |
+| F7 | `render` plus `index(dir)` put qmd's file-based indexing into the port; the dependency rule forbids importing the `fs` edge, not using Node's file system; `relPath` and the codec belong to a pure module | Applied: `Engine.index(docs)` takes the derived documents and the adapter writes its own generation tree with Node's file system; `render` and the path codec are pure exports in a module that does not import qmd, used by the golden tests and by `check`; `lex` returns the raw BM25 beside qmd's score; snippets come from the original body in the core (bite 4) |
+| F8 | The codec was not reversible: `dist/` and `_dist/` both rendered to `_dist/`; backslashes are skipped by qmd; the dot rule never fires for a page | Applied: a segment equal to one of qmd's six skipped names, or starting with `_`, is prefixed with one `_`; decoding strips one `_`; `\` and `%` are percent-encoded; a decoded hit whose first segment is not the company is dropped; golden cases `dist`, `_dist`, `__dist`, `Dist`, `a\b.md` |
+| F9 | Pool size, ladder trigger and widening were under-specified; every row carries its body, so wide pools cost memory | Applied as the algorithm in the revised design: widen while fewer than `limit` survive and the rung returned a full pool; relax only when still short; topic segments and the type value are pushed into every query as terms, with the exact filter kept; topics match by segment; `considered`, `filteredOut` per reason and the rung per hit are defined; peak memory is measured on a worst case |
+| F10 | The benchmark needs run metadata to be comparable, over-reads twenty-five questions, kept its clones inside the walked root, and the block runs measure only dilution on a qmd that reads no block | Applied: one JSON line per question per configuration with the gold rank and top five; run metadata recorded; MRR@5 and paired wins and losses, reuse and paraphrase apart; both the question text and the keyword form, ladder on and off; the block runs deferred until a qmd release reads the block; clones moved beside the corpus; the retrieval note's question count corrected |
+| F11 | `XDG_CACHE_HOME` must be absolute; cache folders need mode 0700 after `mkdir`; `check` had no exit code for a missing folder and emitted `Date` objects in JSON | Applied to `check` now (exit 0 served, 1 refused or fatal, 2 usage or environment; `--json` as `{ "okf_catalog_report": 1, ... }` with ISO strings; the usage text says a source checkout needs `--integrity none`); the cache rules go with `cache-dir` to bite 4 |
 
-Of the nineteen missing tests the review listed, seventeen were added (one bad page not taking the load down is covered by the refused bundle; the determinism run belongs to the Opus review's probes). 148 tests pass.
+### Plan, revised after review
+
+The port and the composition:
+
+```ts
+interface DerivedDocument { path; title; description?; type; tags; metadata: Record<string, string | string[] | number>; body }
+interface EngineHit { path: PagePath; score: number; bm25: number }
+interface IndexResult { documents; indexed; updated; unchanged; removed; skipped; notIndexed: PagePath[]; encodedFolders: string[] }
+interface Engine {
+  index(docs: readonly DerivedDocument[]): Promise<IndexResult>;   // writes its own generation tree, flips the link, indexes, verifies the count
+  lex(terms: readonly string[], limit: number): Promise<EngineHit[]>;
+  status(): Promise<{ documents: number }>;
+  close(): Promise<void>;
+}
+```
+
+`src/engine/qmd-render.ts` (pure, no qmd import): `renderDocument(doc) → string` writes `# <title>`, the description, the type value, the tag values joined by spaces, a blank line and the body, with whitespace collapsed in the first four; `encodePath(path)` and `decodePath(path)` implement the codec. `src/engine/qmd.ts` owns the store, the generation folders under a directory it is given, the symlink flip, the count check and the `multiGet` diff.
+
+`src/search/query.ts`: the tokenizer above; `normaliseQuestion(question) → { terms; dropped }`. `src/search/search.ts`: the algorithm. Run all content terms plus the topic's path segments plus the type value, as one query at pool `P = limit × 4`; filter by type, topic (`path.startsWith(topic + "/")`), status rule and staleness; while fewer than `limit` survive and the rung returned `P` rows, widen `P` fourfold up to 500. If still short, run one query per content term at the same `P`, fuse by summed BM25 with a one-percent floor, rank by terms matched then score, append after the all-terms hits without duplicates. Every hit carries its rung and raw BM25; the response carries `considered` (distinct engine hits examined), `filteredOut` per reason, `strategy`, `terms`, `dropped`, and `reason: "no-content-terms"` when the question had none.
+
+`src/fs/walk.ts`: `walkBundle(root, caps) → { files; hidden; refusals; fatal? }` as F1 describes. `LoadOptions` gains `hiddenPaths` and `walkFatal`; the core counts hidden paths, refuses `.qmd` among them by path, treats hidden and refused paths as present for the manifest, and measures caps over the files that arrived. `src/commands/check.ts`: walk, load, render the report, exit codes 0, 1 and 2, `--json`.
+
+Dropped from this bite: `fs/cache-dir.ts` and `fs/swap-tree.ts` (the adapter owns its generations; the cache layout and the per-company lock, D32, go to bite 4). Added: `engine/qmd-render.ts`, the no-yield pin test, the walker's special-file and hidden handling, the benchmark's run metadata.
+
+Decisions this bite adds or changes, proposed for the maintainer: D25 (the algorithm above replaces the fixed pool), D28 (single-flight refresh in the composition layer, no adapter lock), D31 (summed BM25 instead of reciprocal rank for the relaxed rung; tokenizer and CJK rule), D32 (one process per company enforced by a lock file, with a private fallback folder).

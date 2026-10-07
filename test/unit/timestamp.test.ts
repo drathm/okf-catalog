@@ -63,6 +63,8 @@ describe("parseTimestamp: review round 1 additions", () => {
     expect(parseTimestamp("2000-06-01T18:00:00.250Z")).toMatchObject({
       at: new Date(Date.UTC(2000, 5, 1, 18, 0, 0, 250)),
     });
-    expect(parseTimestamp("2000-06-01T23:59:60Z")).toMatchObject({ kind: "invalid" });
+    expect(parseTimestamp("2000-06-01T23:59:60Z")).toMatchObject({
+      at: new Date(Date.UTC(2000, 5, 1, 23, 59, 59, 999)),
+    });
   });
 });

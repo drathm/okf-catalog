@@ -8,11 +8,13 @@ export interface Provenance {
   trust: Trust;
   generated?: { by: string; at?: string };
   verified: Array<{ by: string; at?: string }>;
+  /** The verification with the latest instant, the one "how recently" means. */
+  latestVerification?: { by: string; at?: string };
   staleAfter?: { raw: string; form: StaleAfter["form"]; overdue: boolean };
   sources: Source[];
   resource?: string;
   replacement?: PagePath;
-  /** The page's frontmatter in full, so nothing the page carries is lost. */
+  /** A copy of the page's frontmatter in full, so nothing the page carries is lost. */
   frontmatter: Record<string, unknown>;
 }
 
@@ -22,6 +24,10 @@ export function isOverdue(staleAfter: StaleAfter | undefined, now: Date): boolea
   return now.getTime() >= staleAfter.at.getTime();
 }
 
+const asWritten = (v: { by: string; at?: { raw: string } }): { by: string; at?: string } =>
+  v.at === undefined ? { by: v.by } : { by: v.by, at: v.at.raw };
+
+/** The provenance view of a page. Returns copies, so a caller cannot change the catalog through it. */
 export function provenanceOf(page: Page, now: Date): Provenance {
   const provenance: Provenance = {
     path: page.path,
@@ -29,18 +35,13 @@ export function provenanceOf(page: Page, now: Date): Provenance {
     type: page.type,
     status: page.status,
     trust: page.trust,
-    verified: page.verified.map((v) =>
-      v.at === undefined ? { by: v.by } : { by: v.by, at: v.at.raw },
-    ),
-    sources: page.sources,
-    frontmatter: page.frontmatter,
+    verified: page.verified.map(asWritten),
+    sources: page.sources.map((s) => ({ ...s })),
+    frontmatter: structuredClone(page.frontmatter),
   };
-  if (page.generated !== undefined) {
-    provenance.generated =
-      page.generated.at === undefined
-        ? { by: page.generated.by }
-        : { by: page.generated.by, at: page.generated.at.raw };
-  }
+  if (page.generated !== undefined) provenance.generated = asWritten(page.generated);
+  if (page.latestVerification !== undefined)
+    provenance.latestVerification = asWritten(page.latestVerification);
   if (page.staleAfter !== undefined) {
     provenance.staleAfter = {
       raw: page.staleAfter.raw,

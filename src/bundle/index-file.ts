@@ -1,6 +1,7 @@
 import type { ListItem, Nodes, Parent, PhrasingContent } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { toString as mdastToString } from "mdast-util-to-string";
+import { byCodeUnit } from "./paths.js";
 
 export interface IndexEntry {
   title: string;
@@ -64,7 +65,18 @@ export interface IndexPage {
   description?: string;
 }
 
-const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+/** Text safe inside a link's square brackets or after it: whitespace collapsed, brackets and backslashes escaped, markup disarmed. */
+function prose(s: string): string {
+  return s
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[\\[\]]/g, (c) => `\\${c}`)
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+/** A relative link target with each segment percent-encoded, so a space or a parenthesis cannot break the link. */
+const href = (relative: string): string => relative.split("/").map(encodeURIComponent).join("/");
 
 /** Writes a §8 index for one folder: a Pages section with relative links, then a Subfolders section; empty sections are omitted. */
 export function generateIndex(folder: string, pages: IndexPage[], subfolders: string[]): string {
@@ -76,11 +88,12 @@ export function generateIndex(folder: string, pages: IndexPage[], subfolders: st
   if (own.length > 0) {
     lines.push("# Pages", "");
     for (const page of own) {
-      const href = page.path.slice(prefix.length);
+      const target = href(page.path.slice(prefix.length));
+      const description = page.description === undefined ? "" : prose(page.description);
       lines.push(
-        page.description
-          ? `* [${page.title}](${href}) - ${page.description}`
-          : `* [${page.title}](${href})`,
+        description.length > 0
+          ? `* [${prose(page.title)}](${target}) - ${description}`
+          : `* [${prose(page.title)}](${target})`,
       );
     }
     lines.push("");
@@ -88,7 +101,7 @@ export function generateIndex(folder: string, pages: IndexPage[], subfolders: st
   const subs = [...subfolders].sort(byCodeUnit);
   if (subs.length > 0) {
     lines.push("# Subfolders", "");
-    for (const sub of subs) lines.push(`* [${sub}](${sub}/)`);
+    for (const sub of subs) lines.push(`* [${prose(sub)}](${href(sub)}/)`);
     lines.push("");
   }
   return lines.join("\n");

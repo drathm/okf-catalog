@@ -73,7 +73,6 @@ okf-catalog/
     fs/
       walk.ts                  safe walk: lstat every entry, refuse symlinks and escapes, size and count caps → BundleFile[]
       cache-dir.ts             cache root and per-company layout; ownership and mode check
-      swap-tree.ts             write a tree into a fresh folder, then swap: live → old, new → live, delete old
     bundle/                    CORE
       frontmatter.ts           split frontmatter and body (BOM, CRLF); parse YAML 1.2 core schema; keep raw text; dates stay strings
       reserved.ts              index.md and log.md → ReservedFile, routed by name before any page rule runs
@@ -90,12 +89,13 @@ okf-catalog/
     derive/
       derived-document.ts      Page → DerivedDocument: title, description, type, tags, metadata, body with a duplicate opening heading removed
     search/
-      engine.ts                Engine port: index(dir), lex(query, limit), status(), close()
+      engine.ts                Engine port: index(docs), lex(terms, limit), status(), close(); hits carry qmd's score and the raw BM25
       query.ts                 question → content terms: lower-case, punctuation off, stopwords off; the relaxation ladder
       policy.ts                candidate pool size, filters (type, topic, stale), trust tie-break, shaping, strategy record
       search.ts                search(catalog, engine, request, clock) → SearchResponse
     engine/
-      qmd.ts                   QmdEngine implements Engine over @tobilu/qmd; renders DerivedDocument to text; path codec; reindex lock
+      qmd-render.ts            pure: the rendered text qmd indexes, and the path codec; imports no qmd
+      qmd.ts                   QmdEngine implements Engine over @tobilu/qmd: generation folders and the link flip, the count check, lex
     mcp/
       tools.ts                 registerTools(server, deps): the four tools, Zod schemas, structuredContent, citation lines
       server.ts                createServerFactory(deps); serveStdio wiring; onclose releases the poller and the engine
@@ -149,10 +149,10 @@ type Trust  = 'unverified' | 'machine-confirmed' | 'human-reviewed';
 
 interface StaleAfter {
   raw: string;
-  form: 'date' | 'datetime';
-  // date: the UTC calendar day on or after which the page is overdue (pinned text, §5.5)
-  // datetime: the instant on or after which the page is overdue (21 August text, §5.5)
-  at: Date;
+  // date: overdue from the start of that UTC day (pinned text); datetime: overdue from that instant (21 August text);
+  // unparseable: kept as written, never overdue, reported
+  form: 'date' | 'datetime' | 'unparseable';
+  at?: Date;
 }
 
 interface Source {
@@ -170,11 +170,12 @@ interface Page {
   status: Status;       statusSource: 'frontmatter' | 'default';
   staleAfter?: StaleAfter;
   generated?: { by: string; at?: Date; atRaw?: string };
-  verified: Array<{ by: string; at: Date; atRaw: string }>;   // a bare mapping is wrapped into one entry (§5.2)
+  verified: Array<{ by: string; at?: { raw: string; at?: Date } }>;   // a bare mapping is wrapped into one entry (§5.2); a missing at is reported
+  latestVerification?: { by: string; at?: { raw: string; at?: Date } };   // the latest instant; among undated entries, the last listed
   trust: Trust;                                // derived per §5.3
   sources: Source[]; usageWindow?: { from: string; to: string };
   resource?: string;
-  replacement?: PagePath;                      // deprecated pages: the first body link that resolves to an admitted page other than itself
+  replacement?: PagePath;                      // deprecated pages: decided by the first body link that is not an anchor; set only when that one link resolves to an admitted page other than itself, otherwise a coded degradation says why
   links: Array<{ raw: string; target?: PagePath }>;
   frontmatter: Record<string, unknown>;        // preserved in full, unknown keys and computation fields included
   body: string;                                // Markdown after the frontmatter
@@ -186,19 +187,22 @@ interface ReservedFile { kind: 'index' | 'log'; folder: string; text: string; ok
 
 // bundle/contract.ts
 interface Refusal     { path: string; rule: RefusalRule; detail: string; }
-interface Degradation { path: string; field: string; fallback: string; }
-type RefusalRule = 'no-frontmatter' | 'no-type' | 'symlink' | 'gitlink' | 'path-escape'
-                 | 'engine-config' | 'hash-mismatch' | 'manifest-missing' | 'oversize' | 'too-many-files';
+interface Degradation { path: string; code: DegradationCode; field: string; detail: string; }   // codes: title-from-heading, title-from-filename, description-from-body, description-missing, scalar-coerced, field-ignored, tags-not-list, status-unknown, stale-after-unparseable, stale-after-no-offset, stale-after-unexpected-form, timestamp-invalid, generated-malformed, verified-entry-malformed, verification-without-at, source-malformed, footnote-without-source, body-html, body-unanalysed, body-truncated, index-lists-unserved, replacement-missing, replacement-broken, replacement-external, replacement-not-served, replacement-self, replacement-not-a-page, frontmatter-warning, reserved-frontmatter-unparseable, okf-version-unknown
+type RefusalRule = 'no-frontmatter' | 'frontmatter-unparseable' | 'body-unreadable' | 'no-type' | 'not-utf8' | 'symlink' | 'gitlink' | 'path-escape' | 'special-file'
+                 | 'engine-config' | 'hash-mismatch' | 'size-mismatch' | 'not-in-manifest' | 'manifest-missing' | 'manifest-invalid' | 'oversize' | 'too-many-files' | 'tree-too-large';
 // Non-Markdown files are not refused: the specification's references/ convention puts code and material inside a bundle.
 // They are counted as attachments, never indexed, never executed, never served in version 0.
 
 // report/report.ts
 interface Report {
   loadedAt: Date; commit?: string;
-  admitted: number; excludedByStatus: number; attachments: number;
+  fatal?: Refusal;                             // a bundle-level refusal: nothing is served
+  integrity: 'checked' | 'skipped';
+  admitted: number; excludedByStatus: number; attachments: number; hidden: number;
   refusals: Refusal[]; degradations: Degradation[];
-  unknownTypes: string[]; brokenLinks: Array<{ from: PagePath; raw: string }>;
-  foldersWithoutIndex: string[]; encodedFolders: string[];
+  unknownTypes: string[]; unknownStatuses: Array<{ path: PagePath; value: string }>;
+  brokenLinks: Array<{ from: PagePath; raw: string }>; linksToUnserved: Array<{ from: PagePath; raw: string; target: PagePath }>;
+  missingOnDisk: string[]; foldersWithoutIndex: string[]; encodedFolders: string[];
 }
 
 // bundle/manifest.ts
@@ -278,11 +282,11 @@ Freshness is a query-time fact, not a load-time one: `overdue` is computed again
 
 **Load.** `fs/walk` reads the bundle folder into `BundleFile[]`, refusing symbolic links, escapes and oversize files on the way. `bundle/load` first routes reserved names (`index.md`, `log.md` at any depth) to `ReservedFile`, counts non-Markdown files as attachments, then parses each remaining `.md` file into a `Page` or a `Refusal`; verifies the manifest unless in development mode; applies the admission rule; resolves links; attaches each folder's index and log, synthesising an index listing where the file is absent; and returns an immutable `Catalog` plus a `Report`. All of that is pure: the same function runs in `serve`, `check`, `pack` and the tests, on in-memory files.
 
-**Derive.** `derive/derived-document` turns each admitted page into a `DerivedDocument`: the title, description, type and tags as fields, the `okf_*` metadata as a map, and the body with a leading heading equal to the title removed. The qmd adapter renders that to text in the shape qmd ranks well: a `# <title>` line first, the description line, a `Type:` line, a `Tags:` line, then the body. No frontmatter is rendered in version 0: qmd 2.8.3 does not read the `qmd: metadata:` block its unreleased filter will use, and rendering it would only add tokens such as `okf` and `status` to every page's body column and put YAML lines ahead of the title. When a qmd release ships the filter, the adapter renders the metadata map as that block in a leading frontmatter, behind a flag, and the benchmark measures the effect before it is turned on (decision D30). A page whose own frontmatter has a `qmd` key is unaffected: the original is never indexed.
+**Derive.** `derive/derived-document` turns each admitted page into a `DerivedDocument`: the title, description, type and tags as fields, the `okf_*` metadata as a map, and the body with a leading heading equal to the title removed. The qmd adapter's pure render module turns that into the text qmd ranks well: a `# <title>` line first, then the description, the type value and the tag values, each with its whitespace collapsed and without label words (a label word present in every page would be a universal token), then a blank line and the body. No frontmatter is rendered in version 0: qmd 2.8.3 does not read the `qmd: metadata:` block its unreleased filter will use, and rendering it would only add tokens to every page's body column and put YAML lines ahead of the title. When a qmd release ships the filter, the adapter renders the metadata map as that block behind a flag, and the benchmark measures the effect before it is turned on (decision D30). A page whose own frontmatter has a `qmd` key is unaffected: the original is never indexed.
 
-**Index.** `engine/qmd` writes the rendered documents into a fresh folder under the cache, swaps it into place (live to old, new to live, old deleted), and calls `update()` on `createStore({ dbPath: <cache>/index.sqlite, config: { collections: { [company]: { path: <cache>/derived, pattern: '**/*.md' } } } })`. One collection per company; nothing else in that folder. Path codec: a bundle path segment that qmd's indexer would skip (`node_modules`, `.git`, `.cache`, `vendor`, `dist`, `build`, or any segment starting with `.`) is encoded in the derived tree with a `_` prefix and decoded on the way back; encoded folders are listed in the report. The adapter maps `displayPath` back to a page path by removing exactly one leading segment, the company name, which the config restricts to a single safe segment. A read-write lock in the adapter makes searches wait while `update()` writes, since qmd commits per file (decision D28).
+**Index.** `engine/qmd` writes the rendered documents into a new generation folder under the directory it is given, flips a symbolic link named `derived` to it with `symlink` then `rename` so there is never a moment without a live folder, removes older generations, and calls `update()` on `createStore({ dbPath, config: { collections: { [company]: { path: <dir>/derived, pattern: '**/*.md' } } } })`. Before indexing it checks the generation holds every rendered file; after indexing it compares qmd's document count with the rendered count and names any gap through `multiGet` as `not-indexed`, because qmd deactivates every document when the folder is missing and silently skips a file whose name holds a backslash. One collection per company. Path codec: a segment equal to one of the six names qmd's indexer skips (`node_modules`, `.git`, `.cache`, `vendor`, `dist`, `build`), or one that starts with `_`, is prefixed with one `_` in the generation tree and decoded by stripping one; `\` and `%` are percent-encoded; a hit whose first segment is not the company is dropped. The refresh is single-flight in the composition layer and the catalog and index references are swapped together (decision D28).
 
-**Search.** A tool call reaches `search/search`. `search/query` turns the question into content terms: lower-case, punctuation removed, a fixed English stopword list of about 120 words removed, duplicates removed, at most twelve terms kept. qmd ANDs every term as a prefix, so the policy runs a ladder: first all content terms together; if that returns fewer than `limit` hits, one query per term, fused by reciprocal rank (k = 60) and appended after the all-terms hits, de-duplicated. The response records which rung answered. The candidate pool is `limit × 4` when no filter is set and `max(limit × 10, 100)`, capped at 500, when `type` or `topic` is set; if every candidate was filtered out, the pool is widened once to the cap and `topicExhausted` is reported if it still is. Each hit's path is looked up in the catalog; hits whose page is missing are dropped and logged; type, topic and staleness filters apply; equal scores are tie-broken by trust; the top `limit` are shaped into `SearchHit`s. `get_page` reads the original from the catalog, never the derived copy, and returns the provenance with the original frontmatter in full. `catalog` returns the folder's `index.md` text or the generated listing. `status` returns the report, the commit, the pull time and the engine status.
+**Search.** A tool call reaches `search/search`. `search/query` turns the question into content terms: lower-cased tokens of letters and digits with internal hyphens, at least two characters, a fixed English stopword list of about 120 words removed, Chinese, Japanese and Korean runs split into overlapping pairs, duplicates removed, at most twelve terms in question order; a question with none answers with no hits and the reason. The first rung sends the content terms plus the topic's path segments and the type value as one query at a pool of `limit × 4`, then filters by type, topic (matched by path segment), the status rule and staleness; while fewer than `limit` survive and the rung returned a full pool, the pool widens fourfold up to 500. If still short, the relaxed rung sends one query per content term at the same pool, recovers BM25 from qmd's score (`b = s / (1 − s)`), sums it per page, ranks by terms matched then by that sum, drops hits below one percent of the best, and appends them after the first rung's hits without duplicates. Equal scores within a small tolerance break by trust, then by path. Every hit carries its rung and raw BM25; the response carries the distinct hits considered, what was filtered out per reason, the terms used and dropped. `get_page` reads the original from the catalog, never the derived copy, and returns the provenance with the original frontmatter in full; snippets are built from the original body. `catalog` returns the folder's `index.md` text or the generated listing. `status` returns the report, the commit, the pull time and the engine status, including any documents qmd did not index.
 
 **Refresh.** `source/poller` runs on the configured interval: `source.fetch()`; if the commit changed, load, derive, index, then replace the catalog reference the tools read. The poller is cleared when the MCP connection closes, so the process exits with the host.
 
@@ -297,7 +301,7 @@ Every row of the field table in intent §6 maps to one function and one test. Th
 | Description from frontmatter, else first sentence; catalog line; snippet fallback | `page.ts deriveDescription`, `index-file.ts generate`, `policy.ts shape` | `page.test.ts description/*` |
 | Tags and type as rendered lines | `derived-document.ts`, `qmd.ts render` | render golden |
 | Status admission rule; default stable; development flag admits drafts and labels them, local source only | `contract.ts admit`, `policy.ts shape`, `company-config.ts` | `contract.test.ts admission/*`; `company-config.test.ts dev-needs-local` |
-| Replacement link on deprecated pages: the first body link that resolves to an admitted page other than itself, else a coded degradation | `page.ts deriveReplacement`, `markdown.ts links`, `links.ts` | `page.test.ts deprecated/*` |
+| Replacement link on deprecated pages: the first body link that is not an anchor decides; a replacement only when it resolves to an admitted page other than itself, else a coded degradation, never a later link | `page.ts deriveReplacement`, `markdown.ts links`, `links.ts` | `page.test.ts deprecated/*` |
 | `stale_after`: date form compared by UTC calendar day, datetime form by instant; the form the pinned text does not expect is reported; excluded unless `include_stale`; always served by `get_page`, flagged | `page.ts parseStaleAfter`, `policy.ts filterStale`, `provenance.ts` | `page.test.ts stale/date`, `stale/datetime`, `stale/unexpected-form`; `policy.test.ts stale/*` |
 | `generated` in provenance | `provenance.ts` | `provenance.test.ts` |
 | Trust tier per §5.3; bare mapping as a one-element list; tie-break | `page.ts deriveTrust`, `policy.ts rank` | `page.test.ts trust/*`, `policy.test.ts tiebreak` |
@@ -414,7 +418,7 @@ Nothing to build. The maintainer settles: the licence (Apache-2.0 proposed; `LIC
 
 **Tests first.** One test per row of the table in §2.5, named after the row; the hostile and degraded fixtures loaded in memory with expected reports asserted field by field; `index-file` parse and generate round-trip against the specification's own example; manifest build and verify, including a tampered byte; both `stale_after` forms, the date form compared by UTC calendar day and the datetime form by instant, the unexpected form reported; `verified` as a list and as a bare mapping; a `yaml` parse of `2027-01-31` asserting a string; reserved files routed before any page rule; attachments counted; `generated.at` and `verified[].at` kept raw beside their parsed instants.
 
-**Interfaces.** As in §2.3. `loadBundle(company: string, files: BundleFile[], options: { admit: Status[]; dev: boolean; manifest?: Manifest; types?: string[]; specText: '2026-08-15' | '2026-08-21'; caps: Caps }, now: Date): { catalog: Catalog; report: Report }`.
+**Interfaces.** As in §2.3. `loadBundle(company: string, files: BundleFile[], options: { admit: Status[]; dev: boolean; integrity: 'require-manifest' | 'none'; types?: string[]; specText: '2026-08-15' | '2026-08-21'; caps: Caps; walkRefusals?: Refusal[] }, now: Date): { catalog: Catalog; report: Report }`.
 
 **Done when.** Every row has a passing test; the core has no import the dependency rule forbids; the loader runs on the fixtures from a test.
 
@@ -501,13 +505,14 @@ Proposed here; each becomes a row in the decisions file once ruled. D20 to D27 w
 | D22 | Tooling set | npm, Biome, Vitest with Vite pinned, dependency-cruiser through tsconfig | Fewer tools, or ESLint and Prettier | §2.7 |
 | D23 | Cache location | XDG cache or the platform cache folder, per company, ownership checked | Inside the project | A project cannot pre-seed it; one copy per company per machine |
 | D24 | Configuration | One YAML file per company; `--config`, then `OKF_CATALOG_CONFIG`, then `./okf-catalog.yaml`; `company` restricted to one safe path segment; `dev` only with a local source | Flags only; or a config folder | The plugin's `userConfig` needs an environment variable; a file keeps the plugin generic; the name is a path segment and a collection name |
-| D25 | Engine collections and topic filtering | One qmd collection per company, no collection filter on queries, the server filters by type and topic over a candidate pool of `limit × 4`, or `max(limit × 10, 100)` capped at 500 when a filter is set, widened once when exhausted | One collection per folder: a single-folder query re-enters qmd's ten-times fetch, a list re-enters its merge | qmd's own factor is ten; a pool of four times the limit would hide a page that is best in its folder but outside the overall top |
+| D25 | Engine collections and topic filtering | One qmd collection per company and no collection filter on queries. One query carries the content terms plus the topic's path segments and the type value, at a pool of `limit × 4`; while fewer than `limit` survive the filters and the rung returned a full pool, the pool widens fourfold up to 500; the exact filters are kept. Revised after the bite 3 plan review | A fixed pool with a one-time widening (draft 2): a page that is best inside its topic but outside the overall top stayed invisible. One collection per folder: a single-folder query re-enters qmd's ten-times fetch, a list re-enters its merge | Proposed |
 | D26 | Repository visibility at start | The maintainer's call | | Public from the first commit matches "open and useful"; private until version 0 passes avoids showing scaffolding |
 | D27 | How the plugin launches the server | `node` on a path from `userConfig` in version 0; `npx okf-catalog@<exact version>` only after publication, and never for the offline acceptance item | A setup hook installing into `${CLAUDE_PLUGIN_DATA}` | A cold `npx` needs the registry and can print to stdout; the data-folder install is the version 1 answer if start-up or offline use demands it |
-| D28 | Index updates while serving | A read-write lock in the engine adapter: searches wait while `update()` writes | A second database file built aside and swapped: no waiting, but a full re-index on every pull | qmd commits per file; the lock keeps incremental indexing and is a few lines; switch to the swap if bite 3's measured update time is too long to wait out |
+| D28 | Index updates while serving | No lock in the adapter. The refresh is single-flight in the composition layer, and the catalog and index references are swapped together right after `index()` resolves; `close()` waits for a refresh in flight. A test pins that qmd's write loop never yields to the event loop, so a qmd that starts yielding fails the suite, at which point the fallback is a lock taken before a handler reads the catalog. Revised after the bite 3 plan review, which probed the write loop | A read-write lock in the adapter (draft 2): unnecessary on qmd 2.8.3, and it let a request see a catalog older than its index. A second database file built aside: a full re-index on every pull | Proposed |
 | D29 | `stale_after` semantics | Both forms read, each by its own rule: a date by UTC calendar day, a datetime by instant; `spec_text` defaults to the 15 August text and names which form is expected; the other form is reported as a degradation and still judged | One rule for both forms (draft 1): wrong by up to a day; or refusing the unexpected form: forbidden by §11 | The two texts define different instants; D9 says the server reads both |
 | D30 | The qmd metadata block (refinement of D19) | Not rendered in version 0; the derived document carries the metadata as a map, and the adapter renders the block only when a qmd release reads it, behind a flag measured by the benchmark | Render it now as draft 1 and the intent text said | qmd 2.8.3 ignores it; rendering it adds body tokens to every page and puts YAML lines ahead of the title qmd extracts |
-| D31 | The lexical contract | Keywords, with a stopword filter and a relaxation ladder (all terms, then per-term queries fused by reciprocal rank), the rung reported on every answer | Pass the question through unchanged (draft 1): qmd ANDs every word, so a sentence with one word absent from the page misses | This is the model-free stand-in for qmd's query expansion; the acceptance paraphrase is kept, and D7's measurement decides whether lexical mode is enough |
+| D31 | The lexical contract | Keywords. Tokens are letters and digits with internal hyphens, two or more characters, English stopwords and question words dropped, Chinese, Japanese and Korean runs split into overlapping pairs, twelve terms at most. A relaxation ladder: all terms as one query; when fewer than `limit` survive, one query per term, fused by summed BM25 recovered from qmd's score, ranked by terms matched then score, with a one-percent floor. Both rungs report the raw BM25 scale, the rung on every hit, and a question with no content terms answers with none and says why. Revised after the bite 3 plan review | Passing the question through unchanged: qmd ANDs every word. Reciprocal-rank fusion (draft 2): a term present in every page, such as the collection name in the path column, votes as loudly as a real one because SQLite floors its inverse document frequency | Proposed |
+| D32 | Two servers for one company | One process per company, enforced: an exclusive lock file in the company's cache folder holding the process id, stale when that process is gone; a process that cannot take it serves from a private per-process folder removed at exit. From the bite 3 plan review | Nothing (draft 2): a second Claude Code window on the same company could silently empty the first one's index | Proposed |
 
 ## 5. Risks to retire early
 

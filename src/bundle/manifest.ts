@@ -1,24 +1,19 @@
 import { createHash } from "node:crypto";
 import * as z from "zod/v4";
 import type { BundleFile } from "./model.js";
+import { isSafeRelativePath } from "./paths.js";
+
+export { isSafeRelativePath };
 
 export const MANIFEST_NAME = "manifest.json";
-
-/** A bundle-relative path: no leading slash, no backslash, no NUL, no empty, `.` or `..` segment. */
-export function isSafeRelativePath(path: string): boolean {
-  if (path.length === 0 || path.startsWith("/") || /[\\\0]/.test(path)) return false;
-  return path
-    .split("/")
-    .every(
-      (segment) => segment !== "" && segment !== "." && segment !== ".." && segment !== "__proto__",
-    );
-}
 
 const PathKey = z.string().refine(isSafeRelativePath, "not a safe bundle-relative path");
 
 export const ManifestSchema = z.strictObject({
   okf_catalog: z.literal(1),
-  commit: z.string().regex(/^[0-9a-f]{40}$/, "a full commit hash"),
+  commit: z
+    .string()
+    .regex(/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/, "a full commit hash, SHA-1 or SHA-256"),
   published_at: z.iso.datetime({ offset: true }),
   files: z.record(
     PathKey,

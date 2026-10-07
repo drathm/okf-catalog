@@ -1,5 +1,6 @@
 import { parseFrontmatter, splitFrontmatter } from "./frontmatter.js";
 import type { Degradation, ReservedFile } from "./model.js";
+import { folderOf } from "./paths.js";
 
 const KNOWN_VERSIONS = new Set(["0.1", "0.2"]);
 
@@ -9,11 +10,6 @@ export function reservedKind(path: string): "index" | "log" | undefined {
   if (name === "index.md") return "index";
   if (name === "log.md") return "log";
   return undefined;
-}
-
-function folderOf(path: string): string {
-  const i = path.lastIndexOf("/");
-  return i === -1 ? "" : path.slice(0, i);
 }
 
 /** Reads a reserved file. Frontmatter is tolerated and kept; when it does not parse, that is a degradation, never a refusal. */

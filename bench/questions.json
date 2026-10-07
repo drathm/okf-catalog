@@ -1,0 +1,177 @@
+[
+  {
+    "id": "B1",
+    "style": "reuse",
+    "question": "What conditions must all hold before okf-stop-check.sh blocks the agent from finishing?",
+    "gold": "okf-skills/components/stop-hook.md",
+    "keywords": ["okf-stop-check.sh", "upkeep: enforced", "OKF_HOOK"]
+  },
+  {
+    "id": "B2",
+    "style": "paraphrase",
+    "question": "Why does the graph viewer switch away from its default force layout when a knowledge base gets very large?",
+    "gold": "okf-skills/decisions/scale-guardrails.md",
+    "keywords": ["concentric", "cose", "1,000 concepts"]
+  },
+  {
+    "id": "B3",
+    "style": "paraphrase",
+    "question": "Two plugin versions were bumped but never published as releases; what was changed so that cannot happen again?",
+    "gold": "okf-skills/decisions/auto-release.md",
+    "keywords": ["plugin.json", "release", "version-bump"]
+  },
+  {
+    "id": "B4",
+    "style": "reuse",
+    "question": "What does the read_concept tool of okf_mcp.py return?",
+    "gold": "okf-skills/components/mcp-server.md",
+    "keywords": ["read_concept", "okf_mcp.py", "frontmatter included"]
+  },
+  {
+    "id": "B5",
+    "style": "paraphrase",
+    "question": "In the experiment on whether status and staleness fields stop an agent from repeating outdated facts, did just telling the model to prefer current information help?",
+    "gold": "okf-skills/decisions/trust-benchmark.md",
+    "keywords": ["trustability", "superseded", "control arm"]
+  },
+  {
+    "id": "B6",
+    "style": "paraphrase",
+    "question": "When rebuilding a knowledge base from git history, how much did grouping small events into one analyzer call reduce the number of calls?",
+    "gold": "okf-skills/decisions/map-phase-routing.md",
+    "keywords": ["map phase", "57 calls", "batches"]
+  },
+  {
+    "id": "B7",
+    "style": "reuse",
+    "question": "What do the governance levels constraint, hold and context mean for an agent editing code?",
+    "gold": "okf-agent-memory/architecture/governance-model.md",
+    "keywords": ["governance", "hold", "code_refs"]
+  },
+  {
+    "id": "B8",
+    "style": "paraphrase",
+    "question": "How is the encryption key for syncing memory between devices derived from the user's password?",
+    "gold": "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+    "keywords": ["Argon2id", "vault", "AES-256-GCM"]
+  },
+  {
+    "id": "B9",
+    "style": "paraphrase",
+    "question": "If my project and a vendored dependency both define a concept with the same ID, which one wins?",
+    "gold": "okf-agent-memory/architecture/registry-and-vendor-layering.md",
+    "keywords": ["shadowing", "vendor", "priority"]
+  },
+  {
+    "id": "B10",
+    "style": "reuse",
+    "question": "Are AI agents allowed to run git tag or git push during the release procedure?",
+    "gold": "okf-agent-memory/convention/release-procedure.md",
+    "keywords": ["release", "git push", "maintainer"]
+  },
+  {
+    "id": "B11",
+    "style": "paraphrase",
+    "question": "When two notes tie on relevance, how does the memory search decide which comes first?",
+    "gold": "okf-agent-memory/architecture/search-tokenization.md",
+    "keywords": ["equal", "concept ID", "Unicode"]
+  },
+  {
+    "id": "B12",
+    "style": "paraphrase",
+    "question": "In the two-layer memory model for agents, how large may the always-loaded instruction file be?",
+    "gold": "okf-agent-memory/convention/dual-memory-architecture.md",
+    "keywords": ["DMAA", "AGENTS.md", "400 tokens"]
+  },
+  {
+    "id": "B13",
+    "style": "reuse",
+    "question": "What does lint rule OKF006 check?",
+    "gold": "okf-docs/lint.md",
+    "keywords": ["OKF006", "lint"]
+  },
+  {
+    "id": "B14",
+    "style": "paraphrase",
+    "question": "What happens if an agent saves the same note twice with the same retry key but changed text?",
+    "gold": "okf-docs/durable-capture.md",
+    "keywords": ["idempotency_key", "idempotency_conflict"]
+  },
+  {
+    "id": "B15",
+    "style": "paraphrase",
+    "question": "Can a single okf MCP server process speak both the old and the new revision of the MCP spec at once?",
+    "gold": "okf-docs/mcp-server.md",
+    "keywords": ["2024-11-05", "2026-07-28", "protocol eras"]
+  },
+  {
+    "id": "B16",
+    "style": "reuse",
+    "question": "What is the lethal trifecta in agent security?",
+    "gold": "cole-medin/concepts/lethal-trifecta.md",
+    "keywords": ["lethal trifecta", "exfiltration", "untrusted content"]
+  },
+  {
+    "id": "B17",
+    "style": "paraphrase",
+    "question": "Why does my locally hosted model forget earlier messages and skip tool calls with default settings, and how do I give it more room?",
+    "gold": "cole-medin/concepts/ollama-context-window.md",
+    "keywords": ["num_ctx", "Modelfile", "2048"]
+  },
+  {
+    "id": "B18",
+    "style": "paraphrase",
+    "question": "Why should I wipe a document's old pieces from the vector database before uploading its new version?",
+    "gold": "cole-medin/concepts/delete-before-insert-reingestion.md",
+    "keywords": ["upsert", "file ID", "duplicate vectors"]
+  },
+  {
+    "id": "B19",
+    "style": "paraphrase",
+    "question": "At what monthly volume does renting my own GPU become cheaper than paying a provider per token?",
+    "gold": "cole-medin/concepts/self-hosting-cost-crossover.md",
+    "keywords": ["crossover", "per-token", "GPU"]
+  },
+  {
+    "id": "B20",
+    "style": "reuse",
+    "question": "What is the Ralph loop, and how does it exit its bash loop?",
+    "gold": "cole-medin/concepts/the-ralph-loop.md",
+    "keywords": ["Ralph", "bash loop", "completion"]
+  },
+  {
+    "id": "B21",
+    "style": "reuse",
+    "question": "What is a dark factory for AI coding?",
+    "gold": "cole-medin/concepts/dark-factory.md",
+    "keywords": ["dark factory", "spec", "shipped code"]
+  },
+  {
+    "id": "B22",
+    "style": "reuse",
+    "question": "Which video covers how Stripe's coding agents ship 1,300 PRs every week?",
+    "gold": "cole-medin/sources/stripes-coding-agents-ship-1300-prs-every-week-heres-how-they-do-it.md",
+    "keywords": ["Stripe", "Minions", "1,300"]
+  },
+  {
+    "id": "B23",
+    "style": "reuse",
+    "question": "Which speech-to-text tool does Cole use to dictate to LLMs, and what is its deep context feature?",
+    "gold": "cole-medin/entities/tools/aqua-voice.md",
+    "keywords": ["Aqua Voice", "deep context", "dictate"]
+  },
+  {
+    "id": "B24",
+    "style": "paraphrase",
+    "question": "Is there a way to vectorize an entire file before cutting it into pieces, so every piece remembers what the rest of the file said?",
+    "gold": "cole-medin/concepts/late-chunking.md",
+    "keywords": ["late chunking", "token embeddings"]
+  },
+  {
+    "id": "B25",
+    "style": "paraphrase",
+    "question": "Which video has an agent harness running for a whole day straight to recreate Anthropic's chat website, and what share of the tests passed?",
+    "gold": "cole-medin/sources/i-forced-claude-to-code-for-24-hours-nonstop-heres-what-happened.md",
+    "keywords": ["24 hours", "CLAUDE_PROGRESS", "54%"]
+  }
+]

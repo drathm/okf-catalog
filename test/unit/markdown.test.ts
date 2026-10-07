@@ -66,6 +66,8 @@ describe("readBody", () => {
       htmlBlocks: 0,
       inlineHtml: 0,
       hasScriptLike: false,
+      unanalysed: false,
+      truncated: false,
     });
   });
 });

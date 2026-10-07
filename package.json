@@ -29,9 +29,11 @@
     "@modelcontextprotocol/server": "2.3.1",
     "@tobilu/qmd": "2.8.3",
     "mdast-util-from-markdown": "2.1.0",
-    "mdast-util-gfm": "3.1.0",
+    "mdast-util-gfm-footnote": "2.1.0",
+    "mdast-util-gfm-table": "2.0.0",
     "mdast-util-to-string": "4.0.0",
-    "micromark-extension-gfm": "3.0.0",
+    "micromark-extension-gfm-footnote": "2.1.0",
+    "micromark-extension-gfm-table": "2.1.2",
     "yaml": "2.9.1",
     "zod": "4.6.5"
   },

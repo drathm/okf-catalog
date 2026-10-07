@@ -1,12 +1,19 @@
 import { defineConfig } from "vitest/config";
 
-export default defineConfig({
+// Every test runs twice, fourteen hours ahead of UTC and eleven behind, so a dependence on local time fails here first.
+const project = (name: string, tz: string) => ({
   test: {
+    name,
     include: ["test/**/*.test.ts"],
-    environment: "node",
-    // Fourteen hours ahead of UTC: any code that leans on the machine's local time fails here first.
-    env: { TZ: "Pacific/Kiritimati" },
+    environment: "node" as const,
+    env: { TZ: tz },
     testTimeout: 30_000,
     hookTimeout: 60_000,
+  },
+});
+
+export default defineConfig({
+  test: {
+    projects: [project("plus14", "Pacific/Kiritimati"), project("minus11", "Pacific/Pago_Pago")],
   },
 });

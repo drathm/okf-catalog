@@ -4,7 +4,7 @@ const ADAPTERS = "^src/(engine|mcp)/";
 const EDGES = "^src/(source|fs|config|report)/|^src/log\\.ts$";
 const COMMANDS = "^src/commands/";
 const CORE_NPM =
-  "^node_modules/(yaml|zod|mdast-util-from-markdown|mdast-util-to-string|mdast-util-gfm|micromark-extension-gfm|@types/mdast|@types/unist)/";
+  "^node_modules/(yaml|zod|mdast-util-from-markdown|mdast-util-to-string|mdast-util-gfm-footnote|mdast-util-gfm-table|micromark-extension-gfm-footnote|micromark-extension-gfm-table|@types/mdast|@types/unist)/";
 
 module.exports = {
   forbidden: [

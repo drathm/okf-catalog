@@ -1,8 +1,8 @@
 import { buildCatalog, type Catalog, type Folder } from "../catalog/model.js";
 import { admit, capRefusals, isEngineConfig, isHidden, unknownTypes } from "./contract.js";
 import { decodeUtf8 } from "./frontmatter.js";
-import { generateIndex, type IndexPage } from "./index-file.js";
-import type { LinkIndex } from "./links.js";
+import { generateIndex, type IndexPage, parseIndex } from "./index-file.js";
+import { type LinkIndex, resolveLink } from "./links.js";
 import { MANIFEST_NAME, type Manifest, parseManifest, verifyManifest } from "./manifest.js";
 import type {
   BundleFile,
@@ -15,16 +15,12 @@ import type {
   ReservedFile,
 } from "./model.js";
 import { decideReplacement, parsePage } from "./page.js";
+import { byCodeUnit as byPath, folderOf, isSafeRelativePath } from "./paths.js";
 import { parseReserved, reservedKind } from "./reserved.js";
 
 export interface LoadResult {
   catalog: Catalog;
   report: Report;
-}
-
-function folderOf(path: string): string {
-  const i = path.lastIndexOf("/");
-  return i === -1 ? "" : path.slice(0, i);
 }
 
 function ancestors(folder: string): string[] {
@@ -34,8 +30,6 @@ function ancestors(folder: string): string[] {
   for (let i = 1; i <= parts.length; i++) out.push(parts.slice(0, i).join("/"));
   return out;
 }
-
-const byPath = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
  * Turns the files of a bundle into a catalog and a report. Pure: the files arrive in memory, the clock is a
@@ -51,7 +45,7 @@ export function loadBundle(
   now: Date,
 ): LoadResult {
   const report: Report = {
-    loadedAt: now,
+    loadedAt: new Date(now.getTime()),
     integrity: options.integrity === "require-manifest" ? "checked" : "skipped",
     admitted: 0,
     excludedByStatus: 0,
@@ -75,8 +69,20 @@ export function loadBundle(
     };
   };
 
+  // Paths first: a path that is not a safe bundle path is refused before anything reads it.
+  const sorted: BundleFile[] = [];
+  for (const file of [...files].sort((a, b) => byPath(a.path, b.path))) {
+    if (isSafeRelativePath(file.path)) sorted.push(file);
+    else
+      report.refusals.push({
+        path: file.path,
+        rule: "path-escape",
+        detail:
+          "not a bundle-relative path: absolute, empty or parent segments and backslashes are refused",
+      });
+  }
+
   // Caps, over everything that arrived.
-  const sorted = [...files].sort((a, b) => byPath(a.path, b.path));
   const caps = capRefusals(sorted, options.caps);
   if (caps.fatal !== undefined) return empty(caps.fatal);
   const refusedPaths = new Set(caps.perFile.map((r) => r.path));
@@ -132,7 +138,10 @@ export function loadBundle(
           report.refusals.push({
             path: problem.path,
             rule: problem.problem,
-            detail: `the file does not match its manifest entry (${problem.problem})`,
+            detail:
+              problem.problem === "not-in-manifest"
+                ? "the manifest does not list this file"
+                : `the file does not match its manifest entry (${problem.problem})`,
           });
         }
       }
@@ -193,7 +202,7 @@ export function loadBundle(
     } catch (error) {
       report.refusals.push({
         path: file.path,
-        rule: "frontmatter-unparseable",
+        rule: "body-unreadable",
         detail: `the page could not be read: ${(error as Error).message}`,
       });
     }
@@ -230,6 +239,28 @@ export function loadBundle(
   }
   for (const page of admitted) report.degradations.push(...page.degradations);
   report.degradations.push(...extra);
+  // A company's own index that lists pages which are not served is reported, since the catalog serves it as written.
+  for (const index of reserved.values()) {
+    if (index.kind !== "index") continue;
+    const unserved: string[] = [];
+    for (const entry of parseIndex(index.body).flatMap((s) => s.entries)) {
+      const resolved = resolveLink(entry.href, index.path, linkIndex);
+      if (
+        resolved.kind === "page" &&
+        resolved.target !== undefined &&
+        !admittedPaths.has(resolved.target)
+      )
+        unserved.push(resolved.target);
+    }
+    if (unserved.length > 0) {
+      report.degradations.push({
+        path: index.path,
+        code: "index-lists-unserved",
+        field: "entries",
+        detail: `${unserved.length} ${unserved.length === 1 ? "entry points" : "entries point"} at pages that are not served: ${unserved.slice(0, 5).join(", ")}${unserved.length > 5 ? ", …" : ""}`,
+      });
+    }
+  }
   report.unknownTypes = unknownTypes(admitted, options.types);
 
   // Folders: every ancestor of an admitted page, plus every folder that holds a reserved file.

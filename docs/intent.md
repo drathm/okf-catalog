@@ -88,7 +88,7 @@ What qmd does, checked against its code at release 2.8.3 and at main on 2026-10-
 | Path and file name | Lower-case, hyphenated, descriptive | qmd ranks the path at one and a half times body weight, so names carry signal; the folder is the topic | Nothing |
 | Body | Markdown | Indexed as body text; treated as data by the skill; nothing in it is executed | Raw HTML and scripts are indexed as text and reported |
 | Files that are not Markdown (§6.3) | Material under `references/` or elsewhere | Counted as attachments; never indexed, executed or served | Nothing |
-| `manifest.json` (okf-catalog, not spec) | Source commit, publish time, SHA-256 per file | Integrity on load; the `status` answer; the filters until qmd's metadata filter ships | Refused, except under the development flag, which then also skips the integrity check and says so in `status` |
+| `manifest.json` (okf-catalog, not spec) | Source commit, publish time, SHA-256 per file | Integrity on load; the `status` answer; the filters until qmd's metadata filter ships | Refused when integrity is required, which it is for a served bundle; a development load or a `pack` of a source checkout runs with integrity off, and the report says so |
 
 **What is refused, and reported.** A page with no frontmatter or no `type`; symbolic links, path escapes, oversize files and trees, and engine configuration such as a `.qmd` file inside a bundle; a file whose SHA-256 disagrees with the manifest; a missing manifest outside development mode. Everything else degrades as the table says and lands in the `status` report with the path and the reason.
 

@@ -24,7 +24,7 @@ Gap list for superops to reach qmd-class English retrieval, estimated: route the
 
 ## Measured: superops okf on a public corpus
 
-Corpus: 737 OKF pages from okf-skills `.okf/`, okf-agent-memory `knowledge/`, superops `docs/knowledge`, and cole-medin-knowledge-base `concepts/`, `entities/`, `sources/`. 33 questions, one gold page each, 39% reusing page wording, 61% paraphrased.
+Corpus: 737 OKF pages from okf-skills `.okf/`, okf-agent-memory `knowledge/`, superops `docs/knowledge`, and cole-medin-knowledge-base `concepts/`, `entities/`, `sources/`. 33 questions in the original run, one gold page each, 39% reusing page wording, 61% paraphrased; the 25 that target the public corpus (10 reusing wording, 15 paraphrased) are the ones kept in this repository's `bench/questions.json`.
 
 | Engine | Corpus | hit@1 | hit@3 | MRR@5 | zero-result queries |
 |---|---|---|---|---|---|

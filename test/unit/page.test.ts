@@ -245,7 +245,7 @@ describe("parsePage: refusals and inline variants", () => {
     expect(r.page.trust).toBe("human-reviewed");
   });
 
-  it("treats verified given as a string, an empty list or null as malformed, leaving the page unverified", () => {
+  it("leaves the page unverified for a string, an empty list or null, reporting the string as malformed", () => {
     for (const value of ["human:x", "[]", "null"]) {
       const r = inline("x.md", `---\ntype: T\nverified: ${value}\n---\n`);
       if (!r.ok) throw new Error(r.refusal.rule);

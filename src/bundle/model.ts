@@ -73,12 +73,17 @@ export type DegradationCode =
   | "verified-entry-malformed"
   | "source-malformed"
   | "footnote-without-source"
+  | "verification-without-at"
   | "body-html"
+  | "body-unanalysed"
+  | "body-truncated"
+  | "index-lists-unserved"
   | "replacement-missing"
   | "replacement-broken"
   | "replacement-external"
   | "replacement-not-served"
   | "replacement-self"
+  | "replacement-not-a-page"
   | "frontmatter-warning"
   | "reserved-frontmatter-unparseable"
   | "okf-version-unknown";
@@ -93,6 +98,7 @@ export interface Degradation {
 export type RefusalRule =
   | "no-frontmatter"
   | "frontmatter-unparseable"
+  | "body-unreadable"
   | "no-type"
   | "not-utf8"
   | "symlink"
@@ -130,6 +136,8 @@ export interface Page {
   staleAfter?: StaleAfter;
   generated?: { by: string; at?: Timestamp };
   verified: Verification[];
+  /** The verification with the latest instant; among entries without one, the last listed. */
+  latestVerification?: Verification;
   trust: Trust;
   sources: Source[];
   usageWindow?: { from: string; to: string };

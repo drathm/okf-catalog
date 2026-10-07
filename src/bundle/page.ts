@@ -19,6 +19,7 @@ import type {
   Trust,
   Verification,
 } from "./model.js";
+import { folderOf } from "./paths.js";
 import { parseTimestamp } from "./timestamp.js";
 
 export interface PageContext {
@@ -34,14 +35,37 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function folderOf(path: string): string {
-  const i = path.lastIndexOf("/");
-  return i === -1 ? "" : path.slice(0, i);
+/** What a value is, for a sentence: "a list", "a mapping", "a number", "empty". */
+function kindOf(value: unknown): string {
+  if (value === null || value === undefined) return "empty";
+  if (Array.isArray(value)) return "a list";
+  if (typeof value === "object") return "a mapping";
+  return `a ${typeof value}`;
 }
 
 function stemOf(path: string): string {
-  const name = path.slice(path.lastIndexOf("/") + 1);
-  return name.replace(/\.md$/, "");
+  return path.slice(path.lastIndexOf("/") + 1).replace(/\.md$/, "");
+}
+
+/** The verification with the latest instant; among entries without one, the last listed. */
+export function latestVerification(verified: readonly Verification[]): Verification | undefined {
+  let best: Verification | undefined;
+  let bestAt = Number.NEGATIVE_INFINITY;
+  for (const v of verified) {
+    const at = v.at?.at?.getTime();
+    if (at === undefined) {
+      if (best === undefined) best = v;
+      continue;
+    }
+    if (best === undefined || best.at?.at === undefined || at >= bestAt) {
+      best = v;
+      bestAt = at;
+    }
+  }
+  if (best !== undefined && best.at?.at === undefined) {
+    for (const v of verified) if (v.at?.at === undefined) best = v;
+  }
+  return best;
 }
 
 /** Turns one file into a page, deriving every field with its source and a degradation wherever a fallback was used. */
@@ -59,9 +83,15 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
   const decoded = decodeUtf8(file.bytes);
   if (!decoded.ok) return refuse("not-utf8", "the file is not valid UTF-8");
   const split = splitFrontmatter(decoded.text);
-  if (split.block === undefined)
-    return refuse("no-frontmatter", "no frontmatter block opens the file");
-  const parsed = parseFrontmatter(split.block);
+  if (split.block === undefined) {
+    return refuse(
+      "no-frontmatter",
+      split.unclosed === true
+        ? "the frontmatter block opened on line 1 is never closed"
+        : "no frontmatter block opens the file",
+    );
+  }
+  const parsed = parseFrontmatter(split.block, 1);
   if (!parsed.ok) return refuse("frontmatter-unparseable", parsed.error);
   const { data, sources: scalarText } = parsed;
   for (const warning of parsed.warnings) degrade("frontmatter-warning", "frontmatter", warning);
@@ -78,14 +108,27 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
     return undefined;
   };
 
+  if (!Object.hasOwn(data, "type")) return refuse("no-type", "the frontmatter has no type");
   const type = text("type")?.trim();
-  if (type === undefined || type.length === 0)
-    return refuse("no-type", "the frontmatter has no non-empty type");
+  if (type === undefined) return refuse("no-type", `type is ${kindOf(data.type)}, not text`);
+  if (type.length === 0) return refuse("no-type", "type is empty");
 
   const facts = readBody(split.body);
+  if (facts.unanalysed) {
+    degrade(
+      "body-unanalysed",
+      "body",
+      "the body nests deeper than the analyser allows; no title, description or links were taken from it",
+    );
+  }
+  if (facts.truncated)
+    degrade("body-truncated", "body", "only the first 256 KiB of the body were analysed");
 
   let title = text("title")?.trim();
   let titleSource: Page["titleSource"] = "frontmatter";
+  if (Object.hasOwn(data, "title") && title === undefined) {
+    degrade("field-ignored", "title", `title is ${kindOf(data.title)}, not text; ignored`);
+  }
   if (title === undefined || title.length === 0) {
     if (facts.firstHeading !== undefined && facts.firstHeading.length > 0) {
       title = facts.firstHeading;
@@ -108,6 +151,13 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
 
   let description = text("description")?.trim();
   let descriptionSource: Page["descriptionSource"] = "frontmatter";
+  if (Object.hasOwn(data, "description") && description === undefined) {
+    degrade(
+      "field-ignored",
+      "description",
+      `description is ${kindOf(data.description)}, not text; ignored`,
+    );
+  }
   if (description === undefined || description.length === 0) {
     if (facts.firstSentence !== undefined) {
       description = facts.firstSentence;
@@ -131,22 +181,26 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
   const tags: string[] = [];
   const rawTags = data.tags;
   if (Array.isArray(rawTags)) {
-    for (const tag of rawTags) {
+    rawTags.forEach((tag, i) => {
       if (typeof tag === "string") tags.push(tag);
       else if (typeof tag === "number" || typeof tag === "boolean") tags.push(String(tag));
-      else degrade("field-ignored", "tags", `a tag that is not a scalar was ignored`);
-    }
+      else degrade("field-ignored", "tags", `tags[${i}] is ${kindOf(tag)}, not text; ignored`);
+    });
   } else if (typeof rawTags === "string") {
     tags.push(rawTags);
     degrade("tags-not-list", "tags", "tags is a single string, read as one tag");
-  } else if (rawTags !== undefined) {
-    degrade("tags-not-list", "tags", `tags is not a list; ignored`);
+  } else if (rawTags !== undefined && rawTags !== null) {
+    degrade("tags-not-list", "tags", `tags is ${kindOf(rawTags)}, not a list; ignored`);
   }
 
   const statusResult = normaliseStatus(data.status, Object.hasOwn(data, "status"), degrade);
 
   let staleAfter: StaleAfter | undefined;
-  if (Object.hasOwn(data, "stale_after")) {
+  if (
+    Object.hasOwn(data, "stale_after") &&
+    data.stale_after !== null &&
+    data.stale_after !== undefined
+  ) {
     const raw = text("stale_after") ?? JSON.stringify(data.stale_after);
     const ts = parseTimestamp(raw);
     const expected = ctx.specText === "2026-08-15" ? "date" : "datetime";
@@ -192,7 +246,7 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
       degrade(
         "generated-malformed",
         "generated",
-        "generated needs a by actor; the entry was ignored",
+        `generated is ${kindOf(g)} without a by actor; ignored`,
       );
     }
   }
@@ -205,22 +259,25 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
       degrade(
         "verified-entry-malformed",
         "verified",
-        "verified is neither a list nor a mapping; ignored",
+        `verified is ${kindOf(v)}, neither a list nor a mapping; ignored`,
       );
     }
-    for (const entry of entries) {
+    entries.forEach((entry, i) => {
       if (isRecord(entry) && typeof entry.by === "string" && entry.by.trim().length > 0) {
         const verification: Verification = { by: entry.by.trim() };
-        if (Object.hasOwn(entry, "at")) verification.at = timestamp(entry.at, "verified.at");
+        if (Object.hasOwn(entry, "at") && entry.at !== null)
+          verification.at = timestamp(entry.at, `verified[${i}].at`);
+        else
+          degrade(
+            "verification-without-at",
+            "verified",
+            `verified[${i}] by ${verification.by} has no at`,
+          );
         verified.push(verification);
       } else {
-        degrade(
-          "verified-entry-malformed",
-          "verified",
-          "a verification needs a by actor; the entry was ignored",
-        );
+        degrade("verified-entry-malformed", "verified", `verified[${i}] has no by actor; ignored`);
       }
-    }
+    });
   }
   const trust: Trust =
     verified.length === 0
@@ -233,10 +290,12 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
   if (Object.hasOwn(data, "sources")) {
     const s = data.sources;
     if (Array.isArray(s)) {
-      for (const entry of s) {
+      s.forEach((entry, i) => {
         if (isRecord(entry) && typeof entry.resource === "string" && entry.resource.length > 0) {
           const source: Source = { resource: entry.resource };
           if (typeof entry.id === "string") source.id = entry.id;
+          else if (typeof entry.id === "number" || typeof entry.id === "boolean")
+            source.id = String(entry.id);
           if (typeof entry.title === "string") source.title = entry.title;
           if (typeof entry.author === "string") source.author = entry.author;
           if (typeof entry.usage_count === "number") source.usageCount = entry.usage_count;
@@ -246,15 +305,11 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
             source.usageWindow = { from: w.from, to: w.to };
           sources.push(source);
         } else {
-          degrade(
-            "source-malformed",
-            "sources",
-            "a source needs a resource; the entry was ignored",
-          );
+          degrade("source-malformed", "sources", `sources[${i}] has no resource; ignored`);
         }
-      }
+      });
     } else {
-      degrade("source-malformed", "sources", "sources is not a list; ignored");
+      degrade("source-malformed", "sources", `sources is ${kindOf(s)}, not a list; ignored`);
     }
   }
 
@@ -272,21 +327,26 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
     return link;
   });
 
-  // GFM lower-cases footnote identifiers; the join with sources[].id is therefore case-insensitive.
+  // GFM lower-cases footnote identifiers; the join with sources[].id is case-insensitive, and each missing id is reported once.
   const sourceIds = new Set(
     sources.map((s) => s.id?.toLowerCase()).filter((id): id is string => id !== undefined),
   );
-  for (const id of facts.footnoteReferences) {
-    if (!sourceIds.has(id.toLowerCase())) {
-      degrade("footnote-without-source", "sources", `footnote ${id} has no matching sources entry`);
-    }
-  }
+  const missing = new Set<string>();
+  for (const id of facts.footnoteReferences) if (!sourceIds.has(id.toLowerCase())) missing.add(id);
+  for (const id of missing)
+    degrade("footnote-without-source", "sources", `footnote ${id} has no matching sources entry`);
 
-  if (facts.htmlBlocks > 0 || facts.hasScriptLike) {
+  if (facts.htmlBlocks > 0 || facts.inlineHtml > 0 || facts.hasScriptLike) {
+    const parts: string[] = [];
+    if (facts.htmlBlocks > 0)
+      parts.push(`${facts.htmlBlocks} HTML block${facts.htmlBlocks === 1 ? "" : "s"}`);
+    if (facts.inlineHtml > 0)
+      parts.push(`${facts.inlineHtml} inline HTML element${facts.inlineHtml === 1 ? "" : "s"}`);
+    if (facts.hasScriptLike) parts.push("including a script-like element");
     degrade(
       "body-html",
       "body",
-      `${facts.htmlBlocks} HTML block(s)${facts.hasScriptLike ? ", including a script-like element" : ""}; indexed as text, never executed`,
+      `${parts.join(", ")}; indexed as text, never executed, kept out of the description`,
     );
   }
 
@@ -314,6 +374,8 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
   if (statusResult.raw !== undefined) page.statusRaw = statusResult.raw;
   if (staleAfter !== undefined) page.staleAfter = staleAfter;
   if (generated !== undefined) page.generated = generated;
+  const latest = latestVerification(verified);
+  if (latest !== undefined) page.latestVerification = latest;
   if (usageWindow !== undefined) page.usageWindow = usageWindow;
   if (resource !== undefined) page.resource = resource;
   return { ok: true, page };
@@ -337,6 +399,12 @@ function normaliseStatus(
   );
   return { status: "draft", source: "frontmatter", raw };
 }
+
+const ARTICLE: Record<string, string> = {
+  folder: "a folder",
+  reserved: "an index or log file",
+  attachment: "an attachment",
+};
 
 /**
  * The replacement for a deprecated page: the first body link that is not a same-page anchor decides. It is the
@@ -381,8 +449,8 @@ export function decideReplacement(
     }
     default:
       return reason(
-        "replacement-broken",
-        `the first link, ${first.raw}, points at a ${first.kind}, not a page`,
+        "replacement-not-a-page",
+        `the first link, ${first.raw}, points at ${ARTICLE[first.kind] ?? first.kind}, not a page`,
       );
   }
 }

@@ -1,8 +1,9 @@
 import type { Nodes, Parent } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
-import { gfmFromMarkdown } from "mdast-util-gfm";
-import { toString as mdastToString } from "mdast-util-to-string";
-import { gfm } from "micromark-extension-gfm";
+import { gfmFootnoteFromMarkdown } from "mdast-util-gfm-footnote";
+import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
+import { gfmFootnote } from "micromark-extension-gfm-footnote";
+import { gfmTable } from "micromark-extension-gfm-table";
 
 export interface BodyFacts {
   firstHeading: string | undefined;
@@ -12,81 +13,140 @@ export interface BodyFacts {
   htmlBlocks: number;
   inlineHtml: number;
   hasScriptLike: boolean;
+  /** The body nests deeper than the analyser allows; no facts were taken from it. */
+  unanalysed: boolean;
+  /** Only the first part of the body was analysed. */
+  truncated: boolean;
 }
 
 const SENTENCE_CAP = 200;
+const ANALYSIS_BUDGET = 256 * 1024;
+const MAX_NESTING = 256;
 const SCRIPT_LIKE = /<\s*\/?\s*(script|style|iframe)\b/i;
+
+/** The deepest run of block-quote markers or unclosed brackets, measured before any parse so the bound is deterministic. */
+export function nestingDepth(body: string): number {
+  let deepest = 0;
+  let brackets = 0;
+  for (const line of body.split("\n")) {
+    const quotes = (/^[ \t>]*/.exec(line)?.[0].match(/>/g) ?? []).length;
+    if (quotes > deepest) deepest = quotes;
+    for (const ch of line) {
+      if (ch === "[") brackets += 1;
+      else if (ch === "]" && brackets > 0) brackets -= 1;
+      if (brackets > deepest) deepest = brackets;
+    }
+  }
+  return deepest;
+}
 
 function isParent(node: Nodes): node is Nodes & Parent {
   return "children" in node && Array.isArray((node as Parent).children);
 }
 
+/** The prose of a node, leaving out HTML and footnote marks, whitespace collapsed. */
+function proseOf(node: Nodes): string {
+  const parts: string[] = [];
+  const stack: Nodes[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop() as Nodes;
+    if (current.type === "html" || current.type === "footnoteReference") continue;
+    if ("value" in current && typeof current.value === "string") parts.push(current.value);
+    else if (isParent(current))
+      for (let i = current.children.length - 1; i >= 0; i--)
+        stack.push(current.children[i] as Nodes);
+  }
+  return parts.join("").replace(/\s+/g, " ").trim();
+}
+
 function firstSentenceOf(text: string): string {
-  const collapsed = text.replace(/\s+/g, " ").trim();
-  const match = /^(.*?[.!?])(?=\s|$)/.exec(collapsed);
-  const sentence = match?.[1] ?? collapsed;
+  const match = /^(.*?[.!?])(?=\s|$)/.exec(text);
+  const sentence = match?.[1] ?? text;
   return sentence.length > SENTENCE_CAP ? sentence.slice(0, SENTENCE_CAP).trimEnd() : sentence;
 }
 
-/** Reads the facts the OKF layer needs from a Markdown body, parsed as GFM so tables and footnotes are what they are. */
+const EMPTY: Omit<BodyFacts, "unanalysed" | "truncated"> = {
+  firstHeading: undefined,
+  firstSentence: undefined,
+  links: [],
+  footnoteReferences: [],
+  htmlBlocks: 0,
+  inlineHtml: 0,
+  hasScriptLike: false,
+};
+
+/**
+ * Reads the facts the OKF layer needs from a Markdown body: CommonMark with footnotes and tables, never the
+ * autolink extension, whose cost grows without bound on nested brackets. A body nested past the limit is left
+ * unanalysed rather than parsed; a body past the budget is analysed up to it. The tree is walked iteratively.
+ */
 export function readBody(body: string): BodyFacts {
-  const tree = fromMarkdown(body, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] });
-  const definitions = new Map<string, string>();
+  const truncated = body.length > ANALYSIS_BUDGET;
+  const text = truncated ? body.slice(0, ANALYSIS_BUDGET) : body;
+  if (nestingDepth(text) > MAX_NESTING)
+    return { ...EMPTY, links: [], footnoteReferences: [], unanalysed: true, truncated };
+  const tree = fromMarkdown(text, {
+    extensions: [gfmFootnote(), gfmTable()],
+    mdastExtensions: [gfmFootnoteFromMarkdown(), gfmTableFromMarkdown()],
+  });
   const facts: BodyFacts = {
-    firstHeading: undefined,
-    firstSentence: undefined,
+    ...EMPTY,
     links: [],
     footnoteReferences: [],
-    htmlBlocks: 0,
-    inlineHtml: 0,
-    hasScriptLike: false,
+    unanalysed: false,
+    truncated,
   };
-  const pending: Array<{ identifier: string; position: number }> = [];
-
-  const visit = (node: Nodes, parent: Nodes | undefined, inSkipped: boolean): void => {
+  const definitions = new Map<string, string>();
+  const references: Array<{ identifier: string; slot: number }> = [];
+  const stack: Array<{ node: Nodes; parent: Nodes | undefined; skipped: boolean }> = [
+    { node: tree, parent: undefined, skipped: false },
+  ];
+  while (stack.length > 0) {
+    const { node, parent, skipped } = stack.pop() as {
+      node: Nodes;
+      parent: Nodes | undefined;
+      skipped: boolean;
+    };
     switch (node.type) {
       case "definition":
         definitions.set(node.identifier, node.url);
         break;
       case "heading":
-        if (facts.firstHeading === undefined) facts.firstHeading = mdastToString(node).trim();
+        if (facts.firstHeading === undefined) facts.firstHeading = proseOf(node);
         break;
       case "paragraph":
-        if (!inSkipped && facts.firstSentence === undefined) {
-          const sentence = firstSentenceOf(mdastToString(node));
+        if (!skipped && facts.firstSentence === undefined) {
+          const sentence = firstSentenceOf(proseOf(node));
           if (sentence.length > 0) facts.firstSentence = sentence;
         }
         break;
       case "link":
-        facts.links.push({ url: node.url, text: mdastToString(node) });
+        facts.links.push({ url: node.url, text: proseOf(node) });
         break;
       case "linkReference":
-        pending.push({ identifier: node.identifier, position: facts.links.length });
-        facts.links.push({ url: "", text: mdastToString(node) });
+        references.push({ identifier: node.identifier, slot: facts.links.length });
+        facts.links.push({ url: "", text: proseOf(node) });
         break;
       case "footnoteReference":
         facts.footnoteReferences.push(node.identifier);
         break;
-      case "html": {
+      case "html":
         if (parent !== undefined && parent.type === "paragraph") facts.inlineHtml += 1;
         else facts.htmlBlocks += 1;
         if (SCRIPT_LIKE.test(node.value)) facts.hasScriptLike = true;
         break;
-      }
       default:
         break;
     }
     if (isParent(node)) {
-      const skip = inSkipped || node.type === "footnoteDefinition" || node.type === "table";
-      for (const child of node.children) visit(child as Nodes, node, skip);
+      const skip = skipped || node.type === "footnoteDefinition" || node.type === "table";
+      for (let i = node.children.length - 1; i >= 0; i--)
+        stack.push({ node: node.children[i] as Nodes, parent: node, skipped: skip });
     }
-  };
-  visit(tree, undefined, false);
-
-  for (const ref of pending) {
-    const url = definitions.get(ref.identifier);
-    const slot = facts.links[ref.position];
-    if (slot !== undefined) slot.url = url ?? "";
+  }
+  for (const ref of references) {
+    const slot = facts.links[ref.slot];
+    if (slot !== undefined) slot.url = definitions.get(ref.identifier) ?? "";
   }
   facts.links = facts.links.filter((l) => l.url !== "");
   return facts;
