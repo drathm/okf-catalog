@@ -116,3 +116,41 @@ describe("provenance on parsed fixture pages (review round 1)", () => {
     expect(isOverdue(catalog.pages.get("terms/zeta.md")?.staleAfter, noon)).toBe(true);
   });
 });
+
+// The readiness ledger (issue 2's "Holds", D59, row 20): a form the pinned text did not expect is reported and used.
+describe("provenance: the readiness ledger (D59)", () => {
+  it("keeps the unexpected stale_after form in use", async () => {
+    const { loadBundle } = await import("../../src/bundle/load.js");
+    const { DEFAULT_CAPS } = await import("../../src/bundle/model.js");
+    const { readFixture } = await import("../helpers/fixtures.js");
+    const load = (specText: "2026-08-15" | "2026-08-21") =>
+      loadBundle(
+        "b",
+        readFixture("behaviours"),
+        {
+          admit: ["stable", "deprecated"],
+          dev: false,
+          integrity: "require-manifest",
+          specText,
+          caps: DEFAULT_CAPS,
+        },
+        new Date("2026-10-06T12:00:00Z"),
+      ).catalog;
+    // A datetime where the 15 August text expects a date: reported, and its instant still decides.
+    const beta = load("2026-08-15").pages.get("terms/beta.md");
+    expect(beta?.degradations.map((d) => d.code)).toContain("stale-after-unexpected-form");
+    expect(isOverdue(beta?.staleAfter, new Date("2000-06-01T17:59:59.999Z"))).toBe(false);
+    expect(isOverdue(beta?.staleAfter, new Date("2000-06-01T18:00:00.000Z"))).toBe(true);
+    if (beta === undefined) throw new Error("beta");
+    expect(provenanceOf(beta, new Date("2000-06-01T18:00:00Z")).staleAfter).toEqual({
+      raw: "2000-06-01T18:00:00Z",
+      form: "datetime",
+      overdue: true,
+    });
+    // A date where the 21 August text expects a datetime: reported, and overdue from the start of its UTC day.
+    const zeta = load("2026-08-21").pages.get("terms/zeta.md");
+    expect(zeta?.degradations.map((d) => d.code)).toContain("stale-after-unexpected-form");
+    expect(isOverdue(zeta?.staleAfter, new Date("2000-01-30T23:59:59.999Z"))).toBe(false);
+    expect(isOverdue(zeta?.staleAfter, new Date("2000-01-31T00:00:00.000Z"))).toBe(true);
+  });
+});

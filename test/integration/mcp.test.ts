@@ -475,3 +475,126 @@ describe("bite 4 build review, round 2", () => {
     expect(orders?.citation).toContain("resource: https://console.cloud.google.com/bigquery");
   });
 });
+
+// The readiness ledger (issue 2's "Holds", D59): sentences no test asserted before 0.2.0.
+describe("the readiness ledger (D59)", () => {
+  const verifiedPage = (extra: string, body = "body\n") =>
+    `---\ntype: Guide\ntitle: Page\nstatus: stable\nverified:\n  - by: human:x\n    at: 2026-01-01T00:00:00Z\n${extra}---\n\n${body}`;
+
+  it("returns an overdue page from get_page with overdue set", async () => {
+    const s = await session(fakeRuntime(stable));
+    const r = await s.call("get_page", { path: "terms/zeta.md" });
+    expect(r.isError).not.toBe(true);
+    expect(text(r).split("\n")[0]).toContain("overdue since 2000-01-31");
+    const structured = r.structuredContent as {
+      provenance: { staleAfter: { raw: string; form: string; overdue: boolean } };
+    };
+    expect(structured.provenance.staleAfter).toEqual({
+      raw: "2000-01-31",
+      form: "date",
+      overdue: true,
+    });
+  });
+
+  it("serves the index text in catalog, never the log", async () => {
+    const s = await session(fakeRuntime(stable));
+    const r = await s.call("catalog", {});
+    expect(r.isError).not.toBe(true);
+    expect(stable.catalog.folders.get("")?.log).toBeDefined();
+    const structured = r.structuredContent as { text: string; source: string };
+    expect(structured.source).toBe("file");
+    expect(structured.text).toContain("# Folders");
+    expect(text(r)).toContain("# Folders");
+    for (const logLine of ["Bundle history", "Initialization"]) {
+      expect(text(r)).not.toContain(logLine);
+      expect(JSON.stringify(r.structuredContent)).not.toContain(logLine);
+    }
+  });
+
+  it("does not serve an attachment as a page", async () => {
+    // An attachment that looks like a page: frontmatter, a type, a status. It is still an attachment.
+    const files = [
+      { path: "a.md", bytes: Buffer.from(verifiedPage("")) },
+      {
+        path: "references/tool.txt",
+        bytes: Buffer.from(verifiedPage("", "zanzibarattachment is only here\n")),
+      },
+    ];
+    const generation = loadGeneration(files, { integrity: "none" }, NOW);
+    expect(generation.report.attachments).toBe(1);
+    expect(generation.catalog.pages.has("references/tool.txt")).toBe(false);
+    const s = await session(fakeRuntime(generation));
+    const read = await s.call("get_page", { path: "references/tool.txt" });
+    expect(read.isError).toBe(true);
+    expect(text(read)).toMatch(/^no page at "references\/tool\.txt"/);
+    const found = await s.call("search", { question: "zanzibarattachment" });
+    expect(text(found)).toMatch(/^0 hits: no page matched/);
+  });
+
+  it("returns every provenance field the ledger lists", async () => {
+    const files = [
+      {
+        path: "full.md",
+        bytes: Buffer.from(
+          [
+            "---",
+            "type: Term",
+            "title: Full",
+            "status: stable",
+            "generated: { by: human:editor, at: 2026-01-01T00:00:00Z }",
+            "verified:",
+            "  - { by: process:nightly, at: 2026-02-01T00:00:00Z }",
+            "  - { by: human:reviewer, at: 2026-03-01T00:00:00Z }",
+            "stale_after: 2026-01-31",
+            "resource: https://example.test/full",
+            "sources:",
+            "  - id: s1",
+            "    resource: https://example.test/s1",
+            "    title: Source one",
+            "    author: team:docs",
+            "    usage_count: 7",
+            "    last_modified: 2026-01-15",
+            "    usage_window: { from: 2026-01-01, to: 2026-01-31 }",
+            "custom_key: kept as written",
+            "---",
+            "",
+            "Claim.[^s1]",
+            "",
+            "[^s1]: Source one",
+            "",
+          ].join("\n"),
+        ),
+      },
+    ];
+    const generation = loadGeneration(files, { integrity: "none" }, NOW);
+    const s = await session(fakeRuntime(generation));
+    const r = await s.call("get_page", { path: "full.md" });
+    expect(r.isError).not.toBe(true);
+    const provenance = (r.structuredContent as { provenance: Record<string, unknown> }).provenance;
+    expect(provenance).toMatchObject({
+      type: "Term",
+      status: "stable",
+      trust: "human-reviewed",
+      generated: { by: "human:editor", at: "2026-01-01T00:00:00Z" },
+      verified: [
+        { by: "process:nightly", at: "2026-02-01T00:00:00Z" },
+        { by: "human:reviewer", at: "2026-03-01T00:00:00Z" },
+      ],
+      latestVerification: { by: "human:reviewer", at: "2026-03-01T00:00:00Z" },
+      staleAfter: { raw: "2026-01-31", form: "date", overdue: true },
+      sources: [
+        {
+          resource: "https://example.test/s1",
+          id: "s1",
+          title: "Source one",
+          author: "team:docs",
+          usageCount: 7,
+          lastModified: "2026-01-15",
+          usageWindow: { from: "2026-01-01", to: "2026-01-31" },
+        },
+      ],
+      resource: "https://example.test/full",
+    });
+    expect((provenance.frontmatter as Record<string, unknown>).custom_key).toBe("kept as written");
+  });
+});

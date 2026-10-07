@@ -126,6 +126,29 @@ describe("loadBundle on the behaviours bundle", () => {
   });
 });
 
+// The readiness ledger (issue 2's "Holds", D59, row 31): an unknown okf_version degrades, it never refuses.
+describe("loadBundle: the readiness ledger (D59)", () => {
+  it("serves a bundle whose root index declares an unknown okf_version", () => {
+    const files = readFixture("behaviours").map((f) =>
+      f.path === "index.md"
+        ? {
+            path: f.path,
+            bytes: Buffer.from(Buffer.from(f.bytes).toString("utf8").replace('"0.2"', '"9.9"')),
+          }
+        : f,
+    );
+    const { catalog, report } = loadBundle("b", files, options({ integrity: "none" }), NOW);
+    expect(report.fatal).toBeUndefined();
+    expect(report.refusals).toEqual([]);
+    expect(report.admitted).toBe(17);
+    expect(catalog.okfVersion).toBe("9.9");
+    expect(
+      report.degradations.filter((d) => d.code === "okf-version-unknown").map((d) => d.path),
+    ).toEqual(["index.md"]);
+    expect(catalog.folders.get("")?.indexSource).toBe("file");
+  });
+});
+
 describe("loadBundle on the refusal bundles", () => {
   it("refuses the three bad pages and the engine folder per path, and still serves the fine page", () => {
     const { catalog, report } = loadBundle("refused", readFixture("refused"), options(), NOW);

@@ -375,3 +375,62 @@ describe("parsePage: prose (bite 4)", () => {
     expect(result.ok && result.page.prose).toBe("One sentence here. Another one.");
   });
 });
+
+// The readiness ledger (issue 2's "Holds", D59): sentences no test asserted before 0.2.0.
+describe("parsePage: the readiness ledger (D59)", () => {
+  it("refuses a type that is empty, a list or a mapping; reads a boolean type as its source text", () => {
+    const rule = (line: string): string => {
+      const r = inline("x.md", `---\n${line}\ntitle: T\n---\n`);
+      return r.ok ? `ok: ${r.page.type}` : `${r.refusal.rule}: ${r.refusal.detail}`;
+    };
+    expect(rule('type: ""')).toBe("no-type: type is empty");
+    expect(rule("type: '   '")).toBe("no-type: type is empty");
+    expect(rule("type:")).toBe("no-type: type is empty, not text");
+    expect(rule("type: [Term, Note]")).toBe("no-type: type is a list, not text");
+    expect(rule("type: { name: Term }")).toBe("no-type: type is a mapping, not text");
+    for (const [line, written] of [
+      ["type: true", "true"],
+      ["type: False", "False"],
+    ] as const) {
+      const r = inline("x.md", `---\n${line}\ntitle: T\n---\n`);
+      if (!r.ok) throw new Error(`${line}: ${r.refusal.rule}`);
+      expect(r.page.type, line).toBe(written);
+      expect(r.page.degradations, line).toContainEqual({
+        path: "x.md",
+        code: "scalar-coerced",
+        field: "type",
+        detail: `type is a boolean, read as "${written}"`,
+      });
+    }
+  });
+
+  it("reads an absent, null or blank status as stable", () => {
+    for (const line of ["", "status:", "status: null", "status: ''", "status: '   '"]) {
+      const r = inline("x.md", `---\ntype: T\ntitle: T\n${line}\n---\n`);
+      if (!r.ok) throw new Error(`${line}: ${r.refusal.rule}`);
+      expect(r.page.status, line).toBe("stable");
+      expect(r.page.statusSource, line).toBe("default");
+      expect(codes(r.page), line).not.toContain("status-unknown");
+    }
+  });
+
+  it("derives human-reviewed from a trimmed human: actor, case-sensitively, and names the latest verifier of any actor", () => {
+    const parse = (verified: string): Page => {
+      const r = inline("x.md", `---\ntype: T\ntitle: T\nverified:\n${verified}\n---\n`);
+      if (!r.ok) throw new Error(r.refusal.rule);
+      return r.page;
+    };
+    const padded = parse("  - { by: '  human:alice  ', at: 2026-01-01T00:00:00Z }");
+    expect(padded.verified[0]?.by).toBe("human:alice");
+    expect(padded.trust).toBe("human-reviewed");
+    // The prefix is matched as written: `Human:` is another actor, so the page is machine-confirmed.
+    const capital = parse("  - { by: 'Human:x', at: 2026-01-01T00:00:00Z }");
+    expect(capital.trust).toBe("machine-confirmed");
+    // A human verified first and a process later: the tier is the human's, the latest verification the process's.
+    const mixed = parse(
+      "  - { by: human:alice, at: 2026-01-01T00:00:00Z }\n  - { by: process:nightly, at: 2026-06-01T00:00:00Z }",
+    );
+    expect(mixed.trust).toBe("human-reviewed");
+    expect(mixed.latestVerification?.by).toBe("process:nightly");
+  });
+});

@@ -435,3 +435,71 @@ describe("search: frequency floor, limits and filters (bite 3 build review)", ()
     expect(unknown.filteredOut.unknown).toBe(1);
   });
 });
+
+// The readiness ledger (issue 2's "Holds", D59): trust orders scores only inside the tie window, and drops nothing.
+describe("search: the readiness ledger (D59)", () => {
+  /** An engine that answers every query with the rows it was given, in that order. */
+  const rowsEngine = (rows: EngineHit[]): Engine => ({
+    async index(): Promise<IndexResult> {
+      return {
+        documents: rows.length,
+        indexed: rows.length,
+        updated: 0,
+        unchanged: 0,
+        removed: 0,
+        skipped: 0,
+        notIndexed: [],
+        collisions: [],
+        encodedFolders: [],
+      };
+    },
+    async lex(_terms, limit) {
+      return rows.slice(0, limit);
+    },
+    async status() {
+      return { documents: rows.length };
+    },
+    async close() {},
+  });
+  const row = (path: string, bm25: number): EngineHit => ({ path, bm25, score: bm25 / (1 + bm25) });
+
+  it("orders by trust only within 1e-9 of the score", async () => {
+    expect(base.pages.get("terms/alpha.md")?.trust).toBe("human-reviewed");
+    expect(base.pages.get("terms/gamma.md")?.trust).toBe("unverified");
+    // 5e-10 apart: a tie, so the human-reviewed page comes first although the engine scored it lower.
+    const tie = await search(
+      base,
+      rowsEngine([row("terms/gamma.md", 1 + 5e-10), row("terms/alpha.md", 1)]),
+      request("alpha"),
+      NOW,
+    );
+    expect(tie.hits.map((h) => h.path)).toEqual(["terms/alpha.md", "terms/gamma.md"]);
+    // 2e-9 apart: the score decides, whatever the tier.
+    const apart = await search(
+      base,
+      rowsEngine([row("terms/gamma.md", 1 + 2e-9), row("terms/alpha.md", 1)]),
+      request("alpha"),
+      NOW,
+    );
+    expect(apart.hits.map((h) => h.path)).toEqual(["terms/gamma.md", "terms/alpha.md"]);
+    expect(apart.hits.map((h) => h.score)).toEqual([1 + 2e-9, 1]);
+  });
+
+  it("never drops a hit for its trust tier", async () => {
+    const tiers = { alpha: "human-reviewed", beta: "machine-confirmed", gamma: "unverified" };
+    for (const [name, trust] of Object.entries(tiers))
+      expect(base.pages.get(`terms/${name}.md`)?.trust).toBe(trust);
+    const r = await search(
+      base,
+      rowsEngine([row("terms/gamma.md", 3), row("terms/beta.md", 2), row("terms/alpha.md", 1)]),
+      request("alpha", { includeStale: true }),
+      NOW,
+    );
+    expect(r.hits.map((h) => [h.path, h.trust])).toEqual([
+      ["terms/gamma.md", "unverified"],
+      ["terms/beta.md", "machine-confirmed"],
+      ["terms/alpha.md", "human-reviewed"],
+    ]);
+    expect(Object.values(r.filteredOut).every((n) => n === 0)).toBe(true);
+  });
+});

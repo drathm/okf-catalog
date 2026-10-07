@@ -249,6 +249,29 @@ describe("createRuntime", () => {
   });
 });
 
+// The readiness ledger (issue 2's "Holds", D59, row 37): only admitted pages are written for the engine.
+describe("createRuntime: the readiness ledger (D59)", () => {
+  it("hands the engine the admitted pages only", async () => {
+    const engine = countingEngine();
+    const { runtime } = build(memorySource(readFixture("behaviours")), engine);
+    runtime.start();
+    const generation = await runtime.ready();
+    expect(engine.docs).toEqual([...generation.catalog.pages.keys()].sort());
+    expect(engine.docs).toHaveLength(17);
+    for (const path of [
+      "notes/draft.md",
+      "notes/unknown-status.md",
+      "index.md",
+      "log.md",
+      "terms/index.md",
+      "references/attachment.txt",
+      "manifest.json",
+    ])
+      expect(engine.docs, path).not.toContain(path);
+    await runtime.shutdown();
+  });
+});
+
 describe("createRuntime: a re-index that fails too (bite 4 build review)", () => {
   it("refuses until a refresh succeeds when the index cannot be re-aligned after a failed refresh", async () => {
     const files = readFixture("behaviours");

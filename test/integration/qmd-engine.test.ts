@@ -335,3 +335,29 @@ describe("QmdEngine: collisions, odd names and housekeeping (bite 3 build review
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+// The readiness ledger (issue 2's "Holds", D59, row 27): index.md and log.md are reserved, served, never indexed.
+describe("QmdEngine: the readiness ledger (D59)", () => {
+  it("keeps reserved files out of the index", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "okf-catalog-qmd-reserved-"));
+    const own = await QmdEngine.open({ company: "behaviours", dir });
+    try {
+      const result = await own.index(docs);
+      expect(result.documents).toBe(catalog.pages.size);
+      expect(catalog.folders.get("")?.log).toBeDefined();
+      expect(catalog.folders.get("")?.index?.body).toContain("Material that is not Markdown");
+      // "initialization" and "history" are written in the fixture's log.md, "material" and "lifecycle" in its root
+      // index.md, and none of them in a page.
+      for (const word of ["initialization", "history", "material", "lifecycle"])
+        expect(await own.lex([word], 5), word).toEqual([]);
+      const written = (readdirSync(join(dir, "derived"), { recursive: true }) as string[]).map(
+        (p) => p.split("\\").join("/"),
+      );
+      expect(written.filter((p) => p.endsWith(".md")).length).toBe(catalog.pages.size);
+      expect(written.filter((p) => /(^|\/)(index|log)\.md$/.test(p))).toEqual([]);
+    } finally {
+      await own.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
