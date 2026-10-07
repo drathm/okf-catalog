@@ -29,7 +29,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           path-to-signatures: ".github/cla/signatures.json"
-          path-to-document: "https://github.com/drathm/okf-catalog/blob/version-0/CLA.md"
+          path-to-document: "https://github.com/drathm/okf-catalog/blob/main/CLA.md"
           branch: "cla-signatures"
           allowlist: "drathm,dependabot[bot],github-actions[bot]"
           create-file-commit-message: "cla: signature file"
