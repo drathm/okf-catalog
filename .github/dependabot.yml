@@ -13,6 +13,16 @@ updates:
         patterns: ["*"]
     commit-message:
       prefix: "chore(deps)"
+    ignore:
+      # TypeScript 7 is already the compiler, through the `@typescript/native` alias. The `typescript` 5.9 copy
+      # is the compiler API that dependency-cruiser needs and the version qmd's peer range (^5.9.3) accepts; a
+      # major bump of it fails `npm ci` with ERESOLVE (pull request 1). Revisit when qmd widens its peer range.
+      - dependency-name: typescript
+        update-types: ["version-update:semver-major"]
+      # The Node type definitions track the Node floor (`engines` and `MIN_NODE` in src/cli.ts), not the newest
+      # Node line, so the code cannot lean on an API the floor lacks. Raise them together with the floor.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: /
     schedule:

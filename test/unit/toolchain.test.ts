@@ -33,4 +33,13 @@ describe("the TypeScript toolchain", () => {
     expect(typeof api.createProgram).toBe("function");
     expect(pkg.devDependencies.typescript).toMatch(/^5\.9\./);
   });
+
+  // The Node type definitions follow the Node floor, not the newest Node line, so the code cannot lean on an API
+  // the floor lacks. Dependabot is told the same (`.github/dependabot.yml` ignores major bumps of both packages).
+  it("keeps the Node types on the line of the Node floor", () => {
+    const cli = readFileSync(join(REPO, "src", "cli.ts"), "utf8");
+    const floor = /MIN_NODE: \[number, number\] = \[(\d+), \d+\]/.exec(cli);
+    expect(floor, "MIN_NODE in src/cli.ts").not.toBeNull();
+    expect(pkg.devDependencies["@types/node"]).toMatch(new RegExp(`^${floor?.[1]}\\.`));
+  });
 });
