@@ -1,8 +1,8 @@
 # Changelog
 
-The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in `package.json` names the release candidate; its section below stays `[Unreleased]` until the maintainer tags it, after the acceptance list in `docs/acceptance/version-0.md` has passed on a clean account.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The version in `package.json` names the release. 0.1.0 is published before the clean-account run of the acceptance list in `docs/acceptance/version-0.md`, by the maintainer's choice; what that run finds goes into 0.1.1.
 
-## [Unreleased]
+## [0.1.0] - 2026-10-07
 
 Version 0: serve a company's Open Knowledge Format 0.2 bundle to Claude Code, locally. Needs Node 24 or later (the Active LTS line) on macOS or Linux.
 
