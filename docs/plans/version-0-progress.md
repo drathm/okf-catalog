@@ -1017,3 +1017,7 @@ Run on 2026-10-07 after the maintainer approved the download (the three models p
 
 The maintainer ruled D1 on 2026-10-07: Apache-2.0, chosen with a hosted edition in view, after the comparison with MIT (more permissive, no patent grant) and the note that neither permissive licence stops another party from hosting the code, which only the AGPL or a source-available licence would. To keep that option open, contributions come under a licence agreement with a sublicensing grant (D56, `CLA.md`, enforced by the pinned CLA Assistant action on every pull request, signatures on the `cla-signatures` branch) instead of the DCO sign-off the decisions file first proposed; the text is adapted from the Apache ICLA and marked for a lawyer's review before the first outside contribution. `CONTRIBUTING.md` carries the rules of this repository.
 
+### TypeScript 7
+
+The maintainer's rule of 2026-10-07 is to stay on the current side of every version, so a spike (an Opus agent in a scratch copy) measured TypeScript 7 against the toolchain. Result: 7 compiles the code identically and type-checks it five times faster, but ships no compiler API, which dependency-cruiser needs, and qmd's peer range asks for 5.9. The switch is therefore the documented dual setup: 7 under the alias `@typescript/native` for `build`, `prepare` and `typecheck`, named by path because both packages install a `tsc`; 5.9.3 kept as the API provider. D21 revised; `test/unit/toolchain.test.ts` pins the arrangement. The spike's logs and the three scratch copies are in the session's scratch folder.
+

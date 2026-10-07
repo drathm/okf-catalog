@@ -19,9 +19,9 @@
     "npm-shrinkwrap.json"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "prepare": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit",
+    "build": "node node_modules/@typescript/native/bin/tsc -p tsconfig.build.json",
+    "prepare": "node node_modules/@typescript/native/bin/tsc -p tsconfig.build.json",
+    "typecheck": "node node_modules/@typescript/native/bin/tsc --noEmit",
     "lint": "biome ci .",
     "format": "biome check --write .",
     "depcruise": "depcruise src --config .dependency-cruiser.cjs",
@@ -49,6 +49,7 @@
     "@types/mdast": "4.0.4",
     "@types/node": "24.19.1",
     "@types/unist": "3.0.3",
+    "@typescript/native": "npm:typescript@7.0.2",
     "dependency-cruiser": "18.5.0",
     "typescript": "5.9.3",
     "vite": "8.3.3",

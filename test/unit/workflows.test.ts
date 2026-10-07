@@ -11,7 +11,9 @@ describe("the repository's own workflows", () => {
     expect(files.length).toBeGreaterThanOrEqual(2);
     for (const file of files) {
       const text = readFileSync(join(WORKFLOWS, file), "utf8");
-      const uses = text.match(/uses: .*$/gm) ?? [];
+      const uses = (text.match(/^\s*(?:- )?uses: .*$/gm) ?? []).map((l) =>
+        l.replace(/^\s*(?:- )?/, ""),
+      );
       expect(uses.length, file).toBeGreaterThan(0);
       for (const line of uses)
         expect(line, `${file}: ${line}`).toMatch(/^uses: [\w./-]+@[0-9a-f]{40} # v\d+(\.\d+)*$/);
