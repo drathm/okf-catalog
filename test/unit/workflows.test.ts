@@ -26,7 +26,7 @@ describe("the repository's own workflows", () => {
     expect(cla).not.toContain("actions/checkout");
     expect(cla).not.toMatch(/^\s+run:/m);
     expect(cla).toMatch(
-      /path-to-document: "https:\/\/github\.com\/drathm\/okf-catalog\/blob\/version-0\/CLA\.md"/,
+      /path-to-document: "https:\/\/github\.com\/drathm\/okf-catalog\/blob\/main\/CLA\.md"/,
     );
     expect(cla).toContain('branch: "cla-signatures"');
     expect(cla).toContain("I have read the CLA Document and I hereby sign the CLA");
