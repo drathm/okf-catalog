@@ -52,6 +52,8 @@ cli ─▶ commands ─▶ config, source, fs, report ─▶ core: bundle, catal
 
 The rule is checked by dependency-cruiser in CI. Its resolver maps a NodeNext `.js` specifier to the `.ts` source on its own, provided the target file exists; `tsconfig.json` is read only for compiler options. Bite 1 proved it with planted violations against an existing target (see the execution record). The core emits a structured derived document; only the qmd adapter knows what text qmd wants. That is what makes the port real: the OKF layer can be read and tested without qmd or MCP in the picture, and either library can be swapped behind its adapter.
 
+A composition layer, `src/serve/`, sits between the commands and everything else: it may import the core, the adapters, the edges and the log, and nothing imports it except `commands/`. It holds the runtime that `commands/serve.ts` wires; the `Runtime` interface itself is in the core so the MCP adapter can take it (bite 4 plan review, Grok B4-5 and Opus F7).
+
 ### 2.2 Directory tree
 
 ```
@@ -372,7 +374,7 @@ Discovery order: `--config <path>`, then the `OKF_CATALOG_CONFIG` environment va
 - Content problems never throw. They become `Refusal` or `Degradation` entries in the report, and the server keeps serving everything else.
 - Environment problems throw at start-up with one sentence naming the fix: cache folder not writable, git not found, config invalid, repository unreachable with no cache to fall back on.
 - Tool handlers return `isError: true` with a message that names the fix for anything the model can repair: an unknown page path comes back with the three nearest paths; an unknown topic with the list of folders; an unknown type with the list of types. Nothing is caught and swallowed.
-- The text block of every result stands on its own, because a 2025-era client shows `content` and may ignore `structuredContent`.
+- Every result carries both channels, each self-sufficient: the text block for a client that shows `content`, and `citation`, `notice` and `summary` strings inside `structuredContent` for a client that shows only that; the server's `instructions` carry the same rules. Which channel Claude Code hands the model is measured in bite 4 (plan review round 2, F1).
 - Logs are JSON lines on stderr with `level`, `event`, and fields; `--log-level` sets the threshold. No log line ever contains page body text. qmd's own `console.warn` for a missing `sqlite-vec` goes to stderr and is tolerated.
 
 ### 2.9 Security in the implementation
@@ -521,7 +523,7 @@ Proposed here; each becomes a row in the decisions file once ruled. D20 to D27 w
 | The three git options the review could not verify | Bite 1 | The installed git version and each option confirmed |
 | qmd index time and database size at a thousand pages; how long a search waits during an update | Bite 3 | Numbers on the public corpus; the D28 choice confirmed or switched |
 | The relaxation ladder's effect, and the metadata block's effect, on ranking | Bite 3 | Four benchmark runs |
-| MCP SDK 2.x churn; whether today's Claude Code reads `structuredContent` and `outputSchema` | Bite 4 | Exact pin; the adapter is the only importer; the text block stands alone either way |
+| MCP SDK 2.x churn; whether today's Claude Code reads `structuredContent` and `outputSchema` | Bite 4 | Exact pin; the adapter is the only importer; both channels carry the citation and the framing, and the server instructions repeat them |
 | Server start-up time in the plugin | Bite 4 | Cold and warm start measured |
 | A duplicate heading in the rendered document | Bite 3 | The dedupe rule tested |
 | Two copies of `zod` and of the MCP server package in the tree (qmd pins older ones) | Bite 1 | The lockfile inspected; the application imports only its own copies |
