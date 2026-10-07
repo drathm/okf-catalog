@@ -58,6 +58,12 @@ export function cutText(text: string, offset: number, budget: number): Cut {
 
 /** Characters a provenance's frontmatter may take in a result before it is replaced by a note. */
 export const FRONTMATTER_BUDGET = 8_000;
+/**
+ * Characters each typed field rescued from the frontmatter (the contract's five, the usage windows, the v0.1
+ * timestamp) may take, serialised, before it is replaced by a note of its own (D78), so no field is a second
+ * unbounded channel and one long field never hides the rest.
+ */
+export const TYPED_FIELD_BUDGET = 2_000;
 /** Characters of a catalog entry's description kept in a result. */
 const ENTRY_DESCRIPTION_CAP = 200;
 
@@ -67,6 +73,10 @@ const Trust = z.enum(["unverified", "machine-confirmed", "human-reviewed"]);
 const Rung = z.enum(["all-terms", "relaxed"]);
 const Form = z.enum(["date", "datetime", "unparseable"]);
 const Verification = z.strictObject({ by: z.string(), at: z.string().optional() });
+/** The note a typed field over its budget is replaced by (D78), the frontmatter note's form. */
+const Omitted = z.strictObject({ omitted: z.string() });
+const orOmitted = <T extends z.ZodTypeAny>(schema: T) => z.union([schema, Omitted]);
+const Window = z.strictObject({ from: z.string(), to: z.string() });
 const SourceSchema = z.strictObject({
   resource: z.string(),
   id: z.string().optional(),
@@ -74,7 +84,27 @@ const SourceSchema = z.strictObject({
   author: z.string().optional(),
   usageCount: z.number().optional(),
   lastModified: z.string().optional(),
-  usageWindow: z.strictObject({ from: z.string(), to: z.string() }).optional(),
+  usageWindow: Window.optional(),
+  effectiveWindow: orOmitted(
+    z.strictObject({ from: z.string(), to: z.string(), inherited: z.boolean() }),
+  ).optional(),
+});
+const ContractSchema = z.strictObject({
+  runtime: orOmitted(z.string()).optional(),
+  parameters: orOmitted(
+    z.array(
+      z.strictObject({
+        name: z.string(),
+        type: z.string().optional(),
+        required: z.boolean().optional(),
+      }),
+    ),
+  ).optional(),
+  computation: orOmitted(z.string()).optional(),
+  executor: orOmitted(
+    z.strictObject({ resource: z.string().optional(), receipt: z.array(z.string()).optional() }),
+  ).optional(),
+  attester: orOmitted(z.strictObject({ resource: z.string().optional() })).optional(),
 });
 
 export const ProvenanceSchema = z.strictObject({
@@ -88,10 +118,13 @@ export const ProvenanceSchema = z.strictObject({
   latestVerification: Verification.optional(),
   staleAfter: z.strictObject({ raw: z.string(), form: Form, overdue: z.boolean() }).optional(),
   sources: z.array(SourceSchema),
+  usageWindow: orOmitted(Window).optional(),
+  contract: ContractSchema.optional(),
   resource: z.string().optional(),
   replacement: z.string().optional(),
   frontmatter: z.record(z.string(), z.unknown()),
 });
+type ProjectedProvenance = z.infer<typeof ProvenanceSchema>;
 
 export const SearchOutputSchema = z.strictObject({
   hits: z.array(
@@ -265,6 +298,49 @@ export function projectSearch(
   });
 }
 
+/** A typed field as a result carries it: whole within its budget, else its own note (D78). */
+function typedField<T>(field: string, value: T): T | { omitted: string } {
+  return JSON.stringify(value).length > TYPED_FIELD_BUDGET
+    ? {
+        omitted: `the ${field} field is over ${TYPED_FIELD_BUDGET} characters and is not returned here`,
+      }
+    : value;
+}
+
+/**
+ * The provenance as `get_page` returns it: the frontmatter replaced by its note past its budget, and every typed
+ * field held to its own budget, so a page's typed fields survive the frontmatter's omission (D62, D78).
+ */
+function projectProvenance(page: Page, now: Date): ProjectedProvenance {
+  const { sources, usageWindow, contract, ...rest } = provenanceOf(page, now);
+  const projected: ProjectedProvenance = {
+    ...rest,
+    sources: sources.map(({ effectiveWindow, ...source }) =>
+      effectiveWindow === undefined
+        ? source
+        : { ...source, effectiveWindow: typedField("effectiveWindow", effectiveWindow) },
+    ),
+  };
+  if (JSON.stringify(projected.frontmatter).length > FRONTMATTER_BUDGET) {
+    projected.frontmatter = {
+      omitted: `the frontmatter is over ${FRONTMATTER_BUDGET} characters and is not returned here`,
+    };
+  }
+  if (usageWindow !== undefined) projected.usageWindow = typedField("usageWindow", usageWindow);
+  if (contract !== undefined) {
+    const typed: NonNullable<ProjectedProvenance["contract"]> = {};
+    if (contract.runtime !== undefined) typed.runtime = typedField("runtime", contract.runtime);
+    if (contract.parameters !== undefined)
+      typed.parameters = typedField("parameters", contract.parameters);
+    if (contract.computation !== undefined)
+      typed.computation = typedField("computation", contract.computation);
+    if (contract.executor !== undefined) typed.executor = typedField("executor", contract.executor);
+    if (contract.attester !== undefined) typed.attester = typedField("attester", contract.attester);
+    projected.contract = typed;
+  }
+  return projected;
+}
+
 /** Room left for a body once the citation, the notice and a truncation tail are counted inside the budget. */
 const bodyRoom = (budget: number, citation: string): number =>
   Math.max(1, budget - citation.length - NOTICE.length - 80);
@@ -278,16 +354,10 @@ export function projectPage(
 ): PageOutput {
   const citation = pageHeader(page, now, options);
   const cut = cutText(page.body, offset, bodyRoom(budget, citation));
-  const provenance = provenanceOf(page, now);
-  if (JSON.stringify(provenance.frontmatter).length > FRONTMATTER_BUDGET) {
-    provenance.frontmatter = {
-      omitted: `the frontmatter is over ${FRONTMATTER_BUDGET} characters and is not returned here`,
-    };
-  }
   const output: PageOutput = {
     path: page.path,
     kind: "page",
-    provenance,
+    provenance: projectProvenance(page, now),
     citation,
     notice: NOTICE,
     body: cut.slice,

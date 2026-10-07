@@ -459,3 +459,68 @@ describe("parsePage: the readiness ledger (D59)", () => {
     expect(mixed.latestVerification?.by).toBe("process:nightly");
   });
 });
+
+// R2 and R3 (D62): the contract fields typed, the page window typed; malformed values degrade, never refuse.
+describe("parsePage: the contract fields and the page window (R2, R3)", () => {
+  const spec = readFixture("spec-example");
+
+  it("types the contract of the specification's attested computation", () => {
+    const revenue = page("computations/revenue-ytd.md", "2026-08-15", spec);
+    expect(revenue.contract).toEqual({
+      runtime: "bigquery",
+      parameters: [{ name: "year", type: "integer", required: true }],
+      executor: {
+        resource: "skills/run-on-bq.md",
+        receipt: ["job_id", "executed_sql", "result"],
+      },
+      attester: { resource: "attesters/sql_equality.py" },
+    });
+    expect(codes(revenue)).not.toContain("field-ignored");
+    // A page of any type carries the fields it has; one without any carries no contract.
+    const r = inline(
+      "x.md",
+      "---\ntype: Metric\ntitle: T\ndescription: D\ncomputation: lib/revenue.sql\n---\n",
+    );
+    if (!r.ok) throw new Error(r.refusal.rule);
+    expect(r.page.contract).toEqual({ computation: "lib/revenue.sql" });
+    expect(page("terms/alpha.md").contract).toBeUndefined();
+  });
+
+  it("drops malformed contract values with a degradation, never the page", () => {
+    const cases: Array<[string, Page["contract"]]> = [
+      ["parameters: x", undefined],
+      [
+        "parameters:\n  - { type: integer }\n  - { name: year, type: integer, required: true }",
+        { parameters: [{ name: "year", type: "integer", required: true }] },
+      ],
+      ["executor: text", undefined],
+      ["attester: { resource: 3 }", undefined],
+      ["runtime: [bigquery, dbt]", undefined],
+    ];
+    for (const [yaml, contract] of cases) {
+      const r = inline("x.md", `---\ntype: T\ntitle: T\ndescription: D\n${yaml}\n---\n`);
+      if (!r.ok) throw new Error(`${yaml}: refused ${r.refusal.rule}`);
+      expect(r.page.contract, yaml).toEqual(contract);
+      expect(
+        r.page.degradations.filter((d) => d.code === "field-ignored"),
+        yaml,
+      ).toHaveLength(1);
+    }
+  });
+
+  it("reports a page usage_window that is not a from-to mapping", () => {
+    for (const yaml of [
+      "usage_window: 2026",
+      "usage_window: { from: 2026-01-01 }",
+      "usage_window: [a, b]",
+    ]) {
+      const r = inline("x.md", `---\ntype: T\ntitle: T\ndescription: D\n${yaml}\n---\n`);
+      if (!r.ok) throw new Error(`${yaml}: refused ${r.refusal.rule}`);
+      expect(r.page.usageWindow, yaml).toBeUndefined();
+      expect(r.page.degradations, yaml).toEqual([
+        expect.objectContaining({ code: "field-ignored", field: "usage_window" }),
+      ]);
+    }
+    expect(page("terms/alpha.md").usageWindow).toEqual({ from: "2000-01-01", to: "2000-01-31" });
+  });
+});

@@ -4,6 +4,8 @@ import { sha256Hex } from "./manifest.js";
 import { readBody } from "./markdown.js";
 import type {
   BundleFile,
+  Contract,
+  ContractParameter,
   Degradation,
   DegradationCode,
   Link,
@@ -328,8 +330,20 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
 
   let usageWindow: Page["usageWindow"];
   const w = data.usage_window;
-  if (isRecord(w) && typeof w.from === "string" && typeof w.to === "string")
-    usageWindow = { from: w.from, to: w.to };
+  if (w !== undefined && w !== null) {
+    if (isRecord(w) && typeof w.from === "string" && typeof w.to === "string")
+      usageWindow = { from: w.from, to: w.to };
+    else
+      degrade(
+        "field-ignored",
+        "usage_window",
+        isRecord(w)
+          ? "usage_window lacks a from or a to written as a date; ignored"
+          : `usage_window is ${kindOf(w)}, not a mapping of from and to; ignored`,
+      );
+  }
+
+  const contract = readContract(data, degrade);
 
   const resource = text("resource");
 
@@ -391,8 +405,102 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
   const latest = latestVerification(verified);
   if (latest !== undefined) page.latestVerification = latest;
   if (usageWindow !== undefined) page.usageWindow = usageWindow;
+  if (contract !== undefined) page.contract = contract;
   if (resource !== undefined) page.resource = resource;
   return { ok: true, page };
+}
+
+/** A list of names as written: strings kept, numbers and booleans by their text, anything else reported. */
+function nameList(
+  value: unknown[],
+  field: string,
+  degrade: (code: DegradationCode, field: string, detail: string) => void,
+): string[] {
+  const names: string[] = [];
+  value.forEach((item, i) => {
+    if (typeof item === "string") names.push(item);
+    else if (typeof item === "number" || typeof item === "boolean") names.push(String(item));
+    else degrade("field-ignored", field, `${field}[${i}] is ${kindOf(item)}, not text; ignored`);
+  });
+  return names;
+}
+
+/**
+ * The contract fields of §10.2 on a page of any type (D62). Each is kept as written when it has the shape the text
+ * gives it, and otherwise reported `field-ignored` and left out, never refusing the page: `runtime` and
+ * `computation` are text, `parameters` a list of `{ name, type, required }`, `executor` a mapping of a `resource`
+ * and a `receipt` list, `attester` a mapping of a `resource`. An empty key is absent. Nothing is run or opened.
+ */
+function readContract(
+  data: Record<string, unknown>,
+  degrade: (code: DegradationCode, field: string, detail: string) => void,
+): Contract | undefined {
+  const contract: Contract = {};
+  const present = (value: unknown): boolean => value !== undefined && value !== null;
+  const ignored = (field: string, value: unknown, wanted: string): void =>
+    degrade("field-ignored", field, `${field} is ${kindOf(value)}, not ${wanted}; ignored`);
+
+  for (const key of ["runtime", "computation"] as const) {
+    const value = data[key];
+    if (!present(value)) continue;
+    if (typeof value === "string") contract[key] = value;
+    else ignored(key, value, "text");
+  }
+
+  const parameters = data.parameters;
+  if (present(parameters)) {
+    if (!Array.isArray(parameters)) ignored("parameters", parameters, "a list");
+    else {
+      const kept: ContractParameter[] = [];
+      parameters.forEach((entry, i) => {
+        if (!isRecord(entry) || typeof entry.name !== "string" || entry.name.trim().length === 0) {
+          degrade("field-ignored", "parameters", `parameters[${i}] has no name; ignored`);
+          return;
+        }
+        const parameter: ContractParameter = { name: entry.name };
+        if (present(entry.type)) {
+          if (typeof entry.type === "string") parameter.type = entry.type;
+          else ignored(`parameters[${i}].type`, entry.type, "text");
+        }
+        if (present(entry.required)) {
+          if (typeof entry.required === "boolean") parameter.required = entry.required;
+          else ignored(`parameters[${i}].required`, entry.required, "true or false");
+        }
+        kept.push(parameter);
+      });
+      contract.parameters = kept;
+    }
+  }
+
+  const executor = data.executor;
+  if (present(executor)) {
+    if (!isRecord(executor)) ignored("executor", executor, "a mapping");
+    else {
+      const kept: NonNullable<Contract["executor"]> = {};
+      if (present(executor.resource)) {
+        if (typeof executor.resource === "string") kept.resource = executor.resource;
+        else ignored("executor.resource", executor.resource, "text");
+      }
+      if (present(executor.receipt)) {
+        if (Array.isArray(executor.receipt))
+          kept.receipt = nameList(executor.receipt, "executor.receipt", degrade);
+        else ignored("executor.receipt", executor.receipt, "a list");
+      }
+      if (Object.keys(kept).length > 0) contract.executor = kept;
+    }
+  }
+
+  const attester = data.attester;
+  if (present(attester)) {
+    if (!isRecord(attester)) ignored("attester", attester, "a mapping");
+    else if (present(attester.resource)) {
+      if (typeof attester.resource === "string")
+        contract.attester = { resource: attester.resource };
+      else ignored("attester.resource", attester.resource, "text");
+    }
+  }
+
+  return Object.keys(contract).length > 0 ? contract : undefined;
 }
 
 /**

@@ -259,6 +259,60 @@ describe("result bounds (bite 4 build review)", () => {
     expect(JSON.stringify(out).length).toBeLessThanOrEqual(RESULT_BUDGET + 5_000);
   });
 
+  it("keeps the typed fields when the frontmatter is omitted", () => {
+    const base = page("terms/alpha.md");
+    const contract = {
+      runtime: "bigquery",
+      parameters: [{ name: "year", type: "integer", required: true }],
+      executor: { resource: "skills/run-on-bq.md", receipt: ["job_id"] },
+      attester: { resource: "attesters/sql_equality.py" },
+      computation: "lib/revenue.sql",
+    };
+    const bloated: Page = {
+      ...base,
+      contract,
+      frontmatter: { ...base.frontmatter, blob: "x".repeat(100_000) },
+    };
+    const out = projectPage(bloated, NOW, 0, RESULT_BUDGET);
+    expect(out.provenance?.frontmatter).toEqual({
+      omitted: "the frontmatter is over 8000 characters and is not returned here",
+    });
+    expect(out.provenance?.contract).toEqual(contract);
+    expect(out.provenance?.usageWindow).toEqual({ from: "2000-01-01", to: "2000-01-31" });
+    expect(() => PageOutputSchema.parse(out)).not.toThrow();
+  });
+
+  it("replaces a typed field over 2 000 serialised characters with its own note", () => {
+    const base = page("terms/alpha.md");
+    const parameters = Array.from({ length: 100 }, (_, i) => ({
+      name: `parameter-${String(i).padStart(3, "0")}`,
+      type: "string",
+    }));
+    expect(JSON.stringify(parameters).length).toBeGreaterThan(3_000);
+    const wide = { from: "2026-01-01", to: "x".repeat(2_500) };
+    const heavy: Page = {
+      ...base,
+      contract: { runtime: "bigquery", parameters },
+      usageWindow: wide,
+      sources: [{ resource: "a" }],
+    };
+    const out = projectPage(heavy, NOW, 0, RESULT_BUDGET);
+    expect(out.provenance?.contract).toEqual({
+      runtime: "bigquery",
+      parameters: {
+        omitted: "the parameters field is over 2000 characters and is not returned here",
+      },
+    });
+    expect(out.provenance?.usageWindow).toEqual({
+      omitted: "the usageWindow field is over 2000 characters and is not returned here",
+    });
+    // An inherited window is capped on every source too, so one wide window cannot be copied once per source.
+    expect(out.provenance?.sources[0]?.effectiveWindow).toEqual({
+      omitted: "the effectiveWindow field is over 2000 characters and is not returned here",
+    });
+    expect(() => PageOutputSchema.parse(out)).not.toThrow();
+  });
+
   it("caps the engine's encoded folders in status like the other lists", () => {
     const many: Generation = {
       ...generation,

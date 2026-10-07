@@ -26,6 +26,12 @@ export interface StaleAfter {
   at?: Date;
 }
 
+/** The `{ from, to }` range that frames a `usage_count` (§5.1), as written. */
+export interface UsageWindow {
+  from: string;
+  to: string;
+}
+
 export interface Source {
   resource: string;
   id?: string;
@@ -33,7 +39,27 @@ export interface Source {
   author?: string;
   usageCount?: number;
   lastModified?: string;
-  usageWindow?: { from: string; to: string };
+  /** The entry's own window, which overrides the page's shared one (§5.1); never a copy of the page's. */
+  usageWindow?: UsageWindow;
+}
+
+/** One typed, named hole of an attested computation (§10.2): `{ name, type, required }`. */
+export interface ContractParameter {
+  name: string;
+  type?: string;
+  required?: boolean;
+}
+
+/**
+ * The contract fields of an attested computation (§10.2), typed on a page of any type (D62): what is well formed
+ * is kept as written, anything else is reported and left out. Nothing runs them; the paths are not opened.
+ */
+export interface Contract {
+  runtime?: string;
+  parameters?: ContractParameter[];
+  computation?: string;
+  executor?: { resource?: string; receipt?: string[] };
+  attester?: { resource?: string };
 }
 
 export interface Verification {
@@ -149,7 +175,9 @@ export interface Page {
   latestVerification?: Verification;
   trust: Trust;
   sources: Source[];
-  usageWindow?: { from: string; to: string };
+  /** The shared window, the `usage_window` sibling of `sources` (§5.1). */
+  usageWindow?: UsageWindow;
+  contract?: Contract;
   resource?: string;
   replacement?: PagePath;
   links: Link[];

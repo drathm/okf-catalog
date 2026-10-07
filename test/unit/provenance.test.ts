@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Page } from "../../src/bundle/model.js";
-import { isOverdue, provenanceOf } from "../../src/catalog/provenance.js";
+import { effectiveWindow, isOverdue, provenanceOf } from "../../src/catalog/provenance.js";
 
 const page = (patch: Partial<Page>): Page =>
   ({
@@ -152,5 +152,35 @@ describe("provenance: the readiness ledger (D59)", () => {
     expect(zeta?.degradations.map((d) => d.code)).toContain("stale-after-unexpected-form");
     expect(isOverdue(zeta?.staleAfter, new Date("2000-01-30T23:59:59.999Z"))).toBe(false);
     expect(isOverdue(zeta?.staleAfter, new Date("2000-01-31T00:00:00.000Z"))).toBe(true);
+  });
+});
+
+// R3 (D62): one inheritance function for a source's usage window.
+describe("provenance: the usage window (R3)", () => {
+  it("takes a source's own window, else the page's, and says which", () => {
+    const own = { from: "2026-06-01", to: "2026-06-30" };
+    const shared = { from: "2026-01-01", to: "2026-12-31" };
+    expect(effectiveWindow({ resource: "a", usageWindow: own }, shared)).toEqual({
+      ...own,
+      inherited: false,
+    });
+    expect(effectiveWindow({ resource: "b" }, shared)).toEqual({ ...shared, inherited: true });
+    expect(effectiveWindow({ resource: "c" }, undefined)).toBeUndefined();
+    const prov = provenanceOf(
+      page({
+        usageWindow: shared,
+        sources: [{ resource: "a", usageWindow: own }, { resource: "b" }],
+      }),
+      new Date("2026-10-06T12:00:00Z"),
+    );
+    expect(prov.usageWindow).toEqual(shared);
+    expect(prov.sources).toEqual([
+      { resource: "a", usageWindow: own, effectiveWindow: { ...own, inherited: false } },
+      { resource: "b", effectiveWindow: { ...shared, inherited: true } },
+    ]);
+    // Nothing is copied onto the stored sources: the page keeps only what it was given.
+    const alone = provenanceOf(page({ sources: [{ resource: "c" }] }), new Date());
+    expect(alone.sources).toEqual([{ resource: "c" }]);
+    expect(alone.usageWindow).toBeUndefined();
   });
 });
