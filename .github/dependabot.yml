@@ -1,0 +1,22 @@
+# Keeps the dependencies and the pinned actions on their current versions: one pull request per update, weekly,
+# grouped so that a week's npm updates arrive together. The CLA check and CI run on each pull request.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    groups:
+      npm:
+        patterns: ["*"]
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    commit-message:
+      prefix: "chore(actions)"

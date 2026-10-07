@@ -252,7 +252,7 @@ export function discoverConfigPath(
     if (value.length === 0 || value.includes("${")) {
       return {
         error:
-          "OKF_CATALOG_CONFIG is empty or still holds a placeholder; run /plugin configure okf-catalog to set the configuration path, or pass --config",
+          "OKF_CATALOG_CONFIG is empty or still holds a placeholder; set it to the configuration file's path, put okf-catalog.yaml in the project folder, or pass --config",
       };
     }
     return { path: expand(value), rule: "env" };

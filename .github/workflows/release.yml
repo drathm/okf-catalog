@@ -1,0 +1,41 @@
+# Publishes a tagged release to npm with provenance, after the gates and the suite pass on the tag's commit.
+# One-time setup by the maintainer, after the first manual `npm publish` has created the package: on npmjs.com,
+# under the package's settings, add this repository and this workflow file as a trusted publisher. From then on
+# no npm token is needed; the job authenticates with the OIDC token GitHub mints for it (id-token: write).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      NODE_LLAMA_CPP_SKIP_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Install
+        run: npm ci --foreground-scripts
+      - name: Check
+        run: npm run check
+      - name: Test
+        run: npm test
+      - name: The tag names the package's version
+        run: |
+          test "v$(node -p 'require("./package.json").version')" = "${GITHUB_REF_NAME}"
+      - name: Publish
+        run: npm publish --provenance --access public

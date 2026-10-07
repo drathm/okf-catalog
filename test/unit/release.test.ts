@@ -10,6 +10,9 @@ const pkg = JSON.parse(read("package.json")) as {
   version: string;
   private?: boolean;
   files: string[];
+  author?: string;
+  repository?: unknown;
+  publishConfig?: unknown;
 };
 
 /** What npm packs beside `dist/`: the `files` entries plus the files npm always includes. */
@@ -20,6 +23,9 @@ const FIXED = [
   "README.md",
   "npm-shrinkwrap.json",
   "package.json",
+  "plugin/claude-code/.claude-plugin/plugin.json",
+  "plugin/claude-code/.mcp.json",
+  "plugin/claude-code/skills/okf-catalog/SKILL.md",
   "recipes/publish/README.md",
   "recipes/publish/checkers.lock",
   "recipes/publish/checkers.txt",
@@ -47,8 +53,14 @@ describe("the release candidate", () => {
     expect(read("npm-shrinkwrap.json")).toBe(read("package-lock.json"));
   });
 
-  it("stays private until the maintainer rules on publication", () => {
-    expect(pkg.private).toBe(true);
+  it("is publishable to npm as a public package with provenance, under its owner", () => {
+    expect(pkg.private).toBeUndefined();
+    expect(pkg.publishConfig).toEqual({ access: "public", provenance: true });
+    expect(pkg.author).toContain("Bitfusion PR LLC");
+    expect(pkg.repository).toEqual({
+      type: "git",
+      url: "git+https://github.com/drathm/okf-catalog.git",
+    });
   });
 
   it("opens the changelog with the unreleased section or the package's own version", () => {

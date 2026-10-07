@@ -1,9 +1,30 @@
 {
   "name": "okf-catalog",
   "version": "0.1.0",
-  "description": "A small-company hosted knowledge catalog for AI agents: an MCP server that serves an OKF bundle, built on qmd.",
+  "description": "An MCP server that serves a company's Open Knowledge Format (OKF) bundle to AI agents, with citations, provenance and a publish loop: qmd done right for OKF.",
+  "keywords": [
+    "okf",
+    "open-knowledge-format",
+    "mcp",
+    "mcp-server",
+    "knowledge-catalog",
+    "qmd",
+    "claude-code"
+  ],
+  "homepage": "https://github.com/drathm/okf-catalog#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/drathm/okf-catalog.git"
+  },
+  "bugs": {
+    "url": "https://github.com/drathm/okf-catalog/issues"
+  },
+  "author": "Bitfusion PR LLC (https://bitfusion.tech)",
   "license": "Apache-2.0",
-  "private": true,
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
   "type": "module",
   "engines": {
     "node": ">=24"
@@ -13,6 +34,7 @@
   },
   "files": [
     "dist",
+    "plugin",
     "recipes/publish",
     "NOTICE",
     "CHANGELOG.md",

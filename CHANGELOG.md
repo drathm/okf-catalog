@@ -16,7 +16,7 @@ Version 0: serve a company's Open Knowledge Format 0.2 bundle to Claude Code, lo
 - The cache folder per company with its ownership and mode checks, and one process per company through a lock, with a private fallback for a second process.
 - The git source: a bare shallow clone used as transport only, every fetched tree listed and validated before anything is written, raw blobs extracted into the server's own folder, a hardened runner, and a poller that refreshes when the branch moves.
 - The publish recipe: a GitHub Actions workflow and two shell scripts that run the OKF checkers, pack, run them again, and push parent-linked commits to the published branch.
-- The Claude Code plugin folder with the skill.
+- The Claude Code plugin folder with the skill, shipped inside the package; the plugin asks for no settings and runs the `okf-catalog` command from PATH in the project folder, where the server finds `okf-catalog.yaml`.
 - The benchmark harness over four public OKF bundles, with the lexical-versus-full measurement behind the maintainer's model approval.
 
 ### Not in this version

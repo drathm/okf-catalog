@@ -158,7 +158,7 @@ describe("discoverConfigPath and readCompanyConfig", () => {
 
   it("never falls through when the variable is empty or still holds a placeholder", () => {
     const empty = discoverConfigPath(undefined, { OKF_CATALOG_CONFIG: "" }, dir, HOME);
-    expect("error" in empty && empty.error).toMatch(/plugin configure okf-catalog/);
+    expect("error" in empty && empty.error).toMatch(/okf-catalog\.yaml in the project folder/);
     const placeholder = discoverConfigPath(
       undefined,
       // biome-ignore lint/suspicious/noTemplateCurlyInString: the unsubstituted placeholder is the case under test
@@ -166,7 +166,9 @@ describe("discoverConfigPath and readCompanyConfig", () => {
       dir,
       HOME,
     );
-    expect("error" in placeholder && placeholder.error).toMatch(/plugin configure okf-catalog/);
+    expect("error" in placeholder && placeholder.error).toMatch(
+      /okf-catalog\.yaml in the project folder/,
+    );
   });
 
   it("reads a file, resolving its relative paths against its own folder, and names a missing one", () => {

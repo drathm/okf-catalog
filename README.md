@@ -10,18 +10,24 @@ What it adds: **qmd done right for OKF.** [qmd](https://github.com/tobi/qmd) is 
 
 ## Quickstart
 
-The install is a checkout; publication to npm is a separate ruling.
+Once the package is on npm, the install is one command, and the `okf-catalog` command lands on your PATH:
 
 ```bash
-git clone <this repository> okf-catalog && cd okf-catalog
+NODE_LLAMA_CPP_SKIP_DOWNLOAD=1 npm install -g okf-catalog
+```
+
+Until then, or to work on the code, use a checkout:
+
+```bash
+git clone https://github.com/drathm/okf-catalog.git && cd okf-catalog
 NODE_LLAMA_CPP_SKIP_DOWNLOAD=1 npm ci
 ```
 
-`npm ci` builds `dist/` on its way out (the `prepare` script), and the flag keeps qmd's native dependency from downloading or compiling anything: lexical mode needs no model. Check the install and a bundle:
+`npm ci` builds `dist/` on its way out (the `prepare` script), and the flag keeps qmd's native dependency from downloading or compiling anything: lexical mode needs no model. Check the install and a bundle (`node dist/cli.js` in a checkout stands in for `okf-catalog`, or `npm install -g .` puts the command on PATH):
 
 ```bash
-node dist/cli.js --version
-node dist/cli.js check path/to/bundle --integrity none --types Term,Guide
+okf-catalog --version
+okf-catalog check path/to/bundle --integrity none --types Term,Guide
 ```
 
 Write the company's configuration, `okf-catalog.yaml`. A folder on this machine, served as it is, drafts admitted and labelled:
@@ -48,13 +54,13 @@ serve:
 types: [Term, Guide, Policy]
 ```
 
-Give it to Claude Code through the plugin folder:
+Give it to Claude Code through the plugin, which asks for no settings: it runs the `okf-catalog` command from PATH in the project folder, where the server finds `okf-catalog.yaml` (or the file named by `OKF_CATALOG_CONFIG`). The plugin folder ships inside the package:
 
 ```bash
-claude --plugin-dir ./plugin/claude-code
+claude --plugin-dir "$(npm root -g)/okf-catalog/plugin/claude-code"
 ```
 
-In the session, `/plugin configure okf-catalog` asks for the two settings (this checkout as the install folder, the configuration file), then `/reload-plugins` and `/mcp` show the `okf-catalog` server connected, and the skill tells Claude to search with keywords, read pages whole and cite the path, the trust tier, the verifier and the recheck date. Whether `/plugin configure` fills the plugin's settings under `--plugin-dir` is still to be confirmed by hand (an item of the acceptance runbook); the server itself can always be started from a shell with `node dist/cli.js serve --config okf-catalog.yaml` and speaks MCP over stdio.
+From a checkout, `npm install -g .` puts the command on PATH and `claude --plugin-dir ./plugin/claude-code` loads the same plugin. In the session, `/mcp` shows the `okf-catalog` server connected, and the skill tells Claude to search with keywords, read pages whole and cite the path, the trust tier, the verifier and the recheck date. The server can also be started from a shell with `okf-catalog serve --config okf-catalog.yaml`; it speaks MCP over stdio.
 
 To publish, `node dist/cli.js pack --config okf-catalog.yaml --from ./knowledge --out ./published` writes what a server serves; `recipes/publish/` has the workflow and scripts that run the OKF checkers around it and push the branch. Not in this version: full mode, a hosted server, Windows, a registry install.
 
@@ -78,4 +84,4 @@ A server reads a `published` branch, which `okf-catalog pack` writes from a bund
 
 ## Licence
 
-Apache-2.0 (see `LICENSE` and `NOTICE`), settled in decision D1 on 2026-10-07. Contributions need the one-time signature of [CLA.md](CLA.md), which keeps a later change of licence possible; see [CONTRIBUTING.md](CONTRIBUTING.md).
+Apache-2.0 (see `LICENSE` and `NOTICE`); okf-catalog is a product of Bitfusion PR LLC (bitfusion.tech), settled in decision D1 on 2026-10-07. Contributions need the one-time signature of [CLA.md](CLA.md), which keeps a later change of licence possible; see [CONTRIBUTING.md](CONTRIBUTING.md).

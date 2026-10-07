@@ -1,9 +1,10 @@
 {
   "mcpServers": {
     "okf-catalog": {
-      "command": "node",
-      "args": ["${user_config.install_path}/dist/cli.js", "serve"],
-      "env": { "OKF_CATALOG_CONFIG": "${user_config.config_path}" }
+      "command": "okf-catalog",
+      "args": [
+        "serve"
+      ]
     }
   }
 }
