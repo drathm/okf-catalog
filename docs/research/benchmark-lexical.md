@@ -1,6 +1,6 @@
 # Lexical benchmark, bite 3
 
-Run 2026-10-07 on darwin arm64, Node v24.15.0, qmd 2.8.3, okf-catalog commit `1f9986b` (clean tree). Reproduce with `sh bench/fetch-corpus.sh`, `npm run build`, `node bench/run.mjs`, then `node bench/report.mjs` to regenerate this note. The run writes one JSON line per question per configuration and a summary under `bench/results/` (gitignored).
+Run 2026-10-07 on darwin arm64, Node v24.15.0, qmd 2.8.3, okf-catalog commit `07c6439` (clean tree). Reproduce with `sh bench/fetch-corpus.sh`, `npm run build`, `node bench/run.mjs`, then `node bench/report.mjs` to regenerate this note. The run writes one JSON line per question per configuration and a summary under `bench/results/` (gitignored).
 
 ## Why
 
@@ -27,37 +27,37 @@ Every question runs in seven configurations: the question text or its keyword fo
 
 | Configuration | hit@1 | hit@3 | MRR@5 |
 |---|---|---|---|
-| question/relaxed | 17/25 | 19/25 | 0.72 |
+| question/relaxed | 16/25 | 18/25 | 0.68 |
 | question/strict | 8/25 | 8/25 | 0.32 |
 | keywords/relaxed | 23/25 | 25/25 | 0.96 |
 | keywords/strict | 23/25 | 25/25 | 0.96 |
-| question/relaxed+topic | 20/25 | 24/25 | 0.87 |
-| question/relaxed+type | 20/25 | 23/25 | 0.87 |
-| question/relaxed+pool100 | 17/25 | 19/25 | 0.73 |
+| question/relaxed+topic | 19/25 | 23/25 | 0.85 |
+| question/relaxed+type | 19/25 | 22/25 | 0.85 |
+| question/relaxed+pool100 | 16/25 | 20/25 | 0.71 |
 
 By question style:
 
 | Configuration | reuse hit@1 | reuse hit@3 | reuse MRR@5 | paraphrase hit@1 | paraphrase hit@3 | paraphrase MRR@5 |
 |---|---|---|---|---|---|---|
-| question/relaxed | 9/10 | 9/10 | 0.90 | 8/15 | 10/15 | 0.60 |
+| question/relaxed | 9/10 | 9/10 | 0.90 | 7/15 | 9/15 | 0.53 |
 | question/strict | 6/10 | 6/10 | 0.60 | 2/15 | 2/15 | 0.13 |
 | keywords/relaxed | 9/10 | 10/10 | 0.95 | 14/15 | 15/15 | 0.97 |
 | keywords/strict | 9/10 | 10/10 | 0.95 | 14/15 | 15/15 | 0.97 |
-| question/relaxed+topic | 9/10 | 10/10 | 0.95 | 11/15 | 14/15 | 0.82 |
-| question/relaxed+type | 9/10 | 10/10 | 0.95 | 11/15 | 13/15 | 0.82 |
-| question/relaxed+pool100 | 9/10 | 9/10 | 0.90 | 8/15 | 10/15 | 0.62 |
+| question/relaxed+topic | 9/10 | 10/10 | 0.95 | 10/15 | 13/15 | 0.78 |
+| question/relaxed+type | 9/10 | 10/10 | 0.95 | 10/15 | 12/15 | 0.78 |
+| question/relaxed+pool100 | 9/10 | 9/10 | 0.90 | 7/15 | 11/15 | 0.58 |
 
 Paired by question:
 
 | Comparison | first better | first worse | same |
 |---|---|---|---|
-| question: relaxed vs strict | 11 | 0 | 14 |
+| question: relaxed vs strict | 10 | 0 | 15 |
 | keywords: relaxed vs strict | 0 | 0 | 25 |
-| question: topic filter vs none | 6 | 0 | 19 |
-| question: type filter vs none | 6 | 0 | 19 |
+| question: topic filter vs none | 8 | 0 | 17 |
+| question: type filter vs none | 8 | 0 | 17 |
 | question: relaxed pool 100 vs the first rung's pool | 3 | 3 | 19 |
 
-Reading. With keywords, the all-terms rung answers every question and relaxation never runs, so the two keyword rows are identical. With the question text, the all-terms rung alone puts the gold page first eight times in twenty-five; relaxation lifts that to seventeen at the top and nineteen in the top three, improving eleven questions and worsening zero. The paraphrase rows are the reservation in D7 made concrete: lexical search over a paraphrase finds the page at the top 8 times in 15. The topic filter changes six questions (six better, zero worse) and the type filter six (six better, zero worse); a relaxed pool of 100 changes six (three better, three worse) against the first rung's pool of 20.
+Reading. With keywords, the all-terms rung puts the gold page in place for every question; relaxation only appends hits after the first rung's, so it cannot move a gold page the first rung found, and the two keyword rows are identical. For the same reason the relaxed-versus-strict pairing cannot show a loss: it measures what relaxation adds, not a trade. With the question text, the all-terms rung alone puts the gold page first eight times in twenty-five; relaxation lifts that to sixteen at the top and eighteen in the top three, improving ten questions and worsening zero. The paraphrase rows are the reservation in D7 made concrete: lexical search over a paraphrase finds the page at the top 7 times in 15. The topic filter changes eight questions (eight better, zero worse) and the type filter eight (eight better, zero worse); a relaxed pool of 100 changes six (three better, three worse) against the first rung's pool of 20.
 
 ## Where the gold page was not first
 
@@ -68,9 +68,10 @@ Reading. With keywords, the all-terms rung answers every question and relaxation
 | question/relaxed | B11 | paraphrase | miss | relaxed | two notes tie relevance memory search decide comes first | `cole-medin/concepts/cloud-gpu-hosting.md` |
 | question/relaxed | B14 | paraphrase | miss | relaxed | happens agent saves note twice retry key changed text | `cole-medin/concepts/commandify-everything.md` |
 | question/relaxed | B15 | paraphrase | miss | relaxed | single okf mcp server process speak old new revision spec | `cole-medin/entities/tools/fastmcp.md` |
-| question/relaxed | B17 | paraphrase | miss | relaxed | locally hosted model forget earlier messages skip tool calls default settings room | `cole-medin/concepts/local-llms-as-agents.md` |
+| question/relaxed | B17 | paraphrase | miss | relaxed | locally hosted model forget earlier messages skip tool calls default settings room | `cole-medin/concepts/context-window-limits.md` |
 | question/relaxed | B22 | reuse | miss | all-terms | video covers stripe coding agents ship 300 prs week | `cole-medin/entities/organizations/aws.md` |
 | question/relaxed | B24 | paraphrase | 2 | relaxed | way vectorize entire file cutting pieces piece remembers rest said | `cole-medin/concepts/ai-tech-stack.md` |
+| question/relaxed | B25 | paraphrase | miss | relaxed | video agent harness running whole day straight recreate anthropic chat website share | `cole-medin/sources/claude-skills-arent-just-for-claude-heres-how-to-build-them-for-any-agent.md` |
 | question/strict | B1 | reuse | miss | none | conditions hold okf-stop-check sh blocks agent finishing | (no hits) |
 | question/strict | B2 | paraphrase | miss | none | graph viewer switch away default force layout knowledge base large | (no hits) |
 | question/strict | B3 | paraphrase | miss | none | two plugin versions bumped published releases changed cannot happen | (no hits) |
@@ -94,44 +95,55 @@ Reading. With keywords, the all-terms rung answers every question and relaxation
 | keywords/strict | B22 | reuse | 2 | all-terms | stripe minions 300 | `cole-medin/entities/tools/stripe-minions.md` |
 | question/relaxed+topic | B11 | paraphrase | 3 | relaxed | two notes tie relevance memory search decide comes first | `okf-agent-memory/architecture/layers.md` |
 | question/relaxed+topic | B14 | paraphrase | 2 | relaxed | happens agent saves note twice retry key changed text | `okf-docs/cli.md` |
-| question/relaxed+topic | B17 | paraphrase | miss | relaxed | locally hosted model forget earlier messages skip tool calls default settings room | `cole-medin/concepts/local-llms-as-agents.md` |
+| question/relaxed+topic | B17 | paraphrase | 5 | relaxed | locally hosted model forget earlier messages skip tool calls default settings room | `cole-medin/concepts/context-window-limits.md` |
 | question/relaxed+topic | B22 | reuse | 2 | all-terms | video covers stripe coding agents ship 300 prs week | `cole-medin/sources/the-next-evolution-of-ai-coding-is-harnesses-heres-how-to-build-them.md` |
 | question/relaxed+topic | B24 | paraphrase | 2 | relaxed | way vectorize entire file cutting pieces piece remembers rest said | `cole-medin/concepts/ai-tech-stack.md` |
+| question/relaxed+topic | B25 | paraphrase | 5 | relaxed | video agent harness running whole day straight recreate anthropic chat website share | `cole-medin/sources/claude-skills-arent-just-for-claude-heres-how-to-build-them-for-any-agent.md` |
 | question/relaxed+type | B11 | paraphrase | 4 | relaxed | two notes tie relevance memory search decide comes first | `okf-skills/decisions/map-phase-routing.md` |
 | question/relaxed+type | B14 | paraphrase | 2 | relaxed | happens agent saves note twice retry key changed text | `okf-docs/cli.md` |
-| question/relaxed+type | B17 | paraphrase | miss | relaxed | locally hosted model forget earlier messages skip tool calls default settings room | `cole-medin/concepts/local-llms-as-agents.md` |
+| question/relaxed+type | B17 | paraphrase | 5 | relaxed | locally hosted model forget earlier messages skip tool calls default settings room | `cole-medin/concepts/context-window-limits.md` |
 | question/relaxed+type | B22 | reuse | 2 | all-terms | video covers stripe coding agents ship 300 prs week | `cole-medin/sources/the-next-evolution-of-ai-coding-is-harnesses-heres-how-to-build-them.md` |
 | question/relaxed+type | B24 | paraphrase | 2 | relaxed | way vectorize entire file cutting pieces piece remembers rest said | `cole-medin/concepts/ai-tech-stack.md` |
+| question/relaxed+type | B25 | paraphrase | 5 | relaxed | video agent harness running whole day straight recreate anthropic chat website share | `cole-medin/sources/claude-skills-arent-just-for-claude-heres-how-to-build-them-for-any-agent.md` |
 | question/relaxed+pool100 | B3 | paraphrase | 2 | relaxed | two plugin versions bumped published releases changed cannot happen | `okf-skills/components/ci-workflow.md` |
 | question/relaxed+pool100 | B9 | paraphrase | 3 | all-terms | project vendored dependency define concept id one wins | `cole-medin/entities/people/cole-medin.md` |
 | question/relaxed+pool100 | B11 | paraphrase | miss | relaxed | two notes tie relevance memory search decide comes first | `okf-agent-memory/architecture/layers.md` |
+| question/relaxed+pool100 | B12 | paraphrase | 3 | relaxed | two-layer memory model agents large always-loaded instruction file | `cole-medin/concepts/self-evolving-memory.md` |
 | question/relaxed+pool100 | B14 | paraphrase | miss | relaxed | happens agent saves note twice retry key changed text | `cole-medin/sources/no-code-rag-agents-you-have-to-check-out-n8n-langchain.md` |
-| question/relaxed+pool100 | B15 | paraphrase | 4 | relaxed | single okf mcp server process speak old new revision spec | `cole-medin/entities/tools/windsurf.md` |
+| question/relaxed+pool100 | B15 | paraphrase | 2 | relaxed | single okf mcp server process speak old new revision spec | `cole-medin/entities/tools/windsurf.md` |
 | question/relaxed+pool100 | B17 | paraphrase | miss | relaxed | locally hosted model forget earlier messages skip tool calls default settings room | `cole-medin/concepts/context-window-limits.md` |
 | question/relaxed+pool100 | B22 | reuse | miss | all-terms | video covers stripe coding agents ship 300 prs week | `cole-medin/entities/organizations/aws.md` |
-| question/relaxed+pool100 | B25 | paraphrase | 4 | relaxed | video agent harness running whole day straight recreate anthropic chat website share | `cole-medin/entities/people/geoffrey-huntley.md` |
+| question/relaxed+pool100 | B25 | paraphrase | miss | relaxed | video agent harness running whole day straight recreate anthropic chat website share | `cole-medin/concepts/chat-interfaces.md` |
 
 Observations. The paraphrase misses share two or fewer content terms with their page, which no lexical ranking can recover. B22's question form is answered by the all-terms rung with a long entity page that happens to contain every term as a prefix, so relaxation never runs for it. The keyword form of B2 sends `concentric cose 000 concepts`: the tokenizer splits `1,000` into `1` (dropped, one character) and `000`, which is exactly how the engine's FTS5 tokenizer indexes it (a query token `1000` matches nothing, probed against qmd 2.8.3), so the split is kept. The relaxed per-term pool is the first rung's pool by default; the pool-100 row above measures the first alternative.
 
 ## Determinism
 
-The first two runs of this benchmark disagreed on one question (B25: rank 1, then a miss). Three fresh indexes of the same corpus answered it two ways. The cause is in qmd: its lexical query orders by `bm25_score` alone (`store.js`, `ORDER BY bm25_score ASC LIMIT ?`), rows with equal scores come back in insertion order, and insertion order follows `fastGlob`'s traversal, which is not sorted. A pool that cut inside a group of equal scores therefore depended on the index build. The search policy now completes the tie group at every engine cut: it asks for one row beyond the pool, and when that row ties with the cut it widens the request until a lower score is seen, the engine runs out, or the cap is reached (`lexComplete` in `src/search/search.ts`). After the change three consecutive runs produced byte-identical summaries and three fresh indexes agreed on every question and score.
+The first two runs of this benchmark disagreed on one question (B25: rank 1, then a miss). Three fresh indexes of the same corpus answered it two ways. The cause is in qmd: its lexical query orders by `bm25_score` alone (`store.js`, `ORDER BY bm25_score ASC LIMIT ?`), rows with equal scores come back in insertion order, and insertion order follows `fastGlob`'s traversal, which is not sorted. A pool that cut inside a group of equal scores therefore depended on the index build. The search policy now completes the tie group at every engine cut: it asks for one row beyond the pool, and when that row ties with the cut it widens the request until a lower score is seen, the engine runs out, or the cap is reached (`lexComplete` in `src/search/search.ts`). After the change three consecutive runs produced identical ranks, scores and paired outcomes (only timings and sizes differ) and three fresh indexes agreed on every question and score.
 
 ## Cost
 
 | Measure | Value |
 |---|---|
-| Index time, 736 pages | 721 ms |
+| Index time, 736 pages | 680 ms |
 | Database size, 736 pages | 10.6 MiB |
-| Documents not indexed | 0 |
-| Process RSS after the run | 1111 MiB (walked files, catalog and qmd store all resident) |
-| Query latency, question/relaxed | median 10.1 ms, max 27.4 ms |
-| Query latency, question/strict | median 0.4 ms, max 1.9 ms |
-| Query latency, keywords/relaxed | median 2.5 ms, max 11.8 ms |
-| Query latency, keywords/strict | median 0.4 ms, max 1.4 ms |
-| Query latency, question/relaxed+topic | median 10.4 ms, max 25.3 ms |
-| Query latency, question/relaxed+type | median 10.5 ms, max 27.2 ms |
-| Query latency, question/relaxed+pool100 | median 41.3 ms, max 117.8 ms |
+| Documents not indexed | 0 (0 by path collision) |
+| Process RSS after the run | 1162 MiB (walked files, catalog and qmd store all resident) |
+| Query latency, question/relaxed | median 9.9 ms, max 28.0 ms |
+| Query latency, question/strict | median 0.4 ms, max 1.6 ms |
+| Query latency, keywords/relaxed | median 2.5 ms, max 12.4 ms |
+| Query latency, keywords/strict | median 0.4 ms, max 1.2 ms |
+| Query latency, question/relaxed+topic | median 11.0 ms, max 26.0 ms |
+| Query latency, question/relaxed+type | median 11.6 ms, max 24.9 ms |
+| Query latency, question/relaxed+pool100 | median 39.1 ms, max 125.1 ms |
+| Rows fetched per search, question/relaxed | median 210, max 515 (every row carries its page body) |
+| Rows fetched per search, question/strict | median 0, max 21 (every row carries its page body) |
+| Rows fetched per search, keywords/relaxed | median 45, max 250 (every row carries its page body) |
+| Rows fetched per search, keywords/strict | median 2, max 21 (every row carries its page body) |
+| Rows fetched per search, question/relaxed+topic | median 212, max 515 (every row carries its page body) |
+| Rows fetched per search, question/relaxed+type | median 212, max 515 (every row carries its page body) |
+| Rows fetched per search, question/relaxed+pool100 | median 937, max 2445 (every row carries its page body) |
+| Questions with a term at the frequency floor (question/relaxed) | 16 of 25 |
 
 Fixtures, for the record (measured once on the same machine):
 
