@@ -4,7 +4,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 
 ## [Unreleased]
 
-Version 0: serve a company's Open Knowledge Format 0.2 bundle to Claude Code, locally.
+Version 0: serve a company's Open Knowledge Format 0.2 bundle to Claude Code, locally. Needs Node 22.14 or later on macOS or Linux.
 
 ### Added
 

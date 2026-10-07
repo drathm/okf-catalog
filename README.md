@@ -60,7 +60,7 @@ To publish, `node dist/cli.js pack --config okf-catalog.yaml --from ./knowledge 
 
 ## Requirements
 
-- Node 22.12 or later, on macOS or Linux (Windows is not a version 0 host: the cache folder's ownership and mode checks assume POSIX).
+- Node 22.14 or later (the SQLite binding is built on Node-API 10, which Node ships from 22.14.0), on macOS or Linux (Windows is not a version 0 host: the cache folder's ownership and mode checks assume POSIX).
 - The cache folder (`$XDG_CACHE_HOME/okf-catalog/<company>`, or the platform's user cache folder) must be on a local filesystem: the one-process-per-company lock is an operating-system lock on a SQLite file, which network filesystems do not honour reliably, and it must not lie inside the bundle folder.
 
 ## Publishing

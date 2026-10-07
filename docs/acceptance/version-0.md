@@ -86,7 +86,7 @@ Two caveats the clean-account run removes: the author's account loads its own pl
 
 ## Runbook for the clean account
 
-Who: someone other than the author, on a user account that has never held this project. What they need: macOS or Linux, Node 22.12 or later, git 2.30 or later, Claude Code 2.1.221 or later (`claude --version`; 2.1.221 is the first that waits for `--mcp-config` servers before the first turn) signed in once with `claude`, and a bundle: their own (private: see the rule at the end), or the public corpus (`sh bench/fetch-corpus.sh`), or the `spec-example` fixture.
+Who: someone other than the author, on a user account that has never held this project. What they need: macOS or Linux, Node 22.14 or later, git 2.30 or later, Claude Code 2.1.221 or later (`claude --version`; 2.1.221 is the first that waits for `--mcp-config` servers before the first turn) signed in once with `claude`, and a bundle: their own (private: see the rule at the end), or the public corpus (`sh bench/fetch-corpus.sh`), or the `spec-example` fixture.
 
 1. **Install.** `git clone <the repository> okf-catalog && cd okf-catalog && NODE_LLAMA_CPP_SKIP_DOWNLOAD=1 npm ci`, then `node dist/cli.js --version` prints `0.1.0`. Never a global install; the plugin's `install_path` is this checkout.
 2. **Configuration.** Write `okf-catalog.yaml` for the bundle (the README's two examples; `serve.dev: true` for item 1, declared `types`). `node dist/cli.js check <bundle> --integrity none --types …` prints the report.

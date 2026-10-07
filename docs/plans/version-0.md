@@ -58,7 +58,7 @@ A composition layer, `src/serve/`, sits between the commands and everything else
 
 ```
 okf-catalog/
-  package.json                 name okf-catalog; type module; bin okf-catalog → dist/cli.js; engines node >=22.12
+  package.json                 name okf-catalog; type module; bin okf-catalog → dist/cli.js; engines node >=22.14 (raised from 22.12 after the first CI run: better-sqlite3 13 needs Node-API 10)
   tsconfig.json                strict, NodeNext, ES2023, exactOptionalPropertyTypes, noUncheckedIndexedAccess; no declarations (a CLI), source maps with inline sources
   biome.json                   formatter and linter, recommended rules
   vitest.config.ts

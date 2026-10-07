@@ -19,7 +19,7 @@ The workflow has two jobs. `build` holds `contents: read` only and does not keep
 
 ## Running by hand
 
-With git, `uv`, Node 22.12 or later and the checkers on `PATH`:
+With git, `uv`, Node 22.14 or later and the checkers on `PATH`:
 
 ```sh
 OKF_CATALOG_BIN="node /path/to/okf-catalog/dist/cli.js" \
