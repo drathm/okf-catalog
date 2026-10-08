@@ -8,12 +8,12 @@ import type {
   UsageWindow,
 } from "../bundle/model.js";
 
-/** The window that frames a source's `usage_count`, and whether it is the page's shared one (§5.1). */
-export interface EffectiveWindow {
-  from: string;
-  to: string;
-  inherited: boolean;
-}
+/**
+ * The window that frames a source's `usage_count` (§5.1): the source's own, with its dates, or the page's shared
+ * one, named and not copied, since the page's `usageWindow` carries its dates once. A copy per source made one wide
+ * window as large as the page's list of sources (D62, amended after the build review).
+ */
+export type EffectiveWindow = { from: string; to: string; inherited: false } | { inherited: true };
 
 export interface Provenance {
   path: PagePath;
@@ -51,15 +51,15 @@ const asWritten = (v: { by: string; at?: { raw: string } }): { by: string; at?: 
 
 /**
  * The one inheritance rule for a source's usage window (§5.1, D62): the entry's own window when it carries one,
- * else the page's shared `usage_window`, saying which; none when neither exists. Computed when a page is projected;
- * the stored sources are never given a copy.
+ * else `{ inherited: true }` when the page has a shared `usage_window`, whose dates the reader takes from the page;
+ * none when neither exists. Computed when a page is projected; the stored sources are never given a copy.
  */
 export function effectiveWindow(
   source: Source,
   pageWindow: UsageWindow | undefined,
 ): EffectiveWindow | undefined {
   if (source.usageWindow !== undefined) return { ...source.usageWindow, inherited: false };
-  if (pageWindow !== undefined) return { ...pageWindow, inherited: true };
+  if (pageWindow !== undefined) return { inherited: true };
   return undefined;
 }
 

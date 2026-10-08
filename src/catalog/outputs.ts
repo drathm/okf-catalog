@@ -85,8 +85,12 @@ const SourceSchema = z.strictObject({
   usageCount: z.number().optional(),
   lastModified: z.string().optional(),
   usageWindow: Window.optional(),
+  // The source's own window with its dates, or the page's named: its dates are the provenance's usageWindow (D62).
   effectiveWindow: orOmitted(
-    z.strictObject({ from: z.string(), to: z.string(), inherited: z.boolean() }),
+    z.union([
+      z.strictObject({ from: z.string(), to: z.string(), inherited: z.literal(false) }),
+      z.strictObject({ inherited: z.literal(true) }),
+    ]),
   ).optional(),
 });
 const ContractSchema = z.strictObject({

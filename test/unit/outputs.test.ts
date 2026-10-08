@@ -300,7 +300,7 @@ describe("result bounds (bite 4 build review)", () => {
       contract: { runtime: "bigquery", parameters },
       usageWindow: wide,
       timestamp: { raw: "t".repeat(2_500) },
-      sources: [{ resource: "a" }],
+      sources: [{ resource: "a" }, { resource: "b", usageWindow: wide }],
     };
     const out = projectPage(heavy, NOW, 0, RESULT_BUDGET);
     expect(out.provenance?.contract).toEqual({
@@ -315,10 +315,49 @@ describe("result bounds (bite 4 build review)", () => {
     expect(out.provenance?.timestamp).toEqual({
       omitted: "the timestamp field is over 2000 characters and is not returned here",
     });
-    // An inherited window is capped on every source too, so one wide window cannot be copied once per source.
-    expect(out.provenance?.sources[0]?.effectiveWindow).toEqual({
+    // An inherited window is named, never copied, so it needs no cap; a source's own window is capped like any
+    // typed field (D78).
+    expect(out.provenance?.sources[0]?.effectiveWindow).toEqual({ inherited: true });
+    expect(out.provenance?.sources[1]?.effectiveWindow).toEqual({
       omitted: "the effectiveWindow field is over 2000 characters and is not returned here",
     });
+    expect(() => PageOutputSchema.parse(out)).not.toThrow();
+  });
+
+  it("keeps get_page a small multiple of the page however many sources inherit a wide window (build review I-E1, A-A2)", () => {
+    // The page window is just under the 2 000-character cap, so no note replaces it: a copy per source would make
+    // the result about a hundred times the file.
+    const to = "2".repeat(1_930);
+    const sources = Array.from({ length: 2_000 }, (_, i) => `  - resource: s${i}`).join("\n");
+    const text = `---\ntype: Note\ntitle: W\ndescription: d\nusage_window: { from: "2026-01-01", to: "${to}" }\nsources:\n${sources}\n---\nbody\n`;
+    const loaded = loadBundle(
+      "x",
+      [{ path: "w.md", bytes: Buffer.from(text) }],
+      {
+        admit: ["stable"],
+        dev: false,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    );
+    const wide = loaded.catalog.pages.get("w.md");
+    if (wide === undefined) throw new Error("w.md");
+    expect(wide.sources).toHaveLength(2_000);
+    const out = projectPage(wide, NOW, 0, RESULT_BUDGET);
+    expect(out.provenance?.usageWindow).toEqual({ from: "2026-01-01", to });
+    expect(new Set(out.provenance?.sources.map((s) => JSON.stringify(s.effectiveWindow)))).toEqual(
+      new Set(['{"inherited":true}']),
+    );
+    expect(JSON.stringify(out).length).toBeLessThan(5 * Buffer.byteLength(text));
+    // One source that inherits keeps the dates on the page, once.
+    const single = { ...wide, sources: [{ resource: "only" }] };
+    const lone = projectPage(single, NOW, 0, RESULT_BUDGET);
+    expect(lone.provenance?.usageWindow).toEqual({ from: "2026-01-01", to });
+    expect(lone.provenance?.sources).toEqual([
+      { resource: "only", effectiveWindow: { inherited: true } },
+    ]);
     expect(() => PageOutputSchema.parse(out)).not.toThrow();
   });
 
