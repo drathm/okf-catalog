@@ -98,6 +98,46 @@ export interface FootnoteReference {
   heading?: string;
 }
 
+/** The path-valued fields of §6.2, named by the role an edge from each plays (issue 5). */
+export type PathRole = "resource" | "source" | "computation" | "executor" | "attester";
+
+/**
+ * What a path field names (issue 5's classifier, D70): a URL leaf; an admitted page (`concept`); a reserved file,
+ * an attachment or a folder; two of those at once (`ambiguous`); a page file the bundle holds but did not admit
+ * (`unserved`); a scope descriptor, which only a source's resource can be; or nothing (`unresolved`).
+ */
+export type PathTargetKind =
+  | "url"
+  | "concept"
+  | "reserved"
+  | "attachment"
+  | "folder"
+  | "ambiguous"
+  | "unserved"
+  | "scope"
+  | "unresolved";
+
+export interface PathTarget {
+  kind: PathTargetKind;
+  /** The bundle path named, for every kind but `url`, `scope`, `ambiguous` and `unresolved`. */
+  target?: string;
+  /** Both paths an ambiguous value names, in name order: the path as written, then the concept id's file. */
+  candidates?: string[];
+  /** Read from the bundle root after the page's folder held nothing by that name (D70). */
+  fromRoot?: boolean;
+}
+
+/** One path field of a page, classified once at load after admission (D69): never fetched, opened or run. */
+export interface PathEdge extends PathTarget {
+  role: PathRole;
+  /** `resource`, `sources[i].resource` (i counts the page's sources as `get_page` returns them), `computation`, `executor.resource` or `attester.resource`. */
+  field: string;
+  /** The index of the source in the page's sources, for a source edge. */
+  source?: number;
+  /** The value as written. */
+  raw: string;
+}
+
 export type DegradationCode =
   | "title-from-heading"
   | "title-from-filename"
@@ -121,6 +161,7 @@ export type DegradationCode =
   | "body-truncated"
   | "legacy-timestamp"
   | "legacy-citations"
+  | "path-field-root-relative"
   | "index-lists-unserved"
   | "replacement-missing"
   | "replacement-broken"
