@@ -895,6 +895,39 @@ describe("paths in the errors of the three name-taking tools (bite b's build rev
       );
     }
   });
+
+  it("prints catalog's folder and a refused bundle's path by the path kind (the verification of bite b's fix pass)", async () => {
+    const page = (title: string) =>
+      Buffer.from(`---\ntype: Guide\ntitle: ${title}\nstatus: stable\n---\n\nThe body.\n`);
+    const generation = loadGeneration(
+      [
+        { path: "x; y/odd.md", bytes: page("Odd") },
+        { path: "plain/a.md", bytes: page("Plain") },
+      ],
+      { integrity: "none" },
+      NOW,
+    );
+    const s = await session(fakeRuntime(generation));
+    const odd = await s.call("catalog", { folder: "x; y" });
+    expect(text(odd).split("\n")[0]).toBe('catalog of "x; y" (generated index, 1 pages)');
+    const plain = await s.call("catalog", { folder: "plain" });
+    expect(text(plain).split("\n")[0]).toBe("catalog of plain (generated index, 1 pages)");
+    const refusedAt = (path: string) => ({
+      ...generation,
+      report: {
+        ...generation.report,
+        fatal: { path, rule: "manifest-missing" as const, detail: "no manifest.json" },
+      },
+    });
+    const refused = await session(fakeRuntime(refusedAt('x; y "z".md')));
+    expect(text(await refused.call("search", { question: "body" }))).toBe(
+      'the bundle was refused and nothing is served: manifest-missing ("x; y \\"z\\".md"): no manifest.json',
+    );
+    const refusedPlain = await session(fakeRuntime(refusedAt("plain/a.md")));
+    expect(text(await refusedPlain.call("search", { question: "body" }))).toBe(
+      "the bundle was refused and nothing is served: manifest-missing (plain/a.md): no manifest.json",
+    );
+  });
 });
 
 describe("get_page and the OKF 0.1 fallbacks (R5, R6)", () => {
