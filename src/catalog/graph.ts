@@ -128,7 +128,9 @@ export function citationsOf(catalog: Catalog, page: Page): Citations {
   page.sources.forEach((source, i) => {
     if (source.id === undefined) return;
     const key = source.id.toLowerCase();
-    byId.set(key, [...(byId.get(key) ?? []), i]);
+    const same = byId.get(key);
+    if (same === undefined) byId.set(key, [i]);
+    else same.push(i);
   });
   const joined = new Set<number>();
   const claims: Claim[] = [];
