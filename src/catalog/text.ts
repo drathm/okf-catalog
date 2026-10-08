@@ -81,16 +81,24 @@ export function recheckPhrase(
   return `recheck ${raw}`;
 }
 
-function deprecationSuffix(status: string, replacement: string | undefined): string {
-  if (replacement !== undefined) return ` replaced by ${safe(replacement)}`;
+function deprecationSuffix(
+  status: string,
+  replacement: string | undefined,
+  cap: number = Number.POSITIVE_INFINITY,
+): string {
+  if (replacement !== undefined) return ` replaced by ${capped(replacement, cap)}`;
   if (status === "deprecated") return " deprecated, no replacement";
   return "";
 }
 
 /** The most sources a page header names; the rest are counted. */
 const HEADER_SOURCES = 10;
-/** The most characters of a named source's id or resource, its escapes counted, before an ellipsis. */
-const SOURCE_CAP = 200;
+/**
+ * The most characters of one page-written value a page header prints, its escapes counted, before an ellipsis
+ * after the quote: a named source's id or resource (bite a's verification), and the path, type, status, verifier,
+ * dates, resource and replacement (bite b's build review B-I-A2), as the values in use are listed.
+ */
+const HEADER_CAP = 200;
 
 /** How many sources a page lists, as a phrase. */
 export const sourceCount = (count: number): string =>
@@ -110,7 +118,7 @@ const escapeQuotes = (text: string): string => text.replace(/\\/g, "\\\\").repla
  * escapes counted, with an ellipsis after the quote, as the values in use are listed; a frontmatter source's id and
  * resource are of any length (the fix pass's verification).
  */
-const quotedSource = (text: string): string => quotedCut(text, SOURCE_CAP);
+const quotedSource = (text: string): string => quotedCut(text, HEADER_CAP);
 
 /**
  * Page text quoted as `quoted` quotes, cut at `cap` characters once its controls are escaped, an escape never split,
@@ -145,6 +153,10 @@ const fact = (word: string, vouched: boolean, cap = Number.POSITIVE_INFINITY): s
 const plainOrQuoted = (text: string, cap = Number.POSITIVE_INFINITY): string =>
   fact(text, true, cap);
 
+/** A path in a server line: as it is within the cap, else quoted and cut, as a long value is. */
+const capped = (path: string, cap: number): string =>
+  path.length <= cap ? safe(path) : quotedCut(path, cap);
+
 /** What a line needs to know about the bundle beyond the page: the types the company did not declare. */
 export interface LineOptions {
   /** Types outside the company's declared list (the report's `unknownTypes`); empty when it declares none. */
@@ -157,14 +169,15 @@ const KNOWN_STATUSES: ReadonlySet<string> = new Set(["draft", "stable", "depreca
  * A status as a fact in the brackets: one of the three known values as it is, any other word quoted, since it is
  * the company's own text and a comma in it must not add a fact (P13).
  */
-const statusFact = (status: string): string => fact(status, KNOWN_STATUSES.has(status));
+const statusFact = (status: string, cap = Number.POSITIVE_INFINITY): string =>
+  fact(status, KNOWN_STATUSES.has(status), cap);
 
 /**
  * A type as a fact in the brackets: quoted when the company declares its types and this is not one of them, and
  * whenever a character of it could be misread, declared or not (P13, amended after the build review).
  */
-const typeFact = (type: string, options: LineOptions): string =>
-  fact(type, options.undeclaredTypes?.has(type) !== true);
+const typeFact = (type: string, options: LineOptions, cap = Number.POSITIVE_INFINITY): string =>
+  fact(type, options.undeclaredTypes?.has(type) !== true, cap);
 
 /** One search hit as a line: path, title, the bracketed facts, the quoted snippet, the replacement. */
 export function hitLine(
@@ -203,12 +216,12 @@ function namedVerification(page: Page): Verification | undefined {
   return page.latestVerification;
 }
 
-function verificationPhrase(page: Page): string {
+function verificationPhrase(page: Page, cap: number): string {
   const named = namedVerification(page);
   if (named === undefined || page.verified.length === 0) return "unverified";
   return named.at === undefined
-    ? `verified by ${plainOrQuoted(named.by)}, date unknown`
-    : `verified by ${plainOrQuoted(named.by)} on ${plainOrQuoted(named.at.raw)}`;
+    ? `verified by ${plainOrQuoted(named.by, cap)}, date unknown`
+    : `verified by ${plainOrQuoted(named.by, cap)} on ${plainOrQuoted(named.at.raw, cap)}`;
 }
 
 /** What a page header needs beyond a line's options: how many of the page's sources the result names (D82). */
@@ -238,7 +251,10 @@ function headerSources(page: Page, shown: number): string {
   return `sources: ${[...named, ...(more > 0 ? [`and ${more} more`] : [])].join("; ")}`;
 }
 
-/** The citation header of a page: path, then the bracketed facts, then the deprecation. */
+/**
+ * The citation header of a page: path, then the bracketed facts, then the deprecation; each page-written value in
+ * it printed whole up to 200 characters and cut there (bite b's build review B-I-A2).
+ */
 export function pageHeader(page: Page, now: Date, options: HeaderOptions = {}): string {
   const recheck: Recheck | undefined =
     page.staleAfter === undefined
@@ -251,16 +267,18 @@ export function pageHeader(page: Page, now: Date, options: HeaderOptions = {}): 
         };
   const sources = headerSources(page, options.sourcesShown ?? page.sources.length);
   const facts = [
-    typeFact(page.type, options),
-    statusFact(page.status),
+    typeFact(page.type, options, HEADER_CAP),
+    statusFact(page.status, HEADER_CAP),
     page.trust,
     // The tier already says "unverified" when there is no verification to name.
-    ...(page.verified.length === 0 ? [] : [verificationPhrase(page)]),
-    recheckPhrase(recheck),
+    ...(page.verified.length === 0 ? [] : [verificationPhrase(page, HEADER_CAP)]),
+    recheckPhrase(recheck, HEADER_CAP),
     sources,
-    ...(page.resource === undefined ? [] : [`resource: ${plainOrQuoted(page.resource)}`]),
+    ...(page.resource === undefined
+      ? []
+      : [`resource: ${plainOrQuoted(page.resource, HEADER_CAP)}`]),
   ].join(", ");
-  return `${safe(page.path)} [${facts}]${deprecationSuffix(page.status, page.replacement)}`;
+  return `${capped(page.path, HEADER_CAP)} [${facts}]${deprecationSuffix(page.status, page.replacement, HEADER_CAP)}`;
 }
 
 /** The header of a reserved file served through `get_page`. */

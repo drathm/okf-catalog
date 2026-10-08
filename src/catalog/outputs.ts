@@ -481,6 +481,9 @@ export function projectSearch(
  */
 export const FIELD_CAP = 2_000;
 
+/** Characters of one page-written value a page header prints; the provenance falls back to it too (B-I-A2). */
+const HEADER_FIELD_CAP = 200;
+
 /** A value cut at the field cap with an ellipsis. */
 export const capField = (value: string): string => ellipsised(value, FIELD_CAP);
 
@@ -503,18 +506,56 @@ function typedField<T>(field: string, value: T): T | { omitted: string } {
     : value;
 }
 
+/** The most verifications `get_page` lists, the latest ones, before the budget is spent (bite b's build review B-A-E4). */
+const VERIFIED_SHOWN = 20;
+
 /**
- * The provenance as `get_page` returns it: the frontmatter replaced by its note past its budget, and every typed
- * field held to its own budget, so a page's typed fields survive the frontmatter's omission (D62, D78).
+ * The verifications a result lists: the latest 20 by their instant (one with no readable date counts as the
+ * earliest, and of two at one instant the later in the page wins), in the page's order, so that a long history
+ * of verifications never leaves the sources without room (B-A-E4).
  */
-function projectProvenance(page: Page, now: Date): ProjectedProvenance {
+function latestVerified<T>(page: Page, entries: readonly T[]): T[] {
+  if (entries.length <= VERIFIED_SHOWN) return [...entries];
+  const instant = (i: number): number =>
+    page.verified[i]?.at?.at?.getTime() ?? Number.NEGATIVE_INFINITY;
+  const latest = entries
+    .map((_, i) => i)
+    .sort((a, b) => instant(b) - instant(a) || b - a)
+    .slice(0, VERIFIED_SHOWN)
+    .sort((a, b) => a - b);
+  return latest.map((i) => entries[i] as T);
+}
+
+/**
+ * The provenance as `get_page` returns it: the frontmatter replaced by its note past its budget, every typed field
+ * held to its own budget, so a page's typed fields survive the frontmatter's omission (D62, D78), and every other
+ * page-written value cut at `cap` characters with an ellipsis (2 000, D78's number; bite b's build reviews B-I-A2,
+ * B-I-A3); the latest 20 verifications (B-A-E4).
+ */
+function projectProvenance(page: Page, now: Date, cap: number): ProjectedProvenance {
   const { sources, usageWindow, contract, timestamp, ...rest } = provenanceOf(page, now);
+  const cut = (value: string): string => ellipsised(value, cap);
+  const capped = <T extends object, K extends keyof T>(row: T, keys: readonly K[]): T => {
+    const out = { ...row };
+    for (const key of keys) {
+      const value = out[key];
+      if (typeof value === "string") out[key] = cut(value) as T[K];
+    }
+    return out;
+  };
   const projected: ProjectedProvenance = {
-    ...rest,
-    // Each row's page-written values cut at the field cap, so one long value never crowds out the rest (B-I-A3).
-    verified: rest.verified.map((v) => capFields(v, ["by", "at"])),
+    ...capped(rest, ["path", "title", "type", "status", "resource", "replacement"]),
+    ...(rest.generated === undefined ? {} : { generated: capped(rest.generated, ["by", "at"]) }),
+    ...(rest.latestVerification === undefined
+      ? {}
+      : { latestVerification: capped(rest.latestVerification, ["by", "at"]) }),
+    ...(rest.staleAfter === undefined
+      ? {}
+      : { staleAfter: { ...rest.staleAfter, raw: cut(rest.staleAfter.raw) } }),
+    // Each row's page-written values cut too, so one long value never crowds out the rest (B-I-A3).
+    verified: latestVerified(page, rest.verified).map((v) => capped(v, ["by", "at"])),
     sources: sources.map(({ effectiveWindow, usageWindow: own, ...source }) => ({
-      ...capFields(source, ["id", "resource", "title", "author", "lastModified"]),
+      ...capped(source, ["id", "resource", "title", "author", "lastModified"]),
       ...(own === undefined ? {} : { usageWindow: typedField("usageWindow", own) }),
       ...(effectiveWindow === undefined
         ? {}
@@ -548,6 +589,10 @@ function projectProvenance(page: Page, now: Date): ProjectedProvenance {
 const bodyRoom = (budget: number, citation: string): number =>
   Math.max(1, budget - citation.length - NOTICE.length - 80);
 
+/** The provenance with its two lists empty: what it costs before a verification or a source is kept. */
+const listless = (projected: ProjectedProvenance): number =>
+  JSON.stringify({ ...projected, verified: [], sources: [] }).length;
+
 /**
  * `get_page`'s provenance within its share of the budget (D82): whole when it fits, else `verified` then
  * `sources` kept in their order until the share is spent, the totals saying how many there are.
@@ -571,26 +616,35 @@ function fitProvenance(projected: ProjectedProvenance, share: number): Projected
   return kept;
 }
 
+/** The fewest characters of body a result carries, two, so a cut never splits a surrogate pair. */
+const BODY_MINIMUM = 2;
+
 /**
- * A body cut from `offset` to fit both channels: `textRoom` raw characters for the text block and `jsonRoom`
- * characters once escaped for the structured output, which counts a quotation mark or a line break twice. When the
- * rest of the structured result alone passes the budget (`jsonRoom` not positive), the text block decides.
+ * The longest body cut from `offset` that fits both channels: `textRoom` raw characters for the text block and
+ * `jsonRoom` characters once escaped for the structured output, which counts a quotation mark, a backslash or a
+ * line break twice and a control character six times. The escaped length grows with the cut, so the longest cut
+ * whose escaped length fits is found by binary search (bite b's build review B-A-A3). When not even the minimum
+ * fits, the body is cut to its minimum, which the rest of the result leaves room for.
  */
 function cutBody(body: string, offset: number, textRoom: number, jsonRoom: number): Cut {
-  let room = Math.max(2, jsonRoom > 0 ? Math.min(textRoom, jsonRoom) : textRoom);
-  let cut = cutText(body, offset, room);
-  while (jsonRoom > 0 && room > 2) {
-    const excess = JSON.stringify(cut.slice).length - 2 - jsonRoom;
-    if (excess <= 0) break;
-    room = Math.max(2, room - excess);
-    cut = cutText(body, offset, room);
+  const fits = (cut: Cut): boolean => JSON.stringify(cut.slice).length - 2 <= jsonRoom;
+  const most = Math.max(BODY_MINIMUM, textRoom);
+  const whole = cutText(body, offset, most);
+  if (fits(whole)) return whole;
+  let low = BODY_MINIMUM;
+  let high = most - 1;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (fits(cutText(body, offset, mid))) low = mid;
+    else high = mid - 1;
   }
-  return cut;
+  return cutText(body, offset, low);
 }
 
 /**
- * The page header within a quarter of the budget: it names the sources the provenance kept, or, when escaping a
- * line lengthens them past that quarter, as many of them as fit, then says how many more there are (D82).
+ * The page header within a quarter of the budget in both channels (D82; bite b's build review B-I-A2): it names at
+ * most ten of the sources the provenance kept, or, when escaping lengthens them past that quarter, as many of them
+ * as fit, then says how many more there are; every other page-written value in it is cut at 200 characters.
  */
 function headerWithin(
   page: Page,
@@ -601,15 +655,17 @@ function headerWithin(
 ): string {
   const header = (shown: number): string =>
     pageHeader(page, now, { ...options, sourcesShown: shown });
+  const fits = (line: string): boolean =>
+    line.length <= room && JSON.stringify(line).length <= room;
   const whole = header(kept);
-  if (whole.length <= room) return whole;
+  if (fits(whole)) return whole;
   let best = header(0);
   let low = 1;
   let high = kept - 1;
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
     const candidate = header(mid);
-    if (candidate.length <= room) {
+    if (fits(candidate)) {
       best = candidate;
       low = mid + 1;
     } else high = mid - 1;
@@ -625,8 +681,10 @@ const jsonRoomOf = (frame: PageOutput, budget: number): number =>
 
 /**
  * A page as `get_page` returns it, the whole result within the budget in both channels (D82): the provenance
- * takes at most half, its `verified` then `sources` cut in order with their totals, and the header names the
- * sources the provenance kept, within a quarter; the body takes the rest and says where to continue.
+ * takes at most half, its latest 20 verifications then its sources cut in order with their totals, every value cut
+ * at 2 000 characters, and at 200 when the provenance would not fit its half otherwise; the header names at most
+ * ten of the sources the provenance kept, within a quarter in both channels; the body takes the rest, the longest
+ * cut that fits both channels, and says where to continue.
  */
 export function projectPage(
   page: Page,
@@ -635,7 +693,11 @@ export function projectPage(
   budget: number,
   options: LineOptions = {},
 ): PageOutput {
-  const provenance = fitProvenance(projectProvenance(page, now), Math.floor(budget / 2));
+  const half = Math.floor(budget / 2);
+  let projected = projectProvenance(page, now, FIELD_CAP);
+  // Many values at the field cap at once: each is cut again, to what a header prints, so the half holds.
+  if (listless(projected) > half) projected = projectProvenance(page, now, HEADER_FIELD_CAP);
+  const provenance = fitProvenance(projected, half);
   const citation = headerWithin(
     page,
     now,

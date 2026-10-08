@@ -747,20 +747,34 @@ describe("the result budget (D82)", () => {
       out,
       `${out.citation}\n${out.notice}\n${out.body}\n[truncated at the result budget; continue with offset ${out.nextOffset}]`,
     );
-    // The provenance takes at most half; verified is kept first, so the sources are cut to none.
+    // The provenance takes at most half. The latest 20 verifications are listed (bite b's build review B-A-E4; of
+    // equal instants the later in the page), so the sources keep room; the header names ten of those kept.
     expect(JSON.stringify(out.provenance).length).toBeLessThanOrEqual(RESULT_BUDGET / 2);
     expect(out.provenance?.verifiedTotal).toBe(300);
     expect(out.provenance?.sourcesTotal).toBe(300);
-    expect(out.provenance?.verified.length).toBeGreaterThan(0);
-    expect(out.provenance?.verified.length).toBeLessThan(300);
-    expect(out.provenance?.verified.map((v) => v.by)).toEqual(
-      verified.slice(0, out.provenance?.verified.length).map((v) => v.by),
-    );
-    expect(out.provenance?.sources).toEqual([]);
-    expect(out.citation).toContain("300 sources, none named within the result budget");
+    expect(out.provenance?.verified.map((v) => v.by)).toEqual(verified.slice(280).map((v) => v.by));
+    const firstKept = out.provenance?.sources.length ?? 0;
+    expect(firstKept).toBeGreaterThan(0);
+    expect(out.citation).toContain(`; and ${300 - Math.min(10, firstKept)} more`);
     // The body takes the rest, and says where to continue.
     expect(out.truncated).toBe(true);
     expect(out.body.length).toBeGreaterThan(1_000);
+    // Verifications that fill the half on their own: the first of the latest 20 are kept, in order, and the
+    // sources are cut to none.
+    const wordy = verified.map((v, i) => ({
+      ...v,
+      by: `human:reviewer-${String(i).padStart(3, "0")}-${"w".repeat(1_900)}`,
+    }));
+    const full = projectPage({ ...heavy, verified: wordy }, NOW, 0, RESULT_BUDGET);
+    within(full, `${full.citation}\n${full.notice}\n${full.body}`);
+    const listed = full.provenance?.verified.length ?? 0;
+    expect(listed).toBeGreaterThan(0);
+    expect(listed).toBeLessThan(20);
+    expect(full.provenance?.verified.map((v) => v.by)).toEqual(
+      wordy.slice(280, 280 + listed).map((v) => v.by),
+    );
+    expect(full.provenance?.sources).toEqual([]);
+    expect(full.citation).toContain("300 sources, none named within the result budget");
     // Verified that fits whole leaves room for the first sources, in order; the header names those it kept.
     const fewer: Page = { ...heavy, verified: verified.slice(0, 2) };
     const second = projectPage(fewer, NOW, 0, RESULT_BUDGET);
@@ -1098,5 +1112,152 @@ describe("row caps and list shares (bite b's build reviews B-I-A3, B-A-A2, B-I-E
       claim.sources.slice(0, kept?.sources.length).map((s) => s.resource),
     );
     expect(text).toContain(`its 50 sources, the first ${kept?.sources.length}:`);
+  });
+});
+
+describe("get_page within the budget in both channels (bite b's build reviews B-I-A2, B-A-A3, B-A-E4)", () => {
+  /** The text block as the tool writes it, the continuation line included. */
+  const textOf = (out: ReturnType<typeof projectPage>): string =>
+    `${out.citation}\n${out.notice}\n${out.body}${out.truncated ? `\n[truncated at the result budget; continue with offset ${out.nextOffset}]` : ""}`;
+  const within = (out: ReturnType<typeof projectPage>): void => {
+    expect(JSON.stringify(out).length).toBeLessThanOrEqual(RESULT_BUDGET);
+    expect(textOf(out).length).toBeLessThanOrEqual(RESULT_BUDGET);
+    // The header holds a quarter of the budget in both channels.
+    expect(out.citation.length).toBeLessThanOrEqual(RESULT_BUDGET / 4);
+    expect(JSON.stringify(out.citation).length).toBeLessThanOrEqual(RESULT_BUDGET / 4);
+  };
+  const loadOne = (text: string): Page => {
+    const loaded = loadBundle(
+      "b",
+      [{ path: "p.md", bytes: Buffer.from(text) }],
+      {
+        admit: ["stable"],
+        dev: false,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    );
+    const found = loaded.catalog.pages.get("p.md");
+    if (found === undefined) throw new Error("p.md");
+    return found;
+  };
+  const body = "Plain body line of text.\n".repeat(8_000);
+  const yaml = (value: string): string => JSON.stringify(value);
+
+  it("holds the reviewer's four single-field cases in both channels, the body still full-size", () => {
+    const cases: Record<string, string> = {
+      backslashResource: `resource: ${yaml("\\".repeat(9_900))}\n`,
+      quoteVerifier: `verified:\n  - { by: ${yaml(`human:${'"'.repeat(9_900)}`)}, at: 2026-01-01 }\n`,
+      longTitle: "",
+      longVerifier: `verified:\n  - { by: ${yaml(`human:${"v".repeat(50_000)}`)}, at: 2026-01-01 }\n`,
+      longResource: `resource: ${yaml(`https://x.test/${"r".repeat(50_000)}`)}\n`,
+    };
+    for (const [name, extra] of Object.entries(cases)) {
+      const title = name === "longTitle" ? "t".repeat(60_000) : "T";
+      const out = projectPage(
+        loadOne(`---\ntype: Note\ntitle: ${yaml(title)}\ndescription: D\n${extra}---\n\n${body}`),
+        NOW,
+        0,
+        RESULT_BUDGET,
+      );
+      within(out);
+      expect(out.truncated, name).toBe(true);
+      expect(out.body.length, name).toBeGreaterThan(RESULT_BUDGET / 2);
+      expect(() => PageOutputSchema.parse(out), name).not.toThrow();
+    }
+  });
+
+  it("cuts every page-written value at 2 000 characters in the provenance and 200 in the header", () => {
+    const long = (char: string) => char.repeat(60_000);
+    const out = projectPage(
+      loadOne(
+        `---\ntype: Note\ntitle: ${yaml(long("t"))}\ndescription: D\nresource: ${yaml(long("r"))}\nstale_after: ${yaml(long("s"))}\ngenerated: { by: ${yaml(long("g"))}, at: 2026-01-01 }\nverified:\n  - { by: ${yaml(`human:${long("v")}`)}, at: ${yaml(long("a"))} }\n---\n\n${body}`,
+      ),
+      NOW,
+      0,
+      RESULT_BUDGET,
+    );
+    within(out);
+    const provenance = out.provenance;
+    expect(provenance?.title).toBe(`${"t".repeat(2_000)}…`);
+    expect(provenance?.resource).toBe(`${"r".repeat(2_000)}…`);
+    expect(provenance?.staleAfter?.raw).toBe(`${"s".repeat(2_000)}…`);
+    expect(provenance?.generated?.by).toBe(`${"g".repeat(2_000)}…`);
+    expect(provenance?.latestVerification?.by.length).toBe(2_001);
+    expect(provenance?.verified[0]?.at).toBe(`${"a".repeat(2_000)}…`);
+    // The header prints at most 200 characters of each, the cut saying so after the quote.
+    expect(out.citation).toContain(`resource: "${"r".repeat(200)}"…`);
+    expect(out.citation).toContain(`recheck date unparseable ("${"s".repeat(200)}"…)`);
+    expect(out.citation.length).toBeLessThan(2_000);
+  });
+
+  it("still fits when every value is long at once, the provenance's values then cut at 200", () => {
+    // Each value is 2 500 backslashes, 5 000 characters once escaped: at the 2 000-character cut the provenance
+    // alone would pass its half of the budget, so its values are cut again, to what the header prints.
+    const slashes = yaml("\\".repeat(2_500));
+    const contract = `computation: ${yaml("c".repeat(1_900))}\nexecutor: { resource: ${yaml("e".repeat(1_900))} }\nattester: { resource: ${yaml("a".repeat(1_900))} }\nruntime: ${yaml("u".repeat(1_900))}\n`;
+    const out = projectPage(
+      loadOne(
+        `---\ntype: ${slashes}\ntitle: ${slashes}\ndescription: D\nresource: ${slashes}\nstale_after: ${slashes}\ngenerated: { by: ${slashes}, at: ${slashes} }\nverified:\n  - { by: ${slashes}, at: ${slashes} }\nusage_window: { from: ${yaml("f".repeat(900))}, to: ${yaml("t".repeat(900))} }\n${contract}---\n\n${body}`,
+      ),
+      NOW,
+      0,
+      RESULT_BUDGET,
+    );
+    within(out);
+    expect(JSON.stringify(out.provenance).length).toBeLessThanOrEqual(RESULT_BUDGET / 2);
+    expect(out.provenance?.title).toBe(`${"\\".repeat(200)}…`);
+    expect(out.provenance?.verified).toHaveLength(1);
+    expect(out.body.length).toBeGreaterThan(1_000);
+  });
+
+  it("cuts a body that escaping doubles in long windows, by the longest cut whose JSON fits (B-A-A3)", () => {
+    const doubled = `${'"'.repeat(45_000)}${"\\".repeat(45_000)}`;
+    const page = loadOne(`---\ntype: Note\ntitle: Q\ndescription: D\n---\n\n${doubled}\n`);
+    const first = projectPage(page, NOW, 0, RESULT_BUDGET);
+    within(first);
+    const room = RESULT_BUDGET - first.citation.length - NOTICE.length - 80;
+    expect(first.body.length).toBeGreaterThanOrEqual(0.4 * room);
+    let calls = 1;
+    for (let next = first; next.truncated; calls++) {
+      next = projectPage(page, NOW, next.nextOffset ?? 0, RESULT_BUDGET);
+      within(next);
+    }
+    expect(calls).toBeLessThanOrEqual(6);
+    // A reserved file's body is cut the same way.
+    const index = catalog.folders.get("")?.index;
+    if (index === undefined) throw new Error("root index");
+    const reserved = projectReserved({ ...index, body: doubled }, "file", 0, RESULT_BUDGET);
+    expect(JSON.stringify(reserved).length).toBeLessThanOrEqual(RESULT_BUDGET);
+    expect(reserved.body.length).toBeGreaterThanOrEqual(0.4 * room);
+  });
+
+  it("keeps the latest 20 verifications before the budget, so the sources always get room (B-A-E4)", () => {
+    const verified = Array.from(
+      { length: 300 },
+      (_, i) =>
+        `  - { by: "human:reviewer-${String(i).padStart(3, "0")}", at: "2026-01-01T00:${String(Math.floor(i / 60)).padStart(2, "0")}:${String(i % 60).padStart(2, "0")}Z" }`,
+    ).join("\n");
+    const sources = Array.from(
+      { length: 300 },
+      (_, i) => `  - { id: s${i}, resource: "https://x.test/${i}" }`,
+    ).join("\n");
+    const out = projectPage(
+      loadOne(
+        `---\ntype: Note\ntitle: V\ndescription: D\nverified:\n${verified}\nsources:\n${sources}\n---\n\n${body}`,
+      ),
+      NOW,
+      0,
+      RESULT_BUDGET,
+    );
+    within(out);
+    expect(out.provenance?.verifiedTotal).toBe(300);
+    expect(out.provenance?.verified.map((v) => v.by)).toEqual(
+      Array.from({ length: 20 }, (_, i) => `human:reviewer-${String(280 + i).padStart(3, "0")}`),
+    );
+    expect(out.provenance?.sourcesTotal).toBe(300);
+    expect(out.provenance?.sources.length).toBeGreaterThan(50);
   });
 });
