@@ -879,6 +879,45 @@ describe("okf-catalog serve over stdio: a network (D72, D73)", { timeout: 90_000
     }
   });
 
+  it("removes a version 0 clone the bundle's own clone has replaced, and a link in its place, touching nothing it points at", async () => {
+    const repo = packedRepo();
+    try {
+      const yaml = `company: fixture\nsource:\n  repository: "${repo.url}"\n  branch: published\n`;
+      const b = box("spec-example", yaml);
+      b.env.OKF_CATALOG_GIT_PROTOCOLS = "file";
+      const dir = companyDir(b);
+      const once = async (): Promise<ReturnType<typeof rawServer>> => {
+        const run = rawServer(b);
+        run.send(INITIALIZE);
+        await run.waitFor(1);
+        run.send(INITIALIZED);
+        expect((await statusOver(run, 2)).admitted).toBe(1);
+        expect((await run.end()).code).toBe(0);
+        return run;
+      };
+      await once();
+      const own = join(dir, "bundles", "fixture", "source", "repo.git", "HEAD");
+      expect(existsSync(own)).toBe(true);
+      // A version 0 clone beside the bundle's own: the bundle keeps its own, the old one goes.
+      mkdirSync(join(dir, "source"), { mode: 0o700 });
+      writeFileSync(join(dir, "source", "state.json"), "{}\n");
+      const second = await once();
+      expect(existsSync(join(dir, "source"))).toBe(false);
+      expect(existsSync(own)).toBe(true);
+      expect(second.stderr()).toMatch(/"event":"cache.version0".*removed/);
+      // A link where the clone was: the link goes, and what it points at stays.
+      const outside = mkdtempSync(join(tmpdir(), "okf-catalog-outside-"));
+      writeFileSync(join(outside, "keep.txt"), "kept\n");
+      symlinkSync(outside, join(dir, "source"));
+      await once();
+      expect(existsSync(join(dir, "source"))).toBe(false);
+      expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("kept\n");
+      rmSync(outside, { recursive: true, force: true });
+    } finally {
+      rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
   it("leaves the version 0 cache alone in the private fallback", async () => {
     const b = box("spec-example");
     const dir = companyDir(b);

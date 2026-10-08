@@ -1,12 +1,4 @@
-import {
-  accessSync,
-  constants,
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  renameSync,
-  rmSync,
-} from "node:fs";
+import { accessSync, constants, lstatSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
@@ -160,27 +152,32 @@ function forBundle(log: Log, bundle: string): Log {
  */
 function moveVersion0Clone(dir: string, repositories: readonly BundleConfig[], log: Log): void {
   const old = join(dir, "source");
-  let stat: ReturnType<typeof lstatSync>;
-  try {
-    stat = lstatSync(old);
-  } catch {
-    return;
-  }
+  const stat = lstatSync(old, { throwIfNoEntry: false });
+  if (stat === undefined) return;
   const [only] = repositories;
-  if (stat.isDirectory() && only !== undefined && repositories.length === 1) {
-    const own = bundleWorkDir(dir, only.id);
-    const target = join(own, "source");
-    if (!existsSync(target)) {
-      mkdirSync(own, { recursive: true, mode: 0o700 });
-      renameSync(old, target);
-      log.info("cache.version0", {
-        bundle: only.id,
-        detail: "the version 0 clone was moved into the bundle's folder",
-      });
-      return;
+  try {
+    if (stat.isDirectory() && only !== undefined && repositories.length === 1) {
+      const own = bundleWorkDir(dir, only.id);
+      const target = join(own, "source");
+      // Anything at the target, a link included, is the bundle's own: the old clone is then only removed.
+      if (lstatSync(target, { throwIfNoEntry: false }) === undefined) {
+        mkdirSync(own, { recursive: true, mode: 0o700 });
+        renameSync(old, target);
+        log.info("cache.version0", {
+          bundle: only.id,
+          detail: "the version 0 clone was moved into the bundle's folder",
+        });
+        return;
+      }
     }
+    rmSync(old, { recursive: true, force: true });
+  } catch (error) {
+    const described = new Error(
+      "the version 0 clone in the cache folder could not be moved or removed; the log has the detail",
+    ) as Error & { detail?: string };
+    described.detail = `${old}: ${(error as Error).message}`;
+    throw described;
   }
-  rmSync(old, { recursive: true, force: true });
   log.info("cache.version0", {
     detail: "the version 0 clone was removed: no one repository bundle could take it",
   });
