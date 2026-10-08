@@ -14,14 +14,16 @@ import {
 } from "./graph.js";
 import type { Catalog } from "./model.js";
 import { type DatedWindow, type EffectiveWindow, provenanceOf } from "./provenance.js";
-import type {
-  BundleOption,
-  BundleRuntimeStatus,
-  Generation,
-  Network,
-  RuntimeStatus,
-  ServedBundle,
-  ToolOptions,
+import {
+  type BundleOption,
+  type BundleRuntimeStatus,
+  type Generation,
+  type Network,
+  type RuntimeStatus,
+  type ServedBundle,
+  type ServingState,
+  servingStateOf,
+  type ToolOptions,
 } from "./runtime.js";
 import {
   citationsHeader,
@@ -34,6 +36,7 @@ import {
   listHeading,
   MARKER,
   mentionLine,
+  type NotSearched,
   networkBundleLine,
   pageHeader,
   pageWindowLine,
@@ -297,7 +300,8 @@ const list = <T extends z.ZodTypeAny>(item: T) =>
 /** The facts of one bundle's state that `status` carries in either shape. */
 const bundleStatusFields = {
   commit: z.string().nullable(),
-  loadedAt: z.string(),
+  /** When what the bundle serves was loaded; null when it serves nothing of its own load (its first load failed or has not landed, or its index is broken). */
+  loadedAt: z.string().nullable(),
   dev: z.boolean(),
   integrity: z.enum(["checked", "skipped"]),
   admitted: z.number(),
@@ -369,12 +373,17 @@ export const BundleStatusOutputSchema = z.strictObject({
 });
 export type BundleStatusOutput = z.infer<typeof BundleStatusOutputSchema>;
 
+/** How a bundle stands: served, refused by the loader, or one of the runtime's own states (D75; D39 per bundle). */
+const ServingStateSchema = z.enum(["serving", "refused", "load-failed", "index-broken", "loading"]);
+
 /** `status` beyond one bundle (D74): the network's lock and refusal, and a row per bundle. */
 export const NetworkStatusOutputSchema = z.strictObject({
   network: z.string(),
   bundles: z.array(
     z.strictObject({
       id: z.string(),
+      /** How the bundle stands: serving, refused, load-failed, index-broken or loading. */
+      state: ServingStateSchema,
       sourceKind: z.enum(["local", "git"]),
       /** The source as written in the configuration, never a cache path. */
       source: z.string(),
@@ -560,8 +569,8 @@ export interface SearchProjectionOptions {
   undeclaredTypes?: ReadonlySet<string> | ReadonlyMap<string, ReadonlySet<string>>;
   /** Print `<bundle>:` before each hit's path: the network holds more than one bundle (D74). */
   prefixed?: boolean;
-  /** The refused bundles a search beyond one bundle did not read (D75). */
-  notSearched?: readonly string[];
+  /** The bundles a search beyond one bundle did not read, each with why (D75; D39 per bundle). */
+  notSearched?: readonly NotSearched[];
 }
 
 /**
@@ -994,9 +1003,11 @@ function bundleFacts(
     if (page.staleAfter?.at !== undefined && now.getTime() >= page.staleAfter.at.getTime())
       overdue += 1;
   }
+  const state = servingStateOf(generation);
   return {
     commit: r.commit ?? null,
-    loadedAt: generation.loadedAt.toISOString(),
+    // A bundle that serves nothing of a load of its own has no load time to report (C-A-D3).
+    loadedAt: state === "serving" || state === "refused" ? generation.loadedAt.toISOString() : null,
     dev: generation.dev,
     integrity: generation.integrity,
     admitted: r.admitted,
@@ -1114,6 +1125,7 @@ export function projectNetworkStatus(
     const option = optionOf(options, served.id);
     return {
       id: served.id,
+      state: servingStateOf(served.generation),
       sourceKind: option.sourceKind,
       source: option.source,
       ...bundleFacts(
@@ -1158,6 +1170,27 @@ type BundleLine = Omit<
   engine: Omit<BundleStatusOutput["engine"], "resetOnOpen"> & { resetOnOpen?: string | null };
 };
 
+/** The poller of a bundle on a status line, when it has one. */
+const pollerParts = (out: Pick<BundleLine, "poller">): string[] =>
+  out.poller === null
+    ? []
+    : [
+        `poller every ${Math.round(out.poller.intervalMs / 1000)} s${out.poller.lastTick === null ? ", no tick yet" : `, last tick ${out.poller.lastOutcome ?? "?"} at ${out.poller.lastTick}`}`,
+      ];
+
+/** A bundle's last attempt and the last load the loader refused, on a status line, when there are any. */
+function attemptParts(out: Pick<BundleLine, "lastAttempt" | "lastRefusal">): string[] {
+  const parts: string[] = [];
+  if (out.lastAttempt !== null)
+    parts.push(`last attempt ${out.lastAttempt.outcome} at ${out.lastAttempt.at}`);
+  // A refused path is printed by the path kind, bare only when plain, so it can add no fact to the line (P13).
+  if (out.lastRefusal !== null)
+    parts.push(
+      `last refusal ${out.lastRefusal.commit === null ? "" : `${out.lastRefusal.commit.slice(0, 12)} `}${out.lastRefusal.rule}${out.lastRefusal.path ? ` (${printed(out.lastRefusal.path, "path")})` : ""}`,
+    );
+  return parts;
+}
+
 /** The facts of one bundle on a status line, in version 0's order; `lock` goes where the line names the lock. */
 function bundleParts(name: string, out: BundleLine, lock?: string): string[] {
   const parts = [
@@ -1169,23 +1202,13 @@ function bundleParts(name: string, out: BundleLine, lock?: string): string[] {
     ...(out.published === null
       ? []
       : [`published ${out.published.commit.slice(0, 12)} fetched ${out.published.fetchedAt}`]),
-    ...(out.poller === null
-      ? []
-      : [
-          `poller every ${Math.round(out.poller.intervalMs / 1000)} s${out.poller.lastTick === null ? ", no tick yet" : `, last tick ${out.poller.lastOutcome ?? "?"} at ${out.poller.lastTick}`}`,
-        ]),
+    ...pollerParts(out),
     ...(out.engine.resetOnOpen === undefined || out.engine.resetOnOpen === null
       ? []
       : [`engine store rebuilt at open: ${out.engine.resetOnOpen}`]),
     `${n(out.unknownTypes.count, "unknown type")}, ${n(out.unknownStatuses.count, "unknown status", "unknown statuses")}, ${n(out.brokenLinks.count, "broken link")}, ${n(out.linksToUnserved.count, "link to an unserved page", "links to an unserved page")}, ${n(out.foldersWithoutIndex.count, "folder without an index", "folders without an index")}, ${n(out.missingOnDisk.count, "manifest entry missing on disk", "manifest entries missing on disk")}, ${n(out.unmatchedAdmits.count, "admitted status that matches no page", "admitted statuses that match no page")}`,
+    ...attemptParts(out),
   ];
-  if (out.lastAttempt !== null)
-    parts.push(`last attempt ${out.lastAttempt.outcome} at ${out.lastAttempt.at}`);
-  // A refused path is printed by the path kind, bare only when plain, so it can add no fact to the line (P13).
-  if (out.lastRefusal !== null)
-    parts.push(
-      `last refusal ${out.lastRefusal.commit === null ? "" : `${out.lastRefusal.commit.slice(0, 12)} `}${out.lastRefusal.rule}${out.lastRefusal.path ? ` (${printed(out.lastRefusal.path, "path")})` : ""}`,
-    );
   if (out.fatal !== null) {
     parts.push(
       `FATAL ${safe(out.fatal.rule)}${out.fatal.path ? ` (${printed(out.fatal.path, "path")})` : ""}: ${safe(out.fatal.detail)}`,
@@ -1193,6 +1216,22 @@ function bundleParts(name: string, out: BundleLine, lock?: string): string[] {
   }
   return parts;
 }
+
+/**
+ * A bundle that serves nothing of a load of its own (its first load failed or has not landed, or its index is broken)
+ * on a status line: its state and why, then its poller and its attempts; never "integrity checked … loaded <time>",
+ * which would not be true of it (C-A-D3).
+ */
+const standingParts = (
+  row: Pick<BundleLine, "fatal" | "poller" | "lastAttempt" | "lastRefusal"> & {
+    id: string;
+    state: ServingState;
+  },
+): string[] => [
+  `${row.id}: ${row.state}: ${safe(row.fatal?.detail ?? "")}`,
+  ...pollerParts(row),
+  ...attemptParts(row),
+];
 
 /** The lock as a status line names it. */
 const lockPart = (out: Pick<BundleStatusOutput, "lock" | "lockOwner">): string =>
@@ -1208,16 +1247,28 @@ const lockPart = (out: Pick<BundleStatusOutput, "lock" | "lockOwner">): string =
  */
 export function statusSummary(out: StatusOutput): string {
   if ("network" in out) {
-    const refused = out.bundles.filter((row) => row.fatal !== null).length;
+    // The bundles served, then how many stand each other way, in the order the rows first show it.
+    const standings = new Map<ServingState, number>();
+    for (const row of out.bundles)
+      if (row.state !== "serving") standings.set(row.state, (standings.get(row.state) ?? 0) + 1);
+    const served = out.bundles.filter((row) => row.state === "serving").length;
     const head = [
-      `network ${out.network}: ${n(out.bundles.length, "bundle")}, ${out.bundles.length - refused} served, ${refused} refused`,
+      `network ${out.network}: ${n(out.bundles.length, "bundle")}, ${served} served${[...standings].map(([state, count]) => `, ${count} ${state}`).join("")}`,
       lockPart(out),
       ...(out.engine.resetOnOpen === null
         ? []
         : [`engine store rebuilt at open: ${out.engine.resetOnOpen}`]),
       ...(out.refusing === null ? [] : [`refusing: ${safe(out.refusing)}`]),
     ].join("; ");
-    return [head, ...out.bundles.map((row) => bundleParts(row.id, row).join("; "))].join("\n");
+    return [
+      head,
+      ...out.bundles.map((row) =>
+        (row.state === "serving" || row.state === "refused"
+          ? bundleParts(row.id, row)
+          : standingParts(row)
+        ).join("; "),
+      ),
+    ].join("\n");
   }
   const parts = bundleParts(out.company, out, lockPart(out));
   if (out.refusing !== null) parts.push(`refusing: ${safe(out.refusing)}`);

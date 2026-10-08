@@ -188,6 +188,7 @@ function refusingRuntime(problem: string, log: Log): Runtime {
   const reject = (): Promise<never> => Promise.reject(new Error(problem));
   return {
     ready: reject,
+    snapshot: () => ({ bundles: [] }),
     lease: reject,
     refresh: reject,
     status: () => ({ lock: "exclusive", loaded: false, refusing: problem, bundles: [] }),

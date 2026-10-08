@@ -1,4 +1,4 @@
-import type { Report } from "../bundle/model.js";
+import type { RefusalRule, Report } from "../bundle/model.js";
 import type { Engine, IndexResult } from "../search/engine.js";
 import type { Catalog } from "./model.js";
 
@@ -37,6 +37,28 @@ export interface Generation {
   integrity: "checked" | "skipped";
 }
 
+/** The rule of a bundle whose first load threw while another bundle loaded (D75). */
+export const LOAD_FAILED: RefusalRule = "load-failed";
+/** The rule of a bundle whose part of the index could not be brought in line with what it serves (D39, per bundle). */
+export const INDEX_BROKEN: RefusalRule = "index-broken";
+/** The rule of a bundle whose first load had not landed when the network began to answer (D75). */
+export const LOADING: RefusalRule = "loading";
+
+/**
+ * How a bundle stands for a tool call: served; refused by the loader; or one of the three states the runtime
+ * publishes as a refusal of its own (a first load that threw, an index that could not be brought in line, a first
+ * load still running).
+ */
+export type ServingState = "serving" | "refused" | "load-failed" | "index-broken" | "loading";
+
+/** A generation's standing: its refusal's rule names the runtime's own states; any other refusal is the loader's. */
+export function servingStateOf(generation: Generation): ServingState {
+  const rule = generation.report.fatal?.rule;
+  if (rule === undefined) return "serving";
+  if (rule === "load-failed" || rule === "index-broken" || rule === "loading") return rule;
+  return "refused";
+}
+
 /** One bundle of the network as a tool call reads it: its id and its current generation. */
 export interface ServedBundle {
   id: string;
@@ -45,8 +67,8 @@ export interface ServedBundle {
 
 /**
  * The network as every tool call reads it, whole, for its duration (D72): each configured bundle, in the
- * configuration's order, at its current generation; a bundle that is refused, or whose source failed at the first
- * load, is there with a generation whose report carries the refusal.
+ * configuration's order, at its current generation; a bundle that is refused, whose first load failed or has not
+ * landed, or whose part of the index is broken, is there with a generation whose report carries the refusal.
  */
 export interface Network {
   bundles: readonly ServedBundle[];
@@ -73,7 +95,7 @@ export interface BundleRuntimeStatus {
   id: string;
   /** Whether the bundle has a generation published, a refusal included. */
   loaded: boolean;
-  /** Whether that generation is itself a refusal (D39), which a poller tick keeps retrying. */
+  /** Whether what it serves is a refusal (the loader's, a failed first load, a broken index), which a poller tick keeps retrying. */
   fatal: boolean;
   /** The last commit or load the loader refused, and why; a fixed publish clears it. */
   lastRefusal?: LastRefusal;
@@ -86,7 +108,10 @@ export interface RuntimeStatus {
   lock: "exclusive" | "private";
   /** Whether every bundle has a generation published; false before the first load lands or while it keeps failing. */
   loaded: boolean;
-  /** The fixed sentence every tool answers with while the network cannot serve. */
+  /**
+   * The fixed sentence every tool answers with while the network cannot serve: it could not be prepared, its one
+   * bundle failed or is broken, or every bundle's first load threw; `status` beyond one bundle still answers.
+   */
   refusing?: string;
   /** Why the engine rebuilt its store at open, when it did (D48). */
   resetOnOpen?: string;
@@ -122,6 +147,11 @@ export interface Runtime {
   start?(): void;
   /** Resolves with the network as it stands once every bundle's first load has run; rejects while it refuses. */
   ready(): Promise<Network>;
+  /**
+   * The network as it stands now, without waiting and even while it refuses: each bundle's generation, or the
+   * refusal that says why it serves nothing. What `status` answers with beyond one bundle while the network refuses.
+   */
+  snapshot(): Network;
   /** Runs `fn` against the network's current generations and its engine, holding them for the call's duration. */
   lease<T>(fn: (network: Network, engine: Engine) => Promise<T>): Promise<T>;
   /** Refreshes one bundle; the id may be left out only when the network holds one bundle. */

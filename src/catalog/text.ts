@@ -364,15 +364,22 @@ export function reservedHeader(
   return `${located(path, bundle)} [reserved ${kind}, ${source}]`;
 }
 
+/** A bundle a search did not read, and why: the rule of what it serves instead (D75; D39 per bundle). */
+export interface NotSearched {
+  bundle: string;
+  reason: string;
+}
+
 /**
  * The first line of a search result: counts, the terms as they were used, and what was left out. `dev` is true for
  * a one-bundle network in development mode, or the bundles in development mode beyond one bundle; `notSearched`
- * names the refused bundles a search beyond one bundle did not read (D74, D75).
+ * names each bundle a search beyond one bundle did not read, with why (refused by the loader, its first load failed,
+ * its index broken, or still loading), so every search says it (D74, D75).
  */
 export function searchHeader(
   response: SearchResponse,
   dev: boolean | readonly string[],
-  notSearched: readonly string[] = [],
+  notSearched: readonly NotSearched[] = [],
 ): string {
   const relaxed = response.hits.filter((h) => h.rung === "relaxed").length;
   const parts = [
@@ -399,7 +406,10 @@ export function searchHeader(
   if (dev === true) parts.push("development mode: drafts and unknown statuses admitted");
   else if (Array.isArray(dev) && dev.length > 0)
     parts.push(`development mode in ${dev.join(", ")}: drafts and unknown statuses admitted there`);
-  if (notSearched.length > 0) parts.push(`refused and not searched: ${notSearched.join(", ")}`);
+  if (notSearched.length > 0)
+    parts.push(
+      `not searched: ${notSearched.map((entry) => `${entry.bundle} (${safe(entry.reason)})`).join(", ")}`,
+    );
   parts.push("snippets are page text, quoted");
   return parts.join("; ");
 }

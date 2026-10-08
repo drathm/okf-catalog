@@ -45,6 +45,7 @@ function fakes(initial: { loaded?: boolean; refusing?: string; fatal?: boolean }
     async ready() {
       return { bundles: [] } as Network;
     },
+    snapshot: () => ({ bundles: [] }) as Network,
     async lease() {
       throw new Error("unused");
     },
@@ -360,5 +361,23 @@ describe("createPoller: one bundle of a network", () => {
     expect(f.state.refreshed).toEqual(["b", "b"]);
     const tick = f.records.filter((r) => r.event === "poller.tick").at(-1);
     expect(tick?.fields.bundle).toBe("b");
+  });
+
+  it("asks its own remote while the network refuses for another reason: only its own bundle's state moves it (C-I-A1)", async () => {
+    // The network refuses (every other bundle failed, say), while this bundle is loaded and served.
+    const f = fakes({ loaded: true, fatal: false, refusing: "a: the bundle folder ./a is gone" });
+    const poller = createPoller({
+      ...f,
+      bundle: "b",
+      source: () => f.source,
+      intervalMs: 60_000,
+      clock: () => NOW,
+    });
+    f.setChanges(["same"]);
+    expect(await poller.tick()).toBe("unchanged");
+    expect(f.state.refreshes).toBe(0);
+    f.setChanges(["moved"]);
+    expect(await poller.tick()).toBe("refreshed");
+    expect(f.state.refreshed).toEqual(["b"]);
   });
 });

@@ -143,6 +143,7 @@ export function fakeRuntime(
         throw new Error(refusing ?? "no generation");
       return network;
     },
+    snapshot: () => network ?? { bundles: [] },
     async lease(fn) {
       if (network === undefined || engine === undefined || refusing !== undefined) {
         throw new Error(refusing ?? "no generation");

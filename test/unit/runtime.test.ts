@@ -59,6 +59,8 @@ function countingEngine(
   closeCalls: number;
   failNext: boolean;
   failAgain: boolean;
+  /** Bundles every index and drop of which throws, with a message that names a cache path, as a file system's would. */
+  failing: Set<string>;
   docs: string[];
   calls: Array<{ call: "index" | "drop"; bundle: string }>;
   byBundle: Map<string, string[]>;
@@ -72,6 +74,7 @@ function countingEngine(
     closeCalls: 0,
     failNext: false,
     failAgain: false,
+    failing: new Set<string>(),
     docs: [] as string[],
     calls: [] as Array<{ call: "index" | "drop"; bundle: string }>,
     byBundle: new Map<string, string[]>(),
@@ -87,6 +90,11 @@ function countingEngine(
           state.failNext = state.failAgain;
           state.failAgain = false;
           throw new Error("the store broke");
+        }
+        if (state.failing.has(bundle)) {
+          throw new Error(
+            `EACCES: permission denied, mkdir '/cache/okf-catalog/net/bundles/${bundle}/gen-1'`,
+          );
         }
         state.docs = docs.map((d) => d.path).sort();
         state.byBundle.set(bundle, state.docs);
@@ -378,6 +386,9 @@ describe("createRuntime: a re-index that fails too (bite 4 build review)", () =>
     const failed = await runtime.refresh();
     expect(failed.outcome).toBe("failed");
     expect(runtime.status().refusing).toMatch(/re-aligned|realign/i);
+    // A fixed sentence for the model, saying when it is tried again; the engine's words go to the log (C-I-A4).
+    expect(runtime.status().refusing).not.toContain("the store broke");
+    expect(runtime.status().refusing).toMatch(/until the server restarts/);
     await expect(runtime.lease(async () => 1)).rejects.toThrow(/re-aligned|realign/i);
     const recovered = await runtime.refresh();
     expect(recovered.outcome).toBe("swapped");
@@ -741,9 +752,12 @@ describe("createRuntime: a network of bundles (D75)", () => {
     // A bundle whose source throws at first load is published as refused, and the others serve.
     const failing = memorySource(readFixture("spec-example"));
     failing.fail("the bundle folder ./gone does not exist or cannot be read");
-    const half = network(memorySource(readFixture("behaviours")), failing, countingEngine());
+    const halfEngine = countingEngine();
+    const half = network(memorySource(readFixture("behaviours")), failing, halfEngine);
     half.start();
     const partial = await half.ready();
+    // Its pages leave the index too, where an earlier run may have left them (D75; C-A-B1).
+    expect(halfEngine.calls).toContainEqual({ call: "drop", bundle: "b" });
     expect(generationOf(partial, "b").report.fatal).toEqual({
       path: "",
       rule: "load-failed",
@@ -839,6 +853,168 @@ describe("createRuntime: a network of bundles (D75)", () => {
     expect(made.filter((call) => call.bundle === "a")).toHaveLength(1);
     expect(made.filter((call) => call.bundle === "b")).toHaveLength(1);
     expect(engine.overlaps).toBe(0);
+    await runtime.shutdown();
+  });
+});
+
+// D39 per bundle (the fold of bite c's build reviews, C-I-A1, C-I-A2, C-I-A4, C-I-A5, C-A-A1): a bundle whose part of
+// the index cannot be brought in line is refused as index-broken, alone, with a fixed sentence; the others serve.
+describe("createRuntime: one bundle's index failure is its own (D39 per bundle)", () => {
+  /** A log that keeps every record. */
+  const recording = () => {
+    const records: Array<{ level: string; event: string; fields: Record<string, unknown> }> = [];
+    const at =
+      (level: string) =>
+      (event: string, fields: Record<string, unknown> = {}) =>
+        void records.push({ level, event, fields });
+    return {
+      records,
+      log: { error: at("error"), warn: at("warn"), info: at("info"), debug: at("debug") },
+    };
+  };
+
+  it("publishes a refused bundle whose pages cannot leave the index as index-broken, while the other serves", async () => {
+    const engine = countingEngine();
+    engine.failing.add("b");
+    const { records, log } = recording();
+    const runtime = createRuntime({
+      bundles: [
+        { id: "a", source: memorySource(readFixture("behaviours")), load: options },
+        { id: "b", source: memorySource(readFixture("no-manifest")), load: options },
+      ],
+      prepare: async () => ({ engine, lock: "exclusive" as const }),
+      clock: () => NOW,
+      log,
+    });
+    runtime.start();
+    const served = await runtime.ready();
+    expect(runtime.status().refusing).toBeUndefined();
+    expect(generationOf(served, "a").report.fatal).toBeUndefined();
+    const fatal = generationOf(served, "b").report.fatal;
+    expect(fatal?.rule).toBe("index-broken");
+    expect(fatal?.path).toBe("");
+    // A local bundle has no poller: the sentence says it is tried again at a restart, and names no path.
+    expect(fatal?.detail).toMatch(/tried again when the server restarts/);
+    expect(fatal?.detail).not.toMatch(/EACCES|\/cache\//);
+    expect(own(runtime, "b")).toMatchObject({ loaded: true, fatal: true });
+    expect(own(runtime, "a")).toMatchObject({ loaded: true, fatal: false });
+    const hits = (await searchIn(runtime, "alpha glossary")).hits;
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((hit) => hit.bundle === "a")).toBe(true);
+    // The engine's words go to the log, as the record's detail.
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        event: "index.broken",
+        fields: expect.objectContaining({ bundle: "b", detail: expect.stringMatching(/EACCES/) }),
+      }),
+    );
+    await runtime.shutdown();
+  });
+
+  it("keeps each broken bundle apart: another bundle's refresh, or its recovery, leaves a broken bundle broken", async () => {
+    const engine = countingEngine();
+    const runtime = network(
+      memorySource(readFixture("behaviours")),
+      memorySource(readFixture("spec-example")),
+      engine,
+    );
+    runtime.start();
+    await runtime.ready();
+    // a's refresh fails in the engine, and so does putting its pages back: a alone is index-broken.
+    engine.failing.add("a");
+    expect((await runtime.refresh("a")).outcome).toBe("failed");
+    expect(runtime.status().refusing).toBeUndefined();
+    expect(generationOf(await runtime.ready(), "a").report.fatal?.rule).toBe("index-broken");
+    expect(own(runtime, "a").fatal).toBe(true);
+    expect(own(runtime, "b").fatal).toBe(false);
+    expect((await searchIn(runtime, "revenue")).hits.some((hit) => hit.bundle === "b")).toBe(true);
+    // b breaks the same way: two broken bundles, each its own.
+    engine.failing.add("b");
+    expect((await runtime.refresh("b")).outcome).toBe("failed");
+    const both = await runtime.ready();
+    expect(generationOf(both, "a").report.fatal?.rule).toBe("index-broken");
+    expect(generationOf(both, "b").report.fatal?.rule).toBe("index-broken");
+    // b recovers: b serves again, and a stays broken until its own write succeeds (C-I-B1).
+    engine.failing.delete("b");
+    expect((await runtime.refresh("b")).outcome).toBe("swapped");
+    const after = await runtime.ready();
+    expect(generationOf(after, "b").report.fatal).toBeUndefined();
+    expect(generationOf(after, "a").report.fatal?.rule).toBe("index-broken");
+    expect(own(runtime, "a").fatal).toBe(true);
+    engine.failing.delete("a");
+    expect((await runtime.refresh("a")).outcome).toBe("swapped");
+    expect(generationOf(await runtime.ready(), "a").report.fatal).toBeUndefined();
+    expect(own(runtime, "a").fatal).toBe(false);
+    await runtime.shutdown();
+  });
+
+  it("puts a broken bundle's served pages back at its next refresh, even one the loader refuses", async () => {
+    const engine = countingEngine();
+    const files = readFixture("behaviours");
+    const a = memorySource(files);
+    const runtime = network(a, memorySource(readFixture("spec-example")), engine);
+    runtime.start();
+    const first = generationOf(await runtime.ready(), "a");
+    engine.failing.add("a");
+    expect((await runtime.refresh("a")).outcome).toBe("failed");
+    expect(generationOf(await runtime.ready(), "a").report.fatal?.rule).toBe("index-broken");
+    // The engine is back and the reload is refused: the previous generation, re-aligned, is served again.
+    engine.failing.delete("a");
+    a.set(files.filter((f) => f.path !== "manifest.json"));
+    expect((await runtime.refresh("a")).outcome).toBe("fatal");
+    expect(generationOf(await runtime.ready(), "a")).toBe(first);
+    expect(engine.byBundle.get("a")).toEqual([...first.catalog.pages.keys()].sort());
+    await runtime.shutdown();
+  });
+
+  it("names an engine failure at the first load with a fixed sentence, the engine's words in the log", async () => {
+    const engine = countingEngine();
+    const { records, log } = recording();
+    // Only b's index of its pages fails; its drop, an index of nothing, works.
+    const failingIndex: Engine = {
+      ...engine,
+      index: async (bundle, docs) => {
+        if (bundle === "b" && docs.length > 0)
+          throw new Error("ENOSPC: no space left on device, write '/cache/okf-catalog/net/x'");
+        return engine.index(bundle, docs);
+      },
+      drop: async (bundle) => engine.index(bundle, []),
+      lex: (terms, limit) => engine.lex(terms, limit),
+    };
+    const runtime = createRuntime({
+      bundles: [
+        { id: "a", source: memorySource(readFixture("behaviours")), load: options },
+        { id: "b", source: memorySource(readFixture("spec-example")), load: options },
+      ],
+      prepare: async () => ({ engine: failingIndex, lock: "exclusive" as const }),
+      clock: () => NOW,
+      log,
+    });
+    runtime.start();
+    const served = await runtime.ready();
+    const fatal = generationOf(served, "b").report.fatal;
+    expect(fatal?.rule).toBe("load-failed");
+    expect(fatal?.detail).not.toMatch(/ENOSPC|\/cache\//);
+    expect(fatal?.detail).toMatch(/the log has the detail/);
+    expect(engine.calls).toContainEqual({ call: "drop", bundle: "b" });
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        event: "load.failed",
+        fields: expect.objectContaining({ bundle: "b", detail: expect.stringMatching(/ENOSPC/) }),
+      }),
+    );
+    await runtime.shutdown();
+  });
+
+  it("refuses a one-bundle network whose refused bundle's pages cannot leave the index, rechecking once the load lands", async () => {
+    const engine = countingEngine();
+    engine.failing.add("b");
+    const { runtime } = build(memorySource(readFixture("no-manifest")), engine);
+    // ready() starts the first load and waits for it; the refusal it meets after the wait is answered (C-I-A5).
+    await expect(runtime.ready()).rejects.toThrow(/re-aligned|realign/i);
+    expect(runtime.status().refusing).toMatch(/until the server restarts/);
+    expect(runtime.status().refusing).not.toMatch(/EACCES|\/cache\//);
+    await expect(runtime.lease(async () => 1)).rejects.toThrow(/re-aligned|realign/i);
     await runtime.shutdown();
   });
 });

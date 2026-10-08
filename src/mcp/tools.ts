@@ -135,8 +135,9 @@ function see(network: Network): Seen {
 }
 
 /**
- * The answer while no bundle is served: one bundle's refusal as version 0 gave it, or every bundle's beyond one.
- * Tools refuse only when every bundle is refused (D75); `status` never does.
+ * The answer while no bundle is served: one bundle's refusal as version 0 gave it, or, beyond one, each bundle's
+ * reason (refused, its first load failed, its index broken, or still loading). Tools refuse only when no bundle is
+ * served (D75); `status` never does.
  */
 function refused(seen: Seen): ToolResult | undefined {
   if (seen.served.length > 0) return undefined;
@@ -146,7 +147,7 @@ function refused(seen: Seen): ToolResult | undefined {
     return fail(`the bundle was refused and nothing is served: ${refusalText(fatal)}`);
   }
   return fail(
-    `every bundle of the network was refused and nothing is served: ${seen.refused
+    `no bundle of the network is served: ${seen.refused
       .map((bundle) => `${bundle.id}: ${refusalText(bundle.generation.report.fatal as Refusal)}`)
       .join("; ")}`,
   );
@@ -282,11 +283,13 @@ export function registerTools(
     <A>(
       tool: string,
       fn: (args: A, seen: Seen, engine: Engine) => Promise<ToolResult> | ToolResult,
+      /** The answer while the network refuses, when the tool has one of its own (`status` beyond one bundle). */
+      whileRefusing?: (args: A) => ToolResult | undefined,
     ) =>
     async (args: A): Promise<ToolResult> => {
       const started = performance.now();
       const refusing = runtime.status().refusing;
-      if (refusing !== undefined) return fail(refusingSentence(refusing));
+      if (refusing !== undefined) return whileRefusing?.(args) ?? fail(refusingSentence(refusing));
       try {
         const { logFields, ...result } = await runtime.lease<ToolResult>(async (network, engine) =>
           fn(args, see(network), engine),
@@ -308,7 +311,8 @@ export function registerTools(
         });
         // The call that started the first load is the one that sees it fail: answer with the fix, as later calls do.
         const refusingNow = runtime.status().refusing;
-        if (refusingNow !== undefined) return fail(refusingSentence(refusingNow));
+        if (refusingNow !== undefined)
+          return whileRefusing?.(args) ?? fail(refusingSentence(refusingNow));
         return fail("the server hit a defect answering this call; its log has the detail");
       }
     };
@@ -460,7 +464,10 @@ export function registerTools(
           seen.served.map((bundle) => [bundle.id, new Set(bundle.generation.report.unknownTypes)]),
         ),
         prefixed: seen.prefixed,
-        notSearched: seen.refused.map((bundle) => bundle.id),
+        notSearched: seen.refused.map((bundle) => ({
+          bundle: bundle.id,
+          reason: bundle.generation.report.fatal?.rule ?? "refused",
+        })),
       });
       return {
         ...ok([output.summary, ...output.hits.map((h) => h.citation)].join("\n"), output),
@@ -664,9 +671,20 @@ export function registerTools(
       outputSchema: StatusOutputSchema,
       annotations: { readOnlyHint: true },
     },
-    guarded("status", (_args, seen) => {
-      const output = projectStatus(seen.network, runtime.status(), options, clock());
-      return ok(statusSummary(output), output);
-    }),
+    guarded(
+      "status",
+      (_args, seen) => {
+        const output = projectStatus(seen.network, runtime.status(), options, clock());
+        return ok(statusSummary(output), output);
+      },
+      // Beyond one bundle, status answers while the network refuses: a row per bundle and the network's sentence
+      // (C-I-C1); a network of one bundle refuses as version 0 did (D74).
+      () => {
+        const network = runtime.snapshot();
+        if (network.bundles.length < 2) return undefined;
+        const output = projectStatus(network, runtime.status(), options, clock());
+        return ok(statusSummary(output), output);
+      },
+    ),
   );
 }

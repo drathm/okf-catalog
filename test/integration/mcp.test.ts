@@ -689,6 +689,7 @@ describe("bite 4 build review, round 2", () => {
       async ready() {
         throw new Error("unused");
       },
+      snapshot: () => ({ bundles: [] }),
       async lease() {
         failed = true;
         throw new Error("the bundle folder /abs/kb does not exist or cannot be read");
@@ -1484,7 +1485,7 @@ describe("a network of bundles (D74)", () => {
         (hit) => hit.bundle === "terms",
       ),
     ).toBe(true);
-    expect(text(found).split("\n")[0]).toContain("refused and not searched: c");
+    expect(text(found).split("\n")[0]).toContain("not searched: c (manifest-missing)");
     expect((await s.call("get_page", { path: "terms/alpha.md" })).isError).not.toBe(true);
     const named = await s.call("get_page", { path: "terms/alpha.md", bundle: "c" });
     expect(named.isError).toBe(true);
@@ -1504,10 +1505,106 @@ describe("a network of bundles (D74)", () => {
       const r = await none.call(name, args);
       expect(r.isError, name).toBe(true);
       expect(text(r), name).toBe(
-        "every bundle of the network was refused and nothing is served: c: manifest-missing (manifest.json): integrity is required and the bundle has no manifest.json; d: manifest-missing (manifest.json): integrity is required and the bundle has no manifest.json",
+        "no bundle of the network is served: c: manifest-missing (manifest.json): integrity is required and the bundle has no manifest.json; d: manifest-missing (manifest.json): integrity is required and the bundle has no manifest.json",
       );
     }
     const status = await none.call("status", {});
     expect(status.isError).not.toBe(true);
+  });
+
+  // D39 per bundle (the fold of bite c's build reviews, C-I-A1, C-A-A1): a broken bundle is refused alone.
+  const BROKEN =
+    "the index could not be brought in line with this bundle's pages; it is tried again when the server restarts, and the log has the detail";
+  const brokenB = loadGeneration(
+    [],
+    { walkFatal: { path: "", rule: "index-broken", detail: BROKEN } },
+    NOW,
+    "b",
+  );
+
+  it("names each bundle a search did not read and why, refuses a broken bundle by name, and shows its state in status", async () => {
+    const s = await session(
+      fakeRuntime([terms, brokenB, refusedC]),
+      toolOptions("acme", ["terms", "b", "c"]),
+    );
+    const found = await s.call("search", { question: "alpha glossary" });
+    expect(found.isError).not.toBe(true);
+    expect(text(found).split("\n")[0]).toContain(
+      "not searched: b (index-broken), c (manifest-missing)",
+    );
+    const named = await s.call("get_page", { path: "terms/alpha.md", bundle: "b" });
+    expect(named.isError).toBe(true);
+    expect(text(named)).toBe(
+      `the bundle b was refused and nothing in it is served: index-broken: ${BROKEN}`,
+    );
+    const status = await s.call("status", {});
+    expect(status.isError).not.toBe(true);
+    const rows = (
+      status.structuredContent as {
+        bundles: Array<{ id: string; state: string; loadedAt: string | null }>;
+      }
+    ).bundles;
+    expect(rows.map((row) => [row.id, row.state])).toEqual([
+      ["terms", "serving"],
+      ["b", "index-broken"],
+      ["c", "refused"],
+    ]);
+    expect(rows[1]?.loadedAt).toBeNull();
+    const lines = text(status).split("\n");
+    expect(lines[0]).toMatch(/^network acme: 3 bundles, 1 served, 1 index-broken, 1 refused; /);
+    // A bundle that serves nothing reads as what it is, never "integrity checked … loaded <time>" (C-A-D3).
+    expect(lines[2]).toBe(`b: index-broken: ${BROKEN}`);
+  });
+
+  it("answers status with a row per bundle while the network refuses, and every other tool with the refusal (C-I-C1)", async () => {
+    const failed = (id: string) =>
+      loadGeneration(
+        [],
+        {
+          walkFatal: {
+            path: "",
+            rule: "load-failed",
+            detail: `the bundle folder ./${id} does not exist or cannot be read`,
+          },
+        },
+        NOW,
+        id,
+      );
+    const refusing =
+      "a: the bundle folder ./a does not exist or cannot be read; b: the bundle folder ./b does not exist or cannot be read";
+    const s = await session(
+      fakeRuntime([failed("a"), failed("b")], refusing),
+      toolOptions("acme", ["a", "b"]),
+    );
+    const status = await s.call("status", {});
+    expect(status.isError).not.toBe(true);
+    const out = status.structuredContent as {
+      refusing: string;
+      bundles: Array<{ id: string; state: string; loadedAt: string | null }>;
+    };
+    expect(out.refusing).toBe(refusing);
+    expect(out.bundles.map((row) => [row.id, row.state, row.loadedAt])).toEqual([
+      ["a", "load-failed", null],
+      ["b", "load-failed", null],
+    ]);
+    const lines = text(status).split("\n");
+    expect(lines[0]).toMatch(
+      /^network acme: 2 bundles, 0 served, 2 load-failed; lock exclusive; refusing: a: /,
+    );
+    expect(lines[1]).toBe("a: load-failed: the bundle folder ./a does not exist or cannot be read");
+    for (const line of lines.slice(1)) {
+      expect(line).not.toMatch(/integrity|loaded /);
+    }
+    for (const [name, args] of [
+      ["search", { question: "alpha" }],
+      ["get_page", { path: "a.md" }],
+      ["catalog", {}],
+    ] as const) {
+      const r = await s.call(name, args);
+      expect(r.isError, name).toBe(true);
+      expect(text(r), name).toBe(
+        `the server is refusing every request until its configuration is fixed: ${refusing}`,
+      );
+    }
   });
 });

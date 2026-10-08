@@ -28,9 +28,10 @@ export interface Poller {
 
 /**
  * Asks one repository bundle's source whether the remote moved, one whole tick at a time on a chained timer at that
- * bundle's own interval, and refreshes that bundle when it did, when its generation is a refusal, or while the
- * network has not loaded or refuses (D44, D75). It runs from its timer and never from a lease, backs off no
- * further than its interval, never keeps the process alive, and is stopped before the runtime drains.
+ * bundle's own interval, and refreshes that bundle when it did, while what the bundle serves is a refusal (the
+ * loader's, a failed first load, a broken index), or while the bundle has not loaded (D44, D75). Only its own bundle's
+ * state moves it, never another bundle's or the network's refusal. It runs from its timer and never from a lease,
+ * backs off no further than its interval, never keeps the process alive, and is stopped before the runtime drains.
  */
 export function createPoller(deps: PollerDeps): Poller {
   let timer: NodeJS.Timeout | undefined;
@@ -49,12 +50,8 @@ export function createPoller(deps: PollerDeps): Poller {
       const status = deps.runtime.status();
       const own = status.bundles.find((bundle) => bundle.id === deps.bundle);
       const source = deps.source();
-      let shouldRefresh =
-        own === undefined ||
-        !own.loaded ||
-        own.fatal ||
-        status.refusing !== undefined ||
-        source === undefined;
+      // Only this bundle's own state moves it (C-I-A1): another bundle's refusal, or the network's, never does.
+      let shouldRefresh = own === undefined || !own.loaded || own.fatal || source === undefined;
       if (!shouldRefresh && source?.changed !== undefined) {
         const change = await source.changed();
         if (change === "gone") outcome = "gone";

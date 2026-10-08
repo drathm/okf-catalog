@@ -1055,12 +1055,19 @@ describe("lines beyond one bundle (D74)", () => {
     expect(searchHeader(response, true)).toContain(
       "development mode: drafts and unknown statuses admitted",
     );
-    const network = searchHeader(response, ["drafts"], ["old", "older"]);
+    const network = searchHeader(
+      response,
+      ["drafts"],
+      [
+        { bundle: "old", reason: "manifest-missing" },
+        { bundle: "older", reason: "index-broken" },
+      ],
+    );
     expect(network).toContain(
       "development mode in drafts: drafts and unknown statuses admitted there",
     );
-    expect(network).toContain("refused and not searched: old, older");
-    expect(searchHeader(response, [], [])).not.toMatch(/development|refused/);
+    expect(network).toContain("not searched: old (manifest-missing), older (index-broken)");
+    expect(searchHeader(response, [], [])).not.toMatch(/development|not searched/);
   });
 });
 

@@ -820,6 +820,64 @@ describe("okf-catalog serve over stdio: a network (D72, D73)", { timeout: 90_000
     expect(stderr).not.toMatch(/"event":"serve.alias"/);
   });
 
+  // D39 per bundle (the fold of bite c's build reviews, C-I-A1, C-I-A4, C-A-A1), from the adversarial review's d39
+  // reproduction: one bundle's folder in the cache cannot be written, so its index and then its drop fail.
+  it("serves the other bundle while one bundle's folder in the cache cannot be written, naming neither the cache path nor the engine's words", async () => {
+    const fixtures = join(REPO, "test", "fixtures", "bundles");
+    const yaml = `network: fixture\nbundles:\n  - id: terms\n    source:\n      local: ${join(fixtures, "behaviours")}\n  - id: acme\n    source:\n      local: ${join(fixtures, "spec-example")}\n`;
+    const b = box("spec-example", yaml);
+    const own = join(companyDir(b), "bundles", "acme");
+    mkdirSync(own, { recursive: true, mode: 0o700 });
+    chmodSync(own, 0o500);
+    try {
+      const run = rawServer(b);
+      run.send(INITIALIZE);
+      await run.waitFor(1);
+      run.send(INITIALIZED);
+      const call = async (id: number, name: string, args: Record<string, unknown>) => {
+        run.send({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
+        const answer = await run.waitFor(id);
+        // Neither channel names the cache folder, nor carries the file system's words.
+        expect(JSON.stringify(answer), name).not.toContain(b.cacheRoot);
+        expect(JSON.stringify(answer), name).not.toMatch(/EACCES|permission denied/);
+        return answer.result as {
+          isError?: boolean;
+          content: Array<{ text: string }>;
+          structuredContent?: Record<string, unknown>;
+        };
+      };
+      const found = await call(2, "search", { question: "alpha glossary" });
+      expect(found.isError).not.toBe(true);
+      expect(found.content[0]?.text.split("\n")[0]).toContain("not searched: acme (index-broken)");
+      expect(
+        (found.structuredContent as { hits: Array<{ bundle: string }> }).hits.every(
+          (hit) => hit.bundle === "terms",
+        ),
+      ).toBe(true);
+      const named = await call(3, "get_page", { path: "index.md", bundle: "acme" });
+      expect(named.isError).toBe(true);
+      expect(named.content[0]?.text).toMatch(
+        /^the bundle acme was refused and nothing in it is served: index-broken: .*tried again when the server restarts/,
+      );
+      const status = await call(4, "status", {});
+      expect(status.isError).not.toBe(true);
+      expect(
+        (status.structuredContent as { bundles: Array<{ id: string; state: string }> }).bundles.map(
+          (row) => [row.id, row.state],
+        ),
+      ).toEqual([
+        ["terms", "serving"],
+        ["acme", "index-broken"],
+      ]);
+      expect((await run.end()).code).toBe(0);
+      // The log carries what the model is not told: the folder and the file system's words, under the bundle.
+      expect(run.stderr()).toMatch(/"event":"index.broken","bundle":"acme".*EACCES/);
+      expect(run.stderr()).toContain(own);
+    } finally {
+      chmodSync(own, 0o700);
+    }
+  });
+
   it("loads a company: file as a one-bundle network and moves the version 0 cache into bundles/<id>", async () => {
     const repo = packedRepo();
     try {
