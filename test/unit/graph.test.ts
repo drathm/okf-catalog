@@ -211,7 +211,7 @@ describe("walkProvenance", () => {
 
   it("walks sources into concepts and stops at urls and depth", () => {
     const deep = walkProvenance(chain, pageOf(chain, "a.md"), 4, NOW);
-    expect(deep.nodes.map((n) => [n.path, n.level, n.parent ?? null, n.truncated])).toEqual([
+    expect(deep.nodes.map((n) => [n.path, n.level, n.parent ?? null, n.atDepthLimit])).toEqual([
       ["a.md", 0, null, false],
       ["b.md", 1, "a.md", false],
       ["c.md", 2, "b.md", false],
@@ -229,10 +229,10 @@ describe("walkProvenance", () => {
     expect(deep.capped).toBe(false);
     // Depth 0 emits the start page's edges and enters nothing; the cut branch says so.
     const none = walkProvenance(chain, pageOf(chain, "a.md"), 0, NOW);
-    expect(none.nodes.map((n) => [n.path, n.truncated])).toEqual([["a.md", true]]);
+    expect(none.nodes.map((n) => [n.path, n.atDepthLimit])).toEqual([["a.md", true]]);
     expect(none.nodes[0]?.edges[0]?.walk).toBe("depth-limit");
     const one = walkProvenance(chain, pageOf(chain, "a.md"), 1, NOW);
-    expect(one.nodes.map((n) => [n.path, n.truncated])).toEqual([
+    expect(one.nodes.map((n) => [n.path, n.atDepthLimit])).toEqual([
       ["a.md", false],
       ["b.md", true],
     ]);
@@ -288,6 +288,25 @@ describe("walkProvenance", () => {
     expect(short.nodes[1]?.edges[0]?.walk).toBe("already-entered");
   });
 
+  it("says a source listed twice on one page is listed twice, not entered from another branch (bite b's build review B-A-A9)", () => {
+    const twice = bundle({
+      "a.md": note(
+        `resource: b.md\n${sources("{ resource: b.md }", "{ resource: c.md }", "{ resource: b.md }")}`,
+      ),
+      "b.md": note(""),
+      "c.md": note(sources("{ resource: b.md }")),
+    });
+    const walk = walkProvenance(twice, pageOf(twice, "a.md"), 4, NOW);
+    expect(walk.nodes[0]?.edges.map((e) => [e.field, e.walk])).toEqual([
+      ["resource", "entered"],
+      ["sources[0].resource", "listed-twice"],
+      ["sources[1].resource", "entered"],
+      ["sources[2].resource", "listed-twice"],
+    ]);
+    // Another page's edge to it is a reach from another branch.
+    expect(walk.nodes[2]?.edges.map((e) => e.walk)).toEqual(["already-entered"]);
+  });
+
   it("records a cycle as an edge to an ancestor and stops the branch", () => {
     const loop = bundle({
       "a.md": note(sources("{ resource: b.md }", "{ resource: a.md }")),
@@ -301,7 +320,7 @@ describe("walkProvenance", () => {
       ["b.md", "cycle"],
       ["a.md", "cycle"],
     ]);
-    expect(walk.nodes.every((n) => !n.truncated)).toBe(true);
+    expect(walk.nodes.every((n) => !n.atDepthLimit)).toBe(true);
   });
 
   it("never hops from an entered page's own resource or a contract edge", () => {
@@ -373,7 +392,7 @@ describe("walkProvenance", () => {
     const outcomes = walk.nodes.flatMap((n) => n.edges.map((e) => e.walk));
     expect(outcomes.filter((w) => w === "entered")).toHaveLength(200);
     expect(outcomes.filter((w) => w === "concept-limit")).toHaveLength(50);
-    expect(walk.nodes.every((n) => !n.truncated)).toBe(true);
+    expect(walk.nodes.every((n) => !n.atDepthLimit)).toBe(true);
   });
 
   it("caps a node's sources at 50, with their total, and walks only those listed", () => {

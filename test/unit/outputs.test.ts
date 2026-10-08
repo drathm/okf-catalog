@@ -679,7 +679,7 @@ describe("the result budget (D82)", () => {
       status: "stable",
       trust: "unverified",
       sourcesTotal: 50,
-      truncated: false,
+      atDepthLimit: false,
       edges: Array.from({ length: 50 }, (_, j) => ({
         role: "source" as const,
         field: `sources[${j}].resource`,
@@ -879,7 +879,7 @@ describe("the result budget (D82)", () => {
               status: "stable",
               trust: "unverified",
               sourcesTotal: 1,
-              truncated: false,
+              atDepthLimit: false,
               edges: [
                 {
                   role: "source",

@@ -254,10 +254,16 @@ export function citationsOf(catalog: Catalog, page: Page): Citations {
 
 /**
  * What the walk did with an edge that could hop (a `resource` or a source naming one admitted page): entered the
- * concept; found it entered already on another branch; found it on this branch (a cycle); or stopped at the depth
- * or at the walk's 200 concepts.
+ * concept; found it entered already by an earlier edge of the same page (listed twice); found it entered already
+ * on another branch; found it on this branch (a cycle); or stopped at the depth or at the walk's 200 concepts.
  */
-export type WalkOutcome = "entered" | "already-entered" | "cycle" | "depth-limit" | "concept-limit";
+export type WalkOutcome =
+  | "entered"
+  | "listed-twice"
+  | "already-entered"
+  | "cycle"
+  | "depth-limit"
+  | "concept-limit";
 
 /** One edge of a walk: the classified path field, a source's facts for a source edge, and what the walk did. */
 export interface WalkEdge extends Omit<PathEdge, "source"> {
@@ -284,8 +290,11 @@ export interface WalkNode {
   usageWindow?: UsageWindow;
   /** The page's sources, of which the first 50 are walked and listed. */
   sourcesTotal: number;
-  /** The depth stopped this branch at an edge that would have entered a new concept. */
-  truncated: boolean;
+  /**
+   * The depth stopped this branch at an edge that would have entered a new concept. Issue 5 calls it `truncated`;
+   * the name is the result's own cut (D82), so the node's is `atDepthLimit` (bite b's build review B-A-E7).
+   */
+  atDepthLimit: boolean;
   edges: WalkEdge[];
 }
 
@@ -339,7 +348,8 @@ function walkEdge(edge: PathEdge, page: Page): WalkEdge {
  * its own sources only, never its resource or contract fields. The walk is breadth first in edge order and enters
  * each concept once, at its least depth: a later branch that reaches it records the edge, with the same source
  * fields, and does not expand it; an edge to the page itself or an ancestor on its branch is a cycle, recorded
- * and not followed. `depth` (0 to 8) counts the concepts entered on a branch; a branch it stops is `truncated`.
+ * and not followed; an edge to a page this page's earlier edge entered says it is listed twice. `depth` (0 to 8)
+ * counts the concepts entered on a branch; a branch it stops is `atDepthLimit`.
  * At most 200 concepts are entered, then the walk is `capped`. Each page carries its trust tier and recheck date;
  * `usage_count` is returned and orders nothing. Nothing is fetched, opened or run.
  */
@@ -356,7 +366,7 @@ export function walkProvenance(catalog: Catalog, start: Page, depth: number, now
       status: page.status,
       trust: page.trust,
       sourcesTotal: page.sources.length,
-      truncated: false,
+      atDepthLimit: false,
       edges: [],
     };
     const from = nodes[parent];
@@ -391,11 +401,14 @@ export function walkProvenance(catalog: Catalog, start: Page, depth: number, now
       if (!hops(edge)) continue;
       const target = edge.target as PagePath;
       const next = catalog.pages.get(target);
+      const earlier = entered.get(target);
       if (onBranch(n, target)) row.walk = "cycle";
-      else if (entered.has(target)) row.walk = "already-entered";
+      // An earlier edge of this page entered it: the page lists it twice (bite b's build review B-A-A9).
+      else if (earlier !== undefined)
+        row.walk = parents[earlier] === n ? "listed-twice" : "already-entered";
       else if (node.level + 1 > limit) {
         row.walk = "depth-limit";
-        node.truncated = true;
+        node.atDepthLimit = true;
       } else if (count >= MAX_ENTERED) {
         row.walk = "concept-limit";
         capped = true;

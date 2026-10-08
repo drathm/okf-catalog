@@ -540,7 +540,7 @@ export function walkNodeLine(
     recheck?: Recheck | undefined;
     usageWindow?: { from: string; to: string } | { omitted: string } | undefined;
     sourcesTotal: number;
-    truncated: boolean;
+    atDepthLimit: boolean;
   },
   listCap: number,
 ): string {
@@ -552,13 +552,14 @@ export function walkNodeLine(
     recheckPhrase(node.recheck, ROW_CAP),
     `${sourceCount(node.sourcesTotal)}${node.sourcesTotal > listCap ? `, the first ${listCap} listed` : ""}`,
     ...(node.usageWindow === undefined ? [] : [pageWindowPhrase(node.usageWindow)]),
-    ...(node.truncated ? ["the depth stops this branch"] : []),
+    ...(node.atDepthLimit ? ["the depth stops this branch"] : []),
   ];
   return `${rowPath(node.path)} [${facts.join(", ")}]`;
 }
 
 const WALK_PHRASES: Record<string, string> = {
   entered: ", entered",
+  "listed-twice": ", listed twice on this page and entered once",
   "already-entered": ", entered from another branch and not expanded again",
   cycle: ", already on this branch: a cycle, not followed",
   "depth-limit": ", not entered: the depth stops here",
@@ -587,7 +588,8 @@ export function walkEdgeLine(
     concept: `the page ${target}`,
     reserved: `the reserved file ${target}`,
     attachment: `the attachment ${target}, not opened`,
-    folder: `the folder ${target}`,
+    // The root's folder is the empty path (bite b's build review B-A-A9).
+    folder: edge.target === "" ? "the root folder" : `the folder ${target}`,
     unserved: `${target}, a page that is not served`,
   };
   const contract =

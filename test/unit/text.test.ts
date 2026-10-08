@@ -694,7 +694,7 @@ describe("paths, titles and recheck dates by their kind (bite b's build reviews 
           trust: "unverified",
           recheck: { raw, form: "unparseable", overdue: false },
           sourcesTotal: 0,
-          truncated: false,
+          atDepthLimit: false,
         },
         50,
       );
@@ -777,7 +777,7 @@ describe("paths, titles and recheck dates by their kind (bite b's build reviews 
           status: "stable",
           trust: "unverified",
           sourcesTotal: 0,
-          truncated: false,
+          atDepthLimit: false,
         },
         50,
       ),
@@ -814,7 +814,7 @@ describe("paths, titles and recheck dates by their kind (bite b's build reviews 
           status,
           trust: "unverified",
           sourcesTotal: 0,
-          truncated: false,
+          atDepthLimit: false,
         },
         50,
       );
@@ -836,5 +836,38 @@ describe("paths, titles and recheck dates by their kind (bite b's build reviews 
         kind: "concept",
       }),
     ).toBe("- from plan.md [draft], sources[0].resource names this page");
+  });
+});
+
+describe("walk lines: bite b's build reviews (B-A-A9, B-A-E7)", () => {
+  it("names the root folder, a source listed twice, and a branch the depth stops", () => {
+    const edge = (patch: Partial<Parameters<typeof walkEdgeLine>[0]>) =>
+      walkEdgeLine({
+        role: "source",
+        field: "sources[0].resource",
+        raw: "/",
+        kind: "folder",
+        ...patch,
+      });
+    expect(edge({ target: "" })).toBe('- sources[0].resource "/": the root folder');
+    expect(edge({ target: "policies" })).toBe('- sources[0].resource "/": the folder policies');
+    expect(edge({ raw: "b.md", kind: "concept", target: "b.md", walk: "listed-twice" })).toBe(
+      '- sources[0].resource "b.md": the page b.md, listed twice on this page and entered once',
+    );
+    expect(
+      walkNodeLine(
+        {
+          path: "a.md",
+          status: "stable",
+          level: 0,
+          trust: "unverified",
+          sourcesTotal: 1,
+          atDepthLimit: true,
+        },
+        50,
+      ),
+    ).toBe(
+      "a.md [start, stable, unverified, no recheck date, 1 source, the depth stops this branch]",
+    );
   });
 });

@@ -403,7 +403,9 @@ const WalkEdgeSchema = z.strictObject({
   usageCount: z.number().optional(),
   lastModified: z.string().optional(),
   window: EffectiveWindowSchema.optional(),
-  walk: z.enum(["entered", "already-entered", "cycle", "depth-limit", "concept-limit"]).optional(),
+  walk: z
+    .enum(["entered", "listed-twice", "already-entered", "cycle", "depth-limit", "concept-limit"])
+    .optional(),
 });
 
 export const ProvenanceOutputSchema = z.strictObject({
@@ -424,8 +426,8 @@ export const ProvenanceOutputSchema = z.strictObject({
       /** The page's shared window, once: its edges whose source inherits it name it (D62). */
       usageWindow: orOmitted(Window).optional(),
       sourcesTotal: z.number(),
-      /** The depth stopped this branch. */
-      truncated: z.boolean(),
+      /** The depth stopped this branch (issue 5's `truncated`; renamed, bite b's build review B-A-E7). */
+      atDepthLimit: z.boolean(),
       edges: z.array(WalkEdgeSchema),
     }),
   ),
@@ -1238,7 +1240,7 @@ export function projectWalk(walk: Walk, budget: number): ProvenanceOutput {
         returned: kept.length,
         lastCut,
         capped: walk.capped,
-        branchesStopped: all.some((node) => node.truncated),
+        branchesStopped: all.some((node) => node.atDepthLimit),
         truncated,
       }),
       notice: NOTICE,
