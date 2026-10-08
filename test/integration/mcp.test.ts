@@ -102,6 +102,10 @@ describe("the server over both protocol eras", () => {
       }
       expect(s.client.getInstructions()).toBe(INSTRUCTIONS);
       expect(INSTRUCTIONS).toMatch(/cite/i);
+      // The fold of bite c's build reviews, C-A-A2: a name as a result prints it is taken back.
+      expect(INSTRUCTIONS).toContain(
+        "a name as a result prints it, `bundle:path`, is taken as it is",
+      );
     });
 
     it(`${era}: search answers with a citation per hit in the text and in the structured output`, async () => {
@@ -1234,7 +1238,7 @@ describe("a network of bundles (D74)", () => {
   it("answers a path two bundles hold with two hits and a get_page error", async () => {
     // The instructions say so before any call: a name in two bundles needs its bundle.
     expect(INSTRUCTIONS).toContain(
-      "When a page's path is in more than one bundle, name the bundle: `get_page`, `citations`, `provenance` and `catalog` take it.",
+      "When a page's path is in more than one bundle, name the bundle: `get_page`, `citations`, `provenance` and `catalog` take it,",
     );
     const s = await session(fakeRuntime([specA, specB]), toolOptions("acme", ["a", "b"]));
     const found = await s.call("search", { question: "revenue", limit: 25 });

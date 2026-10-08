@@ -8,7 +8,7 @@ import { registerTools } from "./tools.js";
 export const INSTRUCTIONS = [
   "This server serves a network of knowledge bundles (Open Knowledge Format): one bundle, or several, each named by its id.",
   "Start with `catalog` to see what exists (with more than one bundle it lists the bundles), search with keywords through `search`, then read a page whole with `get_page`.",
-  "When a page's path is in more than one bundle, name the bundle: `get_page`, `citations`, `provenance` and `catalog` take it.",
+  "When a page's path is in more than one bundle, name the bundle: `get_page`, `citations`, `provenance` and `catalog` take it, and a name as a result prints it, `bundle:path`, is taken as it is.",
   "Ask `citations` what a page cites and what cites it, and `provenance` where its sources lead; neither fetches, opens or runs anything.",
   "Cite every answer with the page's path (and its bundle when there is more than one), its trust tier, its verifier and its recheck date as the result states them; say so when a page is overdue or deprecated, and follow a replacement.",
   "When no page answers, say that there is none. Never claim a page says what it does not.",
