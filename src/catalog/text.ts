@@ -327,9 +327,13 @@ export function pageHeader(page: Page, now: Date, options: HeaderOptions = {}): 
   return `${located(page.path, options.bundle, HEADER_CAP)} [${facts}]${deprecationSuffix(page.status, page.replacement, HEADER_CAP)}`;
 }
 
+/** The runtime's own states, which a bundle line names as they are rather than as a loader's refusal (D75). */
+const RUNTIME_STATES: ReadonlySet<string> = new Set(["load-failed", "index-broken", "loading"]);
+
 /**
  * A bundle as the network's catalog lists it, before the marker (D74): served, with its page count and where its
- * root index came from, or refused, with the rule and the path.
+ * root index came from; refused, with the rule and the path; or in one of the runtime's own states (its first load
+ * failed, its index is broken, it is still loading), named as such.
  */
 export function networkBundleLine(row: {
   bundle: string;
@@ -340,6 +344,8 @@ export function networkBundleLine(row: {
 }): string {
   if (!row.served || row.refusal !== null) {
     const refusal = row.refusal;
+    if (refusal !== null && RUNTIME_STATES.has(refusal.rule))
+      return `- bundle ${row.bundle}: ${refusal.rule}`;
     return `- bundle ${row.bundle}: refused${refusal === null ? "" : `, ${safe(refusal.rule)}${refusal.path ? ` (${printed(refusal.path, "path")})` : ""}`}`;
   }
   return `- bundle ${row.bundle}: ${row.pages} page${row.pages === 1 ? "" : "s"}, root index (${row.index?.source ?? "generated"})`;

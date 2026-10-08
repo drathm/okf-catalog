@@ -167,8 +167,13 @@ const unknownBundle = (seen: Seen, bundle: string): ToolResult =>
     `there is no bundle ${JSON.stringify(safe(bundle))}; the bundles are: ${seen.network.bundles.map((b) => b.id).join(", ")}`,
   );
 
+/** A named bundle that serves nothing: still loading (the first-load deadline, D75), or refused and why. */
 const refusedBundle = (bundle: string, fatal: Refusal): ToolResult =>
-  fail(`the bundle ${bundle} was refused and nothing in it is served: ${refusalText(fatal)}`);
+  fatal.rule === "loading"
+    ? fail(
+        `the bundle ${bundle} is still loading, and nothing in it is served yet; ask again shortly`,
+      )
+    : fail(`the bundle ${bundle} was refused and nothing in it is served: ${refusalText(fatal)}`);
 
 function pageText(output: PageOutput): string {
   const tail =

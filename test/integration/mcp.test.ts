@@ -1556,6 +1556,38 @@ describe("a network of bundles (D74)", () => {
     expect(lines[2]).toBe(`b: index-broken: ${BROKEN}`);
   });
 
+  it("answers while a bundle is still loading: not searched, refused by name with when, and shown in status and catalog", async () => {
+    const STILL = "the bundle's first load has not finished; it is served when it lands";
+    const loadingB = loadGeneration(
+      [],
+      { walkFatal: { path: "", rule: "loading", detail: STILL } },
+      NOW,
+      "b",
+    );
+    const s = await session(fakeRuntime([terms, loadingB]), toolOptions("acme", ["terms", "b"]));
+    const found = await s.call("search", { question: "alpha glossary" });
+    expect(found.isError).not.toBe(true);
+    expect(text(found).split("\n")[0]).toContain("not searched: b (loading)");
+    for (const [name, args] of [
+      ["get_page", { path: "index.md", bundle: "b" }],
+      ["citations", { path: "a.md", bundle: "b" }],
+      ["provenance", { path: "a.md", bundle: "b" }],
+      ["catalog", { bundle: "b" }],
+    ] as const) {
+      const r = await s.call(name, args);
+      expect(r.isError, name).toBe(true);
+      expect(text(r), name).toBe(
+        "the bundle b is still loading, and nothing in it is served yet; ask again shortly",
+      );
+    }
+    const listing = text(await s.call("catalog", {})).split("\n");
+    expect(listing).toContain("- bundle b: loading");
+    const status = await s.call("status", {});
+    const lines = text(status).split("\n");
+    expect(lines[0]).toMatch(/^network acme: 2 bundles, 1 served, 1 loading; /);
+    expect(lines[2]).toBe(`b: loading: ${STILL}`);
+  });
+
   it("answers status with a row per bundle while the network refuses, and every other tool with the refusal (C-I-C1)", async () => {
     const failed = (id: string) =>
       loadGeneration(

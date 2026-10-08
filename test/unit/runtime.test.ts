@@ -1018,3 +1018,133 @@ describe("createRuntime: one bundle's index failure is its own (D39 per bundle)"
     await runtime.shutdown();
   });
 });
+
+// The first-load deadline (the fold of bite c's build reviews, C-A-A4): one bundle whose load hangs (a clone that
+// blocks) holds back no other bundle's answer for longer than the deadline; it is reported as loading meanwhile.
+describe("createRuntime: the first-load deadline (D75)", () => {
+  /** A source whose load waits until it is released, or rejects when it is aborted, as a hung git would. */
+  function hangingSource(files: BundleFile[]) {
+    let release: (() => void) | undefined;
+    let abort: ((error: Error) => void) | undefined;
+    let loads = 0;
+    return {
+      kind: "git" as const,
+      load: (): Promise<Loaded> => {
+        loads += 1;
+        return new Promise<Loaded>((resolve, reject) => {
+          release = () => resolve({ walk: { files, hidden: [], hiddenFolders: [], refusals: [] } });
+          abort = reject;
+        });
+      },
+      describe: () => "git@example.test:acme/slow.git",
+      abort: () => abort?.(new Error("the transport was aborted")),
+      release: () => release?.(),
+      loads: () => loads,
+    };
+  }
+
+  it("answers from the bundles that have landed once the deadline passes, the slow one loading, and serves it when it lands", async () => {
+    const engine = countingEngine();
+    const slow = hangingSource(readFixture("spec-example"));
+    const warnings: Array<{ event: string; fields: Record<string, unknown> }> = [];
+    const runtime = createRuntime({
+      bundles: [
+        { id: "a", source: memorySource(readFixture("behaviours")), load: options },
+        { id: "b", source: slow, load: options },
+      ],
+      prepare: async () => ({ engine, lock: "exclusive" as const }),
+      clock: () => NOW,
+      log: { ...quiet, warn: (event, fields = {}) => void warnings.push({ event, fields }) },
+      firstLoadDeadlineMs: 40,
+    });
+    runtime.start();
+    const started = Date.now();
+    const served = await runtime.ready();
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(generationOf(served, "a").report.fatal).toBeUndefined();
+    const loading = generationOf(served, "b").report.fatal;
+    expect(loading?.rule).toBe("loading");
+    expect(loading?.detail).toMatch(/first load has not finished/);
+    expect(runtime.status().refusing).toBeUndefined();
+    expect(own(runtime, "b")).toMatchObject({ loaded: false, fatal: true });
+    expect(
+      (await searchIn(runtime, "alpha glossary")).hits.every((hit) => hit.bundle === "a"),
+    ).toBe(true);
+    expect(warnings).toContainEqual({
+      event: "load.slow",
+      fields: expect.objectContaining({ bundle: "b" }),
+    });
+    // A refresh of the slow bundle (its poller's tick) is that first load: it waits for it, and loads nothing twice.
+    const refreshing = runtime.refresh("b");
+    slow.release();
+    expect((await refreshing).outcome).toBe("swapped");
+    expect(slow.loads()).toBe(1);
+    const after = await runtime.ready();
+    expect(generationOf(after, "b").report.fatal).toBeUndefined();
+    expect((await searchIn(runtime, "revenue")).hits.some((hit) => hit.bundle === "b")).toBe(true);
+    await runtime.shutdown();
+  });
+
+  it("publishes the slow bundle when its load lands, with no call waiting on it", async () => {
+    const slow = hangingSource(readFixture("spec-example"));
+    const runtime = createRuntime({
+      bundles: [
+        { id: "a", source: memorySource(readFixture("behaviours")), load: options },
+        { id: "b", source: slow, load: options },
+      ],
+      prepare: async () => ({ engine: countingEngine(), lock: "exclusive" as const }),
+      clock: () => NOW,
+      log: quiet,
+      firstLoadDeadlineMs: 20,
+    });
+    runtime.start();
+    await runtime.ready();
+    expect(own(runtime, "b").loaded).toBe(false);
+    slow.release();
+    for (let i = 0; i < 100 && !own(runtime, "b").loaded; i += 1)
+      await new Promise((r) => setTimeout(r, 10));
+    expect(own(runtime, "b")).toMatchObject({ loaded: true, fatal: false });
+    expect(generationOf(await runtime.ready(), "b").report.fatal).toBeUndefined();
+    await runtime.shutdown();
+  });
+
+  it("waits for a network of one bundle's one load past the deadline, as version 0 did", async () => {
+    const slow = hangingSource(readFixture("behaviours"));
+    const runtime = createRuntime({
+      bundles: [{ id: "b", source: slow, load: options }],
+      prepare: async () => ({ engine: countingEngine(), lock: "exclusive" as const }),
+      clock: () => NOW,
+      log: quiet,
+      firstLoadDeadlineMs: 10,
+    });
+    runtime.start();
+    let answered = false;
+    const pending = runtime.ready().then((network) => {
+      answered = true;
+      return network;
+    });
+    await new Promise((r) => setTimeout(r, 60));
+    expect(answered).toBe(false);
+    slow.release();
+    expect(generationOf(await pending).report.fatal).toBeUndefined();
+    await runtime.shutdown();
+  });
+
+  it("shuts down while a slow first load still runs, aborting its transport", async () => {
+    const slow = hangingSource(readFixture("spec-example"));
+    const runtime = createRuntime({
+      bundles: [
+        { id: "a", source: memorySource(readFixture("behaviours")), load: options },
+        { id: "b", source: slow, load: options },
+      ],
+      prepare: async () => ({ engine: countingEngine(), lock: "exclusive" as const }),
+      clock: () => NOW,
+      log: quiet,
+      firstLoadDeadlineMs: 20,
+    });
+    runtime.start();
+    await runtime.ready();
+    await runtime.shutdown();
+    expect(own(runtime, "b")).toMatchObject({ loaded: true, fatal: true });
+  });
+});

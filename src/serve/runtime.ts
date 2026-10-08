@@ -50,7 +50,19 @@ export interface RuntimeDeps {
     lockOwner?: LockOwnerStatus | null;
     pollers?: Readonly<Record<string, PollerStatus | null>>;
   };
+  /** The first-load deadline in milliseconds; `FIRST_LOAD_DEADLINE_MS` unless a test shortens it. */
+  firstLoadDeadlineMs?: number;
 }
+
+/**
+ * How long a tool call waits for the first load of a network of more than one bundle (D75): once every bundle's
+ * first load has landed, or this long after the loads began, the network answers from the bundles that have
+ * landed, and a bundle still loading is reported as `loading` (not searched, refused by name, shown in `status`)
+ * until its load lands and publishes it. Twenty seconds holds a cold clone of a small repository and a load of a few
+ * thousand pages; a clone that hangs (git's own timeout is 300 s) no longer holds back every other bundle's first
+ * answer. A network of one bundle waits for its one load, as version 0 did: it has nothing else to answer from.
+ */
+export const FIRST_LOAD_DEADLINE_MS = 20_000;
 
 export interface ServingRuntime extends Runtime {
   start(): void;
@@ -562,6 +574,37 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
     }
   }
 
+  /**
+   * Beyond one bundle, the first load answers once every bundle's load has landed or the deadline has passed,
+   * whichever comes first; a load still running goes on, and publishes its bundle when it lands (D75).
+   */
+  async function landedOrDeadline(loads: readonly Promise<void>[]): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<"deadline">((resolve) => {
+      timer = setTimeout(
+        () => resolve("deadline"),
+        deps.firstLoadDeadlineMs ?? FIRST_LOAD_DEADLINE_MS,
+      );
+      timer.unref();
+    });
+    try {
+      const first = await Promise.race([
+        Promise.all(loads).then(() => "landed" as const),
+        deadline,
+      ]);
+      if (first === "deadline") {
+        for (const bundle of states.filter((held) => !held.landed))
+          deps.log.warn("load.slow", {
+            bundle: bundle.id,
+            detail:
+              "its first load has not landed by the deadline; the network answers without it until it does",
+          });
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   function start(): void {
     if (firstLoad !== undefined || closed) return;
     firstLoad = (async () => {
@@ -579,7 +622,8 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
           bundle.loading = loading;
           return loading;
         });
-        await Promise.all(loads);
+        if (states.length === 1) await Promise.all(loads);
+        else await landedOrDeadline(loads);
       } catch (error) {
         refusal = (error as Error).message;
         firstLoadFailed = true;

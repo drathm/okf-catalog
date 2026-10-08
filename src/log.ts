@@ -34,6 +34,7 @@ const ALLOWED: Record<string, readonly string[]> = {
   "refresh.failed": ["bundle", "error", "detail"],
   "load.served-previous": ["bundle", "commit", "refused"],
   "index.broken": ["bundle", "detail"],
+  "load.slow": ["bundle", "detail"],
   "index.mended": ["bundle"],
   "poller.tick": ["bundle", "outcome", "ms", "error", "detail"],
   "source.recloned": ["bundle", "reason"],
