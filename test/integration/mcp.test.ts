@@ -478,6 +478,43 @@ describe("bite 4 build review, round 2", () => {
   });
 });
 
+describe("get_page and the concept id (R7)", () => {
+  it("takes a concept id in get_page and answers ambiguity with both names", async () => {
+    const page = (title: string) =>
+      Buffer.from(
+        `---\ntype: Guide\ntitle: ${title}\nstatus: stable\nverified:\n  - by: human:x\n    at: 2026-01-01T00:00:00Z\n---\n\nThe body of ${title}.\n`,
+      );
+    const generation = loadGeneration(
+      [
+        { path: "guides/a.md", bytes: page("A") },
+        { path: "foo.md", bytes: page("Foo") },
+        { path: "foo.md.md", bytes: page("Foo twice") },
+      ],
+      { integrity: "none" },
+      NOW,
+    );
+    const s = await session(fakeRuntime(generation));
+    const byId = await s.call("get_page", { path: "guides/a" });
+    expect(byId.isError).not.toBe(true);
+    expect((byId.structuredContent as { path: string }).path).toBe("guides/a.md");
+    expect(text(byId).split("\n")[0]).toMatch(/^guides\/a\.md \[Guide, stable/);
+    expect((await s.call("get_page", { path: "/foo" })).structuredContent).toMatchObject({
+      path: "foo.md",
+    });
+    const both = await s.call("get_page", { path: "foo.md" });
+    expect(both.isError).toBe(true);
+    expect(both.structuredContent).toBeUndefined();
+    expect(text(both)).toBe(
+      '"foo.md" names more than one page: foo.md (ask for "foo"), foo.md.md (ask for "foo.md.md")',
+    );
+    const miss = await s.call("get_page", { path: "guides/b" });
+    expect(miss.isError).toBe(true);
+    expect(text(miss)).toMatch(
+      /^no page at "guides\/b"; the nearest served paths are: guides\/a\.md/,
+    );
+  });
+});
+
 describe("get_page and the OKF 0.1 fallbacks (R5, R6)", () => {
   it("serves Appendix A's v0.1 page through get_page with its timestamp and sources", async () => {
     const generation = loadGeneration(

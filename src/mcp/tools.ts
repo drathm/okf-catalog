@@ -1,9 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod/v4";
-import type { ReservedFile } from "../bundle/model.js";
 import { byCodeUnit } from "../bundle/paths.js";
 import { type Catalog, listTypes } from "../catalog/model.js";
-import { nearestPaths } from "../catalog/nearest.js";
 import {
   CatalogOutputSchema,
   type PageOutput,
@@ -18,6 +16,7 @@ import {
   StatusOutputSchema,
   statusSummary,
 } from "../catalog/outputs.js";
+import { resolvePageName } from "../catalog/resolve.js";
 import type { Generation, Runtime, ToolOptions } from "../catalog/runtime.js";
 import { DATA_SENTENCE, safe } from "../catalog/text.js";
 import type { Log } from "../log.js";
@@ -47,9 +46,6 @@ const blank = (value: string | undefined): string | undefined =>
 /** A folder as the search filter normalises it: no leading or trailing slashes; the empty string is the root. */
 const normaliseFolder = (value: string): string => value.trim().replace(/^\/+|\/+$/g, "");
 
-/** A page path as the model may write it: one leading `/` or `./` stripped (OKF bundle-absolute links). */
-const normalisePath = (value: string): string => value.trim().replace(/^(\.\/|\/)/, "");
-
 function folderList(catalog: Catalog): string {
   const names = [...catalog.folders.keys()]
     .sort(byCodeUnit)
@@ -64,31 +60,6 @@ function refused(generation: Generation): ToolResult | undefined {
   return fail(
     `the bundle was refused and nothing is served: ${safe(fatal.rule)}${fatal.path ? ` (${safe(fatal.path)})` : ""}: ${safe(fatal.detail)}`,
   );
-}
-
-function reservedAt(
-  catalog: Catalog,
-  path: string,
-): { file: ReservedFile; source: "file" | "generated" } | undefined {
-  const slash = path.lastIndexOf("/");
-  const folder = slash === -1 ? "" : path.slice(0, slash);
-  const name = slash === -1 ? path : path.slice(slash + 1);
-  const entry = catalog.folders.get(folder);
-  if (entry === undefined) return undefined;
-  if (name === "index.md" && entry.index !== undefined)
-    return { file: entry.index, source: entry.indexSource };
-  if (name === "log.md" && entry.log !== undefined) return { file: entry.log, source: "file" };
-  return undefined;
-}
-
-function servedPaths(catalog: Catalog): string[] {
-  const paths = [...catalog.pages.keys()];
-  for (const [folder, entry] of catalog.folders) {
-    const prefix = folder === "" ? "" : `${folder}/`;
-    if (entry.index !== undefined) paths.push(`${prefix}index.md`);
-    if (entry.log !== undefined) paths.push(`${prefix}log.md`);
-  }
-  return paths;
 }
 
 function pageText(output: PageOutput): string {
@@ -242,14 +213,16 @@ export function registerTools(
     {
       title: "Read a page",
       description: describeType(
-        "Returns one page whole, with its provenance header first: path, type, status, trust tier, verifier, recheck date and deprecation. Reserved files (index.md, log.md) are served too. A long page is cut at the result budget and says where to continue.",
+        "Returns one page whole, with its provenance header first: path, type, status, trust tier, verifier, recheck date and deprecation. Takes the path, or the concept id (the path without .md); a name that is one page's path and another's concept id is an error naming both. Reserved files (index.md, log.md) are served too. A long page is cut at the result budget and says where to continue.",
       ),
       inputSchema: z.object({
         path: z
           .string()
           .min(1)
           .max(1024)
-          .describe("The page's path in the bundle, as a search result or a catalog lists it."),
+          .describe(
+            "The page's path in the bundle, as a search result or a catalog lists it, or its concept id (the path without .md).",
+          ),
         offset: z
           .number()
           .int()
@@ -263,29 +236,37 @@ export function registerTools(
     guarded("get_page", (args, generation) => {
       const stop = refused(generation);
       if (stop !== undefined) return stop;
-      const path = normalisePath(args.path);
       const offset = args.offset ?? 0;
-      const page = generation.catalog.pages.get(path);
-      if (page !== undefined) {
-        const output = projectPage(page, clock(), offset, options.resultBudget, {
-          undeclaredTypes: new Set(generation.report.unknownTypes),
-        });
-        return ok(pageText(output), output);
-      }
-      const reserved = reservedAt(generation.catalog, path);
-      if (reserved !== undefined) {
-        const output = projectReserved(
-          reserved.file,
-          reserved.source,
-          offset,
-          options.resultBudget,
-        );
-        return ok(pageText(output), output);
-      }
-      const nearest = nearestPaths(servedPaths(generation.catalog), path);
-      return fail(
-        `no page at ${JSON.stringify(safe(path))}; the nearest served paths are: ${nearest.map(safe).join(", ") || "(none)"}`,
+      const resolution = resolvePageName(
+        [{ bundle: generation.catalog.company, catalog: generation.catalog }],
+        args.path,
       );
+      if (resolution.ok) {
+        const found = resolution.found;
+        const output =
+          found.kind === "page"
+            ? projectPage(found.page, clock(), offset, options.resultBudget, {
+                undeclaredTypes: new Set(generation.report.unknownTypes),
+              })
+            : projectReserved(found.file, found.source, offset, options.resultBudget);
+        return ok(pageText(output), output);
+      }
+      switch (resolution.reason) {
+        case "ambiguous":
+          return fail(
+            `${JSON.stringify(safe(resolution.name))} names more than one page: ${resolution.candidates
+              .map((c) => `${safe(c.path)} (ask for ${JSON.stringify(safe(c.ask))})`)
+              .join(", ")}`,
+          );
+        case "not-found":
+          return fail(
+            `no page at ${JSON.stringify(safe(resolution.name))}; the nearest served paths are: ${resolution.nearest.map(safe).join(", ") || "(none)"}`,
+          );
+        case "unknown-bundle":
+        case "refused-bundle":
+          // Unreachable while get_page takes no bundle argument (issue 3 adds it): the resolver is handed one bundle.
+          return fail(`the bundle ${JSON.stringify(safe(resolution.bundle))} is not served`);
+      }
     }),
   );
 
