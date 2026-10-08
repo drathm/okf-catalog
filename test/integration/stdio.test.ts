@@ -2,6 +2,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -1143,6 +1144,90 @@ describe("okf-catalog serve over stdio: a network (D72, D73)", { timeout: 90_000
       rmSync(outside, { recursive: true, force: true });
     } finally {
       rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  // The fold of bite c's build reviews, C-I-B2 (D73's "else removed"): a version 0 clone moves only into the one
+  // repository bundle of a network that has exactly one, and only when it is a folder; otherwise it is removed.
+  it("removes a version 0 clone that no one repository bundle can take, and never moves a link", async () => {
+    const planted = '{"planted":"version 0"}\n';
+    const serveOnce = async (
+      b: Sandbox,
+    ): Promise<{ status: Record<string, unknown>; log: string }> => {
+      const run = rawServer(b);
+      run.send(INITIALIZE);
+      await run.waitFor(1);
+      run.send(INITIALIZED);
+      const status = await statusOver(run, 2);
+      expect((await run.end()).code).toBe(0);
+      return { status, log: run.stderr() };
+    };
+    const removed = /"event":"cache.version0","detail":"the version 0 clone was removed/;
+    // No repository bundle: a company: file with a local source.
+    {
+      const b = box("spec-example");
+      const dir = companyDir(b);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      plantVersion0(dir);
+      const { status, log } = await serveOnce(b);
+      expect(status.admitted).toBe(9);
+      expect(existsSync(join(dir, "source"))).toBe(false);
+      expect(existsSync(join(dir, "derived"))).toBe(false);
+      expect(log).toMatch(removed);
+    }
+    // Two repository bundles: neither takes it.
+    const one = packedRepo();
+    const two = packedRepo();
+    try {
+      const b = box(
+        "spec-example",
+        `network: fixture\nbundles:\n  - id: one\n    source:\n      repository: "${one.url}"\n  - id: two\n    source:\n      repository: "${two.url}"\n`,
+      );
+      b.env.OKF_CATALOG_GIT_PROTOCOLS = "file";
+      const dir = companyDir(b);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      plantVersion0(dir);
+      const { status, log } = await serveOnce(b);
+      expect(
+        (status.bundles as Array<{ id: string; state: string }>).map((row) => [row.id, row.state]),
+      ).toEqual([
+        ["one", "serving"],
+        ["two", "serving"],
+      ]);
+      expect(existsSync(join(dir, "source"))).toBe(false);
+      expect(log).toMatch(removed);
+      expect(log).not.toMatch(/moved into the bundle's folder/);
+      for (const id of ["one", "two"]) {
+        const state = join(dir, "bundles", id, "source", "state.json");
+        expect(existsSync(state) ? readFileSync(state, "utf8") : "", id).not.toBe(planted);
+      }
+    } finally {
+      rmSync(one.root, { recursive: true, force: true });
+      rmSync(two.root, { recursive: true, force: true });
+    }
+    // One repository bundle with no clone of its own yet, and a link where the clone was: the link goes, what it
+    // points at stays, and the bundle clones into a folder of its own.
+    const repo = packedRepo();
+    const outside = mkdtempSync(join(tmpdir(), "okf-catalog-outside-"));
+    try {
+      const b = box(
+        "spec-example",
+        `company: fixture\nsource:\n  repository: "${repo.url}"\n  branch: published\n`,
+      );
+      b.env.OKF_CATALOG_GIT_PROTOCOLS = "file";
+      const dir = companyDir(b);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      writeFileSync(join(outside, "keep.txt"), "kept\n");
+      symlinkSync(outside, join(dir, "source"));
+      const { status, log } = await serveOnce(b);
+      expect(status.admitted).toBe(1);
+      expect(existsSync(join(dir, "source"))).toBe(false);
+      expect(lstatSync(join(dir, "bundles", "fixture", "source")).isSymbolicLink()).toBe(false);
+      expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("kept\n");
+      expect(log).toMatch(removed);
+    } finally {
+      rmSync(repo.root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
     }
   });
 
