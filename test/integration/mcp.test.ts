@@ -1512,6 +1512,105 @@ describe("a network of bundles (D74)", () => {
     expect(status.isError).not.toBe(true);
   });
 
+  // The fold of bite c's build reviews, C-A-A2 and C-A-A7: every name the server prints is a name it takes back.
+  it("takes back every name it prints, of a search hit, a catalog entry and a nearest path, in the three page tools", async () => {
+    const colon = Buffer.from(
+      "---\ntype: Note\ntitle: Colon page\nstatus: stable\n---\n\nThe zephyr colon page.\n",
+    );
+    const withColon = loadGeneration(
+      [...readFixture("spec-example"), { path: "notes/x:y.md", bytes: colon }],
+      { integrity: "none" },
+      NOW,
+      "a",
+    );
+    const s = await session(fakeRuntime([withColon, specB]), toolOptions("acme", ["a", "b"]));
+    // The names a search prints: each hit line's name, before the title.
+    const names = new Set<string>();
+    for (const question of ["revenue", "zephyr colon", "margin standard", "orders table"]) {
+      const found = await s.call("search", { question, limit: 25 });
+      for (const line of text(found).split("\n").slice(1))
+        names.add(line.split(" — ")[0] as string);
+    }
+    // A path that is not plain, such as one holding a colon, is printed quoted after its bundle.
+    expect(names).toContain('a:"notes/x:y.md"');
+    expect([...names].some((name) => name.startsWith("b:"))).toBe(true);
+    // The names a catalog entry stands for: its bundle, then its path, as a line would print them.
+    for (const bundle of ["a", "b"]) {
+      const listed = (await s.call("catalog", { bundle, folder: "metrics" })).structuredContent as {
+        bundle: string;
+        entries: Array<{ path: string }>;
+      };
+      for (const entry of listed.entries) names.add(`${listed.bundle}:${entry.path}`);
+    }
+    // The names a not-found error offers.
+    const miss = text(await s.call("get_page", { path: "metrics/revenu.md" }));
+    const offered = miss.slice(miss.indexOf("are: ") + "are: ".length).split(", ");
+    expect(offered.length).toBeGreaterThan(0);
+    for (const name of offered) names.add(name);
+    expect(names.size).toBeGreaterThan(6);
+    for (const name of names) {
+      const page = await s.call("get_page", { path: name });
+      expect(page.isError, name).not.toBe(true);
+      const bundle = name.slice(0, name.indexOf(":"));
+      expect((page.structuredContent as { bundle: string }).bundle, name).toBe(bundle);
+      // With the bundle named too, the same.
+      const named = await s.call("get_page", { path: name, bundle });
+      expect(named.isError, name).not.toBe(true);
+      if ((page.structuredContent as { kind: string }).kind !== "page") continue;
+      for (const tool of ["citations", "provenance"] as const) {
+        const r = await s.call(tool, { path: name });
+        expect(r.isError, `${tool} ${name}`).not.toBe(true);
+        expect((r.structuredContent as { bundle: string }).bundle, `${tool} ${name}`).toBe(bundle);
+      }
+    }
+    // The path's description says so.
+    const tools = (await s.client.listTools()).tools;
+    const properties = tools.find((tool) => tool.name === "get_page")?.inputSchema.properties as
+      | Record<string, { description?: string }>
+      | undefined;
+    expect(properties?.path?.description).toMatch(/as a result prints it/);
+  });
+
+  it("requires bundle in what the three page tools return, and refuses a bundle that is only whitespace", async () => {
+    const s = await session(fakeRuntime([specA, specB]), toolOptions("acme", ["a", "b"]));
+    const tools = (await s.client.listTools()).tools;
+    for (const name of ["get_page", "citations", "provenance"]) {
+      const schema = tools.find((tool) => tool.name === name)?.outputSchema as {
+        required?: string[];
+      };
+      expect(schema.required, name).toContain("bundle");
+    }
+    // The catalog's folder answer keeps a one-bundle network's shape: bundle stays optional there.
+    const catalog = tools.find((tool) => tool.name === "catalog")?.outputSchema as {
+      anyOf: Array<{ properties: Record<string, unknown>; required?: string[] }>;
+    };
+    const folder = catalog.anyOf.find((branch) => "folder" in branch.properties);
+    expect(folder?.required).not.toContain("bundle");
+    for (const [name, args] of [
+      ["get_page", { path: "index.md", bundle: "   " }],
+      ["citations", { path: "metrics/revenue.md", bundle: " " }],
+      ["provenance", { path: "metrics/revenue.md", bundle: "\t" }],
+      ["catalog", { bundle: "  " }],
+    ] as const) {
+      const r = await s.call(name, args);
+      expect(r.isError, name).toBe(true);
+      // The SDK's input validation answers, with the schema's sentence; no tool ran.
+      expect(text(r), name).toMatch(/a bundle cannot be blank: name one, or leave bundle out/);
+      expect(text(r), name).not.toMatch(/^catalog of the network/);
+    }
+  });
+
+  it("lists the bundles for the root folder written as a slash, as it does with no folder", async () => {
+    const s = await session(fakeRuntime([specA, terms]), toolOptions("acme", ["a", "terms"]));
+    for (const folder of ["/", "", " / "]) {
+      const r = await s.call("catalog", { folder });
+      expect(r.isError, JSON.stringify(folder)).not.toBe(true);
+      expect(text(r).split("\n")[0], JSON.stringify(folder)).toBe(
+        "catalog of the network acme: 2 bundles, 2 served; ask catalog with a bundle for its folders",
+      );
+    }
+  });
+
   // D39 per bundle (the fold of bite c's build reviews, C-I-A1, C-A-A1): a broken bundle is refused alone.
   const BROKEN =
     "the index could not be brought in line with this bundle's pages; it is tried again when the server restarts, and the log has the detail";

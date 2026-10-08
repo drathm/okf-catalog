@@ -191,17 +191,18 @@ const PAGE_NAME = z
   .min(1)
   .max(1024)
   .describe(
-    "The page's path in its bundle, as a search result or a catalog lists it, or its concept id (the path without .md). A name is ambiguous when two bundles serve it, or, in one bundle, when a sibling page X.md.md exists, X.md being that page's concept id too; the error then names each page, with its bundle when the server serves more than one, and a name that means it alone in its bundle where there is one, to ask for with that bundle.",
+    "The page's path in its bundle, as a search result or a catalog lists it, or its concept id (the path without .md); a name as a result prints it is taken too, bundle:path, with the path in quotes when the line quotes it. A name is ambiguous when two bundles serve it, or, in one bundle, when a sibling page X.md.md exists, X.md being that page's concept id too; the error then names each page, with its bundle when the server serves more than one, and a name that means it alone in its bundle where there is one, to ask for with that bundle.",
   );
 
+/** A bundle id as a caller writes it: never blank, which would read as every bundle (C-A-A7). */
+const bundleId = () =>
+  z.string().min(1).max(200).regex(/\S/, "a bundle cannot be blank: name one, or leave bundle out");
+
 /** The bundle a name-taking tool reads alone: the id a hit, a catalog or an ambiguity error names (D74). */
-const BUNDLE = z
-  .string()
-  .min(1)
-  .max(200)
+const BUNDLE = bundleId()
   .optional()
   .describe(
-    "The bundle to read, as a search hit or catalog names it; needed when two bundles serve the name. Omit it to look in every bundle.",
+    "The bundle to read, as a search hit or catalog names it (before the colon of a printed name); needed when two bundles serve the name. Omit it to look in every bundle; a blank one is refused.",
   );
 
 /** A line's bundle beyond one bundle (D74), none for a network of one. */
@@ -232,7 +233,8 @@ function resolveName(seen: Seen, value: string, bundle: string | undefined): Fou
           .join(", ")}`,
       );
     case "not-found": {
-      const inBundle = seen.prefixed && bundle !== undefined ? ` in bundle ${bundle}` : "";
+      const read = resolution.bundle ?? bundle;
+      const inBundle = seen.prefixed && read !== undefined ? ` in bundle ${read}` : "";
       return fail(
         `no page at ${JSON.stringify(safe(resolution.name))}${inBundle}; the nearest served paths are: ${
           resolution.nearest
@@ -599,13 +601,10 @@ export function registerTools(
           .max(1024)
           .optional()
           .describe("A folder of the bundle; omit for the root."),
-        bundle: z
-          .string()
-          .min(1)
-          .max(200)
+        bundle: bundleId()
           .optional()
           .describe(
-            "The bundle whose folder to list; omit it to list the bundles when the server serves more than one.",
+            "The bundle whose folder to list; omit it to list the bundles when the server serves more than one. A blank one is refused.",
           ),
         offset: z
           .number()
@@ -621,8 +620,8 @@ export function registerTools(
       const stop = refused(seen);
       if (stop !== undefined) return stop;
       const wanted = blank(args.bundle);
-      // Beyond one bundle, no bundle and no folder lists the network's bundles (D74).
-      if (wanted === undefined && seen.prefixed && blank(args.folder) === undefined) {
+      // Beyond one bundle, no bundle and the root folder (left out, "" or "/") lists the network's bundles (D74).
+      if (wanted === undefined && seen.prefixed && normaliseFolder(args.folder ?? "") === "") {
         const { output, text } = projectNetworkCatalog(
           seen.network,
           options.network,

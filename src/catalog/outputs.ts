@@ -230,8 +230,8 @@ export const SearchOutputSchema = z.strictObject({
 export type SearchOutput = z.infer<typeof SearchOutputSchema>;
 
 export const PageOutputSchema = z.strictObject({
-  /** The bundle the file is in (D74); the tool always sets it. */
-  bundle: z.string().optional(),
+  /** The bundle the file is in (D74). */
+  bundle: z.string(),
   path: z.string(),
   /** A page's concept id, its path without `.md`; a reserved file has none. */
   conceptId: z.string().optional(),
@@ -415,8 +415,8 @@ const SourceFactsSchema = z.strictObject({
 });
 
 export const CitationsOutputSchema = z.strictObject({
-  /** The page's bundle (D74); the tool always sets it. */
-  bundle: z.string().optional(),
+  /** The page's bundle (D74). */
+  bundle: z.string(),
   path: z.string(),
   summary: z.string(),
   notice: z.string(),
@@ -513,8 +513,8 @@ const WalkEdgeSchema = z.strictObject({
 });
 
 export const ProvenanceOutputSchema = z.strictObject({
-  /** The start page's bundle; the walk stays inside it (D69). The tool always sets it. */
-  bundle: z.string().optional(),
+  /** The start page's bundle; the walk stays inside it (D69). */
+  bundle: z.string(),
   path: z.string(),
   depth: z.number(),
   summary: z.string(),
@@ -852,7 +852,7 @@ export function projectPage(
   now: Date,
   offset: number,
   budget: number,
-  options: Omit<LineOptions, "bundle"> & { located?: Located } = {},
+  options: Omit<LineOptions, "bundle"> & { located: Located },
 ): PageOutput {
   const half = Math.floor(budget / 2);
   let projected = projectProvenance(page, now, FIELD_CAP);
@@ -870,7 +870,7 @@ export function projectPage(
     Math.floor(budget / 4),
   );
   const output: PageOutput = {
-    ...(located === undefined ? {} : { bundle: located.bundle }),
+    bundle: located.bundle,
     path: page.path,
     conceptId: conceptIdOf(page.path),
     kind: "page",
@@ -892,11 +892,11 @@ export function projectReserved(
   source: "file" | "generated",
   offset: number,
   budget: number,
-  located?: Located,
+  located: Located,
 ): PageOutput {
   const citation = reservedHeader(file.kind, source, file.folder, prefixOf(located));
   const output: PageOutput = {
-    ...(located === undefined ? {} : { bundle: located.bundle }),
+    bundle: located.bundle,
     path: file.path,
     kind: file.kind,
     source,
@@ -1474,7 +1474,7 @@ function fitClaim(row: ClaimRow, space: Space): { row: ClaimRow; cost: Space } |
 export function projectCitations(
   citations: Citations,
   budget: number,
-  located?: Located,
+  located: Located,
 ): CitationsOutput {
   // Only the rows a list can carry are projected (at most 50 each); each claim's list of sources is projected once
   // per id and shared, as the graph shares it (bite b's build reviews B-I-A1, B-A-A1).
@@ -1519,7 +1519,7 @@ export function projectCitations(
       inboundDerivations: citations.inboundDerivations.length,
     };
     return {
-      ...(located === undefined ? {} : { bundle: located.bundle }),
+      bundle: located.bundle,
       path: citations.path,
       summary: citationsHeader({
         path: citations.path,
@@ -1649,7 +1649,7 @@ export function walkText(output: ProvenanceOutput): string {
  * within the budget (D82). Pages are kept in walk order until the budget is spent; the page the budget runs out in
  * keeps as many of its edges, in order, as fit; the result says `truncated` and keeps the walk's total.
  */
-export function projectWalk(walk: Walk, budget: number, located?: Located): ProvenanceOutput {
+export function projectWalk(walk: Walk, budget: number, located: Located): ProvenanceOutput {
   const all = walk.nodes.map(nodeOut);
   const kept: NodeOut[] = [];
   const build = (truncated: boolean): ProvenanceOutput => {
@@ -1657,7 +1657,7 @@ export function projectWalk(walk: Walk, budget: number, located?: Located): Prov
     const lastCut =
       last !== undefined && last.edges.length < (all[kept.length - 1]?.edges.length ?? 0);
     return {
-      ...(located === undefined ? {} : { bundle: located.bundle }),
+      bundle: located.bundle,
       path: walk.path,
       depth: walk.depth,
       summary: provenanceHeader({

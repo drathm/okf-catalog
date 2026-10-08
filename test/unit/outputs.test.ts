@@ -37,6 +37,9 @@ import { type SearchResponse, search } from "../../src/search/search.js";
 import { fakeEngine } from "../helpers/fake-runtime.js";
 import { NOW, readFixture } from "../helpers/fixtures.js";
 
+/** Where a result's file is, for a network of one bundle `b`: the location every page tool passes (D74). */
+const HERE = { bundle: "b", prefixed: false };
+
 const { catalog, report } = loadBundle(
   "b",
   readFixture("behaviours"),
@@ -186,14 +189,14 @@ describe("projections parse under their strict schemas and are JSON-safe", () =>
     expect(out.hits[0]?.status).toBe("archived");
     expect(out.hits[0]?.citation).toContain('"archived"');
     const archived: Page = { ...page("terms/alpha.md"), status: "archived" };
-    const read = projectPage(archived, NOW, 0, RESULT_BUDGET);
+    const read = projectPage(archived, NOW, 0, RESULT_BUDGET, { located: HERE });
     expect(read.provenance?.status).toBe("archived");
     expect(() => PageOutputSchema.parse(read)).not.toThrow();
     expect(() => SearchOutputSchema.parse(out)).not.toThrow();
   });
 
   it("page: a header as the citation, the notice before the body, the body cut at the budget with an offset", () => {
-    const out = projectPage(page("terms/alpha.md"), NOW, 0, RESULT_BUDGET);
+    const out = projectPage(page("terms/alpha.md"), NOW, 0, RESULT_BUDGET, { located: HERE });
     expect(() => PageOutputSchema.parse(out)).not.toThrow();
     expect(jsonSafe(out)).toBe(true);
     expect(out.kind).toBe("page");
@@ -202,7 +205,7 @@ describe("projections parse under their strict schemas and are JSON-safe", () =>
     expect(out.provenance?.path).toBe("terms/alpha.md");
     expect(out.truncated).toBe(false);
     const long: Page = { ...page("terms/alpha.md"), body: "word\n".repeat(20_000) };
-    const cut = projectPage(long, NOW, 0, 100);
+    const cut = projectPage(long, NOW, 0, 100, { located: HERE });
     expect(cut.truncated).toBe(true);
     expect(cut.nextOffset).toBeGreaterThan(0);
     expect(() => PageOutputSchema.parse(cut)).not.toThrow();
@@ -211,7 +214,7 @@ describe("projections parse under their strict schemas and are JSON-safe", () =>
   it("reserved files: their own kind and source, no provenance, the same notice", () => {
     const folder = catalog.folders.get("");
     if (folder?.index === undefined) throw new Error("root index");
-    const out = projectReserved(folder.index, folder.indexSource, 0, RESULT_BUDGET);
+    const out = projectReserved(folder.index, folder.indexSource, 0, RESULT_BUDGET, HERE);
     expect(() => PageOutputSchema.parse(out)).not.toThrow();
     expect(out.kind).toBe("index");
     expect(out.source).toBe(folder.indexSource);
@@ -282,12 +285,12 @@ describe("result bounds (bite 4 build review)", () => {
   it("keeps a page's text block within the budget, framing lines included, and never splits a surrogate pair", () => {
     const base = page("terms/alpha.md");
     const long: Page = { ...base, body: `${"😀".repeat(30_000)}\n` };
-    const out = projectPage(long, NOW, 0, 1_000);
+    const out = projectPage(long, NOW, 0, 1_000, { located: HERE });
     const text = `${out.citation}\n${out.notice}\n${out.body}`;
     expect(text.length).toBeLessThanOrEqual(1_000);
     expect(out.body).not.toMatch(/[\ud800-\udbff]$/);
     expect(out.truncated).toBe(true);
-    const next = projectPage(long, NOW, out.nextOffset ?? 0, 1_000);
+    const next = projectPage(long, NOW, out.nextOffset ?? 0, 1_000, { located: HERE });
     expect(next.body).not.toMatch(/^[\udc00-\udfff]/);
   });
 
@@ -297,7 +300,7 @@ describe("result bounds (bite 4 build review)", () => {
       ...base,
       frontmatter: { ...base.frontmatter, blob: "x".repeat(100_000) },
     };
-    const out = projectPage(bloated, NOW, 0, RESULT_BUDGET);
+    const out = projectPage(bloated, NOW, 0, RESULT_BUDGET, { located: HERE });
     expect(JSON.stringify(out.provenance?.frontmatter ?? {}).length).toBeLessThan(10_000);
     expect(JSON.stringify(out).length).toBeLessThanOrEqual(RESULT_BUDGET + 5_000);
   });
@@ -317,7 +320,7 @@ describe("result bounds (bite 4 build review)", () => {
       timestamp: { raw: "2026-05-28T22:53:05+00:00" },
       frontmatter: { ...base.frontmatter, blob: "x".repeat(100_000) },
     };
-    const out = projectPage(bloated, NOW, 0, RESULT_BUDGET);
+    const out = projectPage(bloated, NOW, 0, RESULT_BUDGET, { located: HERE });
     expect(out.provenance?.frontmatter).toEqual({
       omitted: "the frontmatter is over 8000 characters and is not returned here",
     });
@@ -342,7 +345,7 @@ describe("result bounds (bite 4 build review)", () => {
       timestamp: { raw: "t".repeat(2_500) },
       sources: [{ resource: "a" }, { resource: "b", usageWindow: wide }],
     };
-    const out = projectPage(heavy, NOW, 0, RESULT_BUDGET);
+    const out = projectPage(heavy, NOW, 0, RESULT_BUDGET, { located: HERE });
     expect(out.provenance?.contract).toEqual({
       runtime: "bigquery",
       parameters: {
@@ -387,6 +390,7 @@ describe("result bounds (bite 4 build review)", () => {
         NOW,
         0,
         RESULT_BUDGET,
+        { located: HERE },
       );
       expect(out.provenance?.contract, field).toEqual({
         ...small,
@@ -421,7 +425,7 @@ describe("result bounds (bite 4 build review)", () => {
     const bibliography = loaded.catalog.pages.get("p.md");
     if (bibliography === undefined) throw new Error("p.md");
     expect(bibliography.sources).toHaveLength(900);
-    const first = projectPage(bibliography, NOW, 0, RESULT_BUDGET);
+    const first = projectPage(bibliography, NOW, 0, RESULT_BUDGET, { located: HERE });
     expect(first.citation).toContain("; and 890 more]");
     expect(first.citation.length).toBeLessThan(2_000);
     expect(first.truncated).toBe(true);
@@ -431,7 +435,7 @@ describe("result bounds (bite 4 build review)", () => {
     let read = first.body;
     let calls = 1;
     for (let next = first; next.truncated; calls++) {
-      next = projectPage(bibliography, NOW, next.nextOffset ?? 0, RESULT_BUDGET);
+      next = projectPage(bibliography, NOW, next.nextOffset ?? 0, RESULT_BUDGET, { located: HERE });
       if (next.truncated) expect(next.body.length).toBeGreaterThan(RESULT_BUDGET / 2 - 3_000);
       read += next.body;
     }
@@ -460,7 +464,7 @@ describe("result bounds (bite 4 build review)", () => {
     );
     const longSource = loaded.catalog.pages.get("l.md");
     if (longSource === undefined) throw new Error("l.md");
-    const out = projectPage(longSource, NOW, 0, RESULT_BUDGET);
+    const out = projectPage(longSource, NOW, 0, RESULT_BUDGET, { located: HERE });
     expect(out.citation.length).toBeLessThan(1_000);
     expect(out.truncated).toBe(true);
     // Bite b brings the structured output under the result budget too (D82), each of a source's values cut at
@@ -495,7 +499,7 @@ describe("result bounds (bite 4 build review)", () => {
     const wide = loaded.catalog.pages.get("w.md");
     if (wide === undefined) throw new Error("w.md");
     expect(wide.sources).toHaveLength(2_000);
-    const out = projectPage(wide, NOW, 0, RESULT_BUDGET);
+    const out = projectPage(wide, NOW, 0, RESULT_BUDGET, { located: HERE });
     expect(out.provenance?.usageWindow).toEqual({ from: "2026-01-01", to });
     expect(new Set(out.provenance?.sources.map((s) => JSON.stringify(s.effectiveWindow)))).toEqual(
       new Set(['{"inherited":true}']),
@@ -503,7 +507,7 @@ describe("result bounds (bite 4 build review)", () => {
     expect(JSON.stringify(out).length).toBeLessThan(5 * Buffer.byteLength(text));
     // One source that inherits keeps the dates on the page, once.
     const single = { ...wide, sources: [{ resource: "only" }] };
-    const lone = projectPage(single, NOW, 0, RESULT_BUDGET);
+    const lone = projectPage(single, NOW, 0, RESULT_BUDGET, { located: HERE });
     expect(lone.provenance?.usageWindow).toEqual({ from: "2026-01-01", to });
     expect(lone.provenance?.sources).toEqual([
       { resource: "only", effectiveWindow: { inherited: true } },
@@ -607,7 +611,7 @@ describe("the result budget (D82)", () => {
         kind: "concept" as const,
       })),
     };
-    const out = projectCitations(citations, RESULT_BUDGET);
+    const out = projectCitations(citations, RESULT_BUDGET, HERE);
     expect(() => CitationsOutputSchema.parse(out)).not.toThrow();
     const text = citationsText(out);
     within(out, text);
@@ -649,6 +653,7 @@ describe("the result budget (D82)", () => {
         inboundDerivations: [],
       },
       RESULT_BUDGET,
+      HERE,
     );
     expect(small.truncated).toBe(false);
     expect(small.mentions).toMatchObject({ total: 2 });
@@ -681,7 +686,7 @@ describe("the result budget (D82)", () => {
     if (joined === undefined) throw new Error("a.md");
     expect(joined.footnoteReferences).toHaveLength(n);
     const started = performance.now();
-    const out = projectCitations(citationsOf(loaded.catalog, joined), RESULT_BUDGET);
+    const out = projectCitations(citationsOf(loaded.catalog, joined), RESULT_BUDGET, HERE);
     const textOut = citationsText(out);
     const elapsed = performance.now() - started;
     expect(elapsed).toBeLessThan(10_000);
@@ -721,7 +726,7 @@ describe("the result budget (D82)", () => {
       nodes: Array.from({ length: 201 }, (_, i) => node(i)),
       capped: true,
     };
-    const out = projectWalk(walk, RESULT_BUDGET);
+    const out = projectWalk(walk, RESULT_BUDGET, HERE);
     expect(() => ProvenanceOutputSchema.parse(out)).not.toThrow();
     within(out, walkText(out));
     expect(out.truncated).toBe(true);
@@ -748,6 +753,7 @@ describe("the result budget (D82)", () => {
         ],
       },
       RESULT_BUDGET,
+      HERE,
     );
     within(huge, walkText(huge));
     expect(huge.nodes).toHaveLength(1);
@@ -758,6 +764,7 @@ describe("the result budget (D82)", () => {
     const whole = projectWalk(
       { ...walk, nodes: walk.nodes.slice(0, 2), capped: false },
       RESULT_BUDGET,
+      HERE,
     );
     expect(whole.truncated).toBe(false);
     expect(whole.nodes).toHaveLength(2);
@@ -774,7 +781,7 @@ describe("the result budget (D82)", () => {
       resource: `https://example.test/${"p".repeat(60)}/${i}`,
     }));
     const heavy: Page = { ...base, verified, sources, body: "line of body text\n".repeat(4_000) };
-    const out = projectPage(heavy, NOW, 0, RESULT_BUDGET);
+    const out = projectPage(heavy, NOW, 0, RESULT_BUDGET, { located: HERE });
     expect(() => PageOutputSchema.parse(out)).not.toThrow();
     within(
       out,
@@ -798,7 +805,9 @@ describe("the result budget (D82)", () => {
       ...v,
       by: `human:reviewer-${String(i).padStart(3, "0")}-${"w".repeat(1_900)}`,
     }));
-    const full = projectPage({ ...heavy, verified: wordy }, NOW, 0, RESULT_BUDGET);
+    const full = projectPage({ ...heavy, verified: wordy }, NOW, 0, RESULT_BUDGET, {
+      located: HERE,
+    });
     within(full, `${full.citation}\n${full.notice}\n${full.body}`);
     const listed = full.provenance?.verified.length ?? 0;
     expect(listed).toBeGreaterThan(0);
@@ -810,7 +819,7 @@ describe("the result budget (D82)", () => {
     expect(full.citation).toContain("300 sources, none named within the result budget");
     // Verified that fits whole leaves room for the first sources, in order; the header names those it kept.
     const fewer: Page = { ...heavy, verified: verified.slice(0, 2) };
-    const second = projectPage(fewer, NOW, 0, RESULT_BUDGET);
+    const second = projectPage(fewer, NOW, 0, RESULT_BUDGET, { located: HERE });
     within(second, `${second.citation}\n${second.notice}\n${second.body}`);
     expect(second.provenance?.verified).toHaveLength(2);
     const kept = second.provenance?.sources.length ?? 0;
@@ -822,7 +831,7 @@ describe("the result budget (D82)", () => {
     // The header names at most ten of the sources the provenance kept (bite a's rule within bite b's, merge ruling 2).
     expect(second.citation).toContain(`; and ${300 - Math.min(10, kept)} more`);
     // A page that fits carries its totals and its sources whole.
-    const plain = projectPage(base, NOW, 0, RESULT_BUDGET);
+    const plain = projectPage(base, NOW, 0, RESULT_BUDGET, { located: HERE });
     expect(plain.provenance?.verifiedTotal).toBe(2);
     expect(plain.provenance?.sourcesTotal).toBe(1);
     expect(plain.provenance?.sources).toHaveLength(1);
@@ -836,7 +845,7 @@ describe("the result budget (D82)", () => {
       id: `s${i}`,
       resource: `r${i}${" ".repeat(100)}x`,
     }));
-    const out = projectPage({ ...base, sources }, NOW, 0, RESULT_BUDGET);
+    const out = projectPage({ ...base, sources }, NOW, 0, RESULT_BUDGET, { located: HERE });
     within(out, `${out.citation}\n${out.notice}\n${out.body}`);
     const kept = out.provenance?.sources.length ?? 0;
     expect(kept).toBeGreaterThan(50);
@@ -849,7 +858,7 @@ describe("the result budget (D82)", () => {
   it("keeps a get_page body within the structured budget when escaping lengthens it", () => {
     const base = page("terms/alpha.md");
     const quotes: Page = { ...base, body: `${'"\\'.repeat(30_000)}\n` };
-    const out = projectPage(quotes, NOW, 0, RESULT_BUDGET);
+    const out = projectPage(quotes, NOW, 0, RESULT_BUDGET, { located: HERE });
     within(out, `${out.citation}\n${out.notice}\n${out.body}`);
     expect(out.truncated).toBe(true);
     const index = catalog.folders.get("")?.index;
@@ -859,6 +868,7 @@ describe("the result budget (D82)", () => {
       "file",
       0,
       RESULT_BUDGET,
+      HERE,
     );
     within(reserved, `${reserved.citation}\n${reserved.notice}\n${reserved.body}`);
   });
@@ -886,7 +896,7 @@ describe("the result budget (D82)", () => {
       unjoined: [],
       inboundDerivations: [],
     };
-    const text = citationsText(projectCitations(citations, RESULT_BUDGET));
+    const text = citationsText(projectCitations(citations, RESULT_BUDGET, HERE));
     const lines = text.split("\n");
     expect(lines[1]).toBe(NOTICE);
     // The marker starts one line only; the hostile copies are quoted and escaped inside rows.
@@ -930,6 +940,7 @@ describe("the result budget (D82)", () => {
           ],
         },
         RESULT_BUDGET,
+        HERE,
       ),
     );
     const walkLines = walk.split("\n");
@@ -1002,6 +1013,7 @@ describe("row caps and list shares (bite b's build reviews B-I-A3, B-A-A2, B-I-E
     const out = projectCitations(
       citationsOf(neighbours, pageIn(neighbours, "target.md")),
       RESULT_BUDGET,
+      HERE,
     );
     const text = citationsText(out);
     within(out, text);
@@ -1022,6 +1034,7 @@ describe("row caps and list shares (bite b's build reviews B-I-A3, B-A-A2, B-I-E
     const out = projectCitations(
       citationsOf(neighbours, pageIn(neighbours, "long-resource.md")),
       RESULT_BUDGET,
+      HERE,
     );
     const text = citationsText(out);
     within(out, text);
@@ -1038,6 +1051,7 @@ describe("row caps and list shares (bite b's build reviews B-I-A3, B-A-A2, B-I-E
     const walk = projectWalk(
       walkProvenance(neighbours, pageIn(neighbours, "long-resource.md"), 4, NOW),
       RESULT_BUDGET,
+      HERE,
     );
     within(walk, walkText(walk));
     expect(walk.truncated).toBe(false);
@@ -1049,6 +1063,7 @@ describe("row caps and list shares (bite b's build reviews B-I-A3, B-A-A2, B-I-E
     const stale = projectWalk(
       walkProvenance(neighbours, pageIn(neighbours, "long-stale.md"), 4, NOW),
       RESULT_BUDGET,
+      HERE,
     );
     within(stale, walkText(stale));
     expect(stale.nodes[0]?.recheck?.raw.length).toBe(2_001);
@@ -1067,7 +1082,7 @@ describe("row caps and list shares (bite b's build reviews B-I-A3, B-A-A2, B-I-E
         ),
       ),
     });
-    const out = projectPage(pageIn(catalog, "a.md"), NOW, 0, RESULT_BUDGET);
+    const out = projectPage(pageIn(catalog, "a.md"), NOW, 0, RESULT_BUDGET, { located: HERE });
     within(out, `${out.citation}\n${out.notice}\n${out.body}`);
     expect(out.provenance?.sources.map((s) => s.id)).toEqual(["big", "s0", "s1", "s2", "s3", "s4"]);
     expect(out.provenance?.sources[0]?.title?.length).toBe(2_001);
@@ -1108,7 +1123,7 @@ describe("row caps and list shares (bite b's build reviews B-I-A3, B-A-A2, B-I-E
         kind: "concept" as const,
       })),
     };
-    const out = projectCitations(citations, RESULT_BUDGET);
+    const out = projectCitations(citations, RESULT_BUDGET, HERE);
     within(out, citationsText(out));
     expect(out.truncated).toBe(true);
     // The two long lists are cut, each keeping its first rows; the short lists after them are whole.
@@ -1150,6 +1165,7 @@ describe("row caps and list shares (bite b's build reviews B-I-A3, B-A-A2, B-I-E
         inboundDerivations: [],
       },
       RESULT_BUDGET,
+      HERE,
     );
     const text = citationsText(out);
     within(out, text);
@@ -1211,6 +1227,7 @@ describe("get_page within the budget in both channels (bite b's build reviews B-
         NOW,
         0,
         RESULT_BUDGET,
+        { located: HERE },
       );
       within(out);
       expect(out.truncated, name).toBe(true);
@@ -1228,6 +1245,7 @@ describe("get_page within the budget in both channels (bite b's build reviews B-
       NOW,
       0,
       RESULT_BUDGET,
+      { located: HERE },
     );
     within(out);
     const provenance = out.provenance;
@@ -1255,6 +1273,7 @@ describe("get_page within the budget in both channels (bite b's build reviews B-
       NOW,
       0,
       RESULT_BUDGET,
+      { located: HERE },
     );
     within(out);
     expect(JSON.stringify(out.provenance).length).toBeLessThanOrEqual(RESULT_BUDGET / 2);
@@ -1266,20 +1285,20 @@ describe("get_page within the budget in both channels (bite b's build reviews B-
   it("cuts a body that escaping doubles in long windows, by the longest cut whose JSON fits (B-A-A3)", () => {
     const doubled = `${'"'.repeat(45_000)}${"\\".repeat(45_000)}`;
     const page = loadOne(`---\ntype: Note\ntitle: Q\ndescription: D\n---\n\n${doubled}\n`);
-    const first = projectPage(page, NOW, 0, RESULT_BUDGET);
+    const first = projectPage(page, NOW, 0, RESULT_BUDGET, { located: HERE });
     within(first);
     const room = RESULT_BUDGET - first.citation.length - NOTICE.length - 80;
     expect(first.body.length).toBeGreaterThanOrEqual(0.4 * room);
     let calls = 1;
     for (let next = first; next.truncated; calls++) {
-      next = projectPage(page, NOW, next.nextOffset ?? 0, RESULT_BUDGET);
+      next = projectPage(page, NOW, next.nextOffset ?? 0, RESULT_BUDGET, { located: HERE });
       within(next);
     }
     expect(calls).toBeLessThanOrEqual(6);
     // A reserved file's body is cut the same way.
     const index = catalog.folders.get("")?.index;
     if (index === undefined) throw new Error("root index");
-    const reserved = projectReserved({ ...index, body: doubled }, "file", 0, RESULT_BUDGET);
+    const reserved = projectReserved({ ...index, body: doubled }, "file", 0, RESULT_BUDGET, HERE);
     expect(JSON.stringify(reserved).length).toBeLessThanOrEqual(RESULT_BUDGET);
     expect(reserved.body.length).toBeGreaterThanOrEqual(0.4 * room);
   });
@@ -1301,6 +1320,7 @@ describe("get_page within the budget in both channels (bite b's build reviews B-
       NOW,
       0,
       RESULT_BUDGET,
+      { located: HERE },
     );
     within(out);
     expect(out.provenance?.verifiedTotal).toBe(300);
@@ -1354,7 +1374,7 @@ describe("the last rows go until the result fits (bite b's build review B-I-B6)"
       })),
     };
     for (let budget = 10_800; budget <= 11_600; budget += 1) {
-      const out = projectCitations(citations, budget);
+      const out = projectCitations(citations, budget, HERE);
       within(out, citationsText(out), budget);
     }
   });
@@ -1382,7 +1402,7 @@ describe("the last rows go until the result fits (bite b's build review B-I-B6)"
       capped: false,
     };
     for (let budget = 1_200; budget <= 4_000; budget += 1) {
-      const out = projectWalk(walk, budget);
+      const out = projectWalk(walk, budget, HERE);
       within(out, walkText(out), budget);
     }
   });
@@ -1537,7 +1557,7 @@ describe("the verification of bite b's fix pass", () => {
     );
     const start = catalog.pages.get("a.md");
     if (start === undefined) throw new Error("a.md");
-    const cited = projectCitations(citationsOf(catalog, start), RESULT_BUDGET);
+    const cited = projectCitations(citationsOf(catalog, start), RESULT_BUDGET, HERE);
     expect(cited.truncated).toBe(false);
     expect(cited.inboundMentions.rows.map((r) => [r.from, r.status.length])).toEqual([
       ["b.md", 2_001],
@@ -1548,7 +1568,7 @@ describe("the verification of bite b's fix pass", () => {
       ["c.md", 6],
     ]);
     expect(citationsText(cited)).toContain(`- from b.md ["${long("w", 500)}"…]: "a"`);
-    const walk = projectWalk(walkProvenance(catalog, start, 4, NOW), RESULT_BUDGET);
+    const walk = projectWalk(walkProvenance(catalog, start, 4, NOW), RESULT_BUDGET, HERE);
     expect(walk.truncated).toBe(false);
     expect(walk.nodes.map((n) => [n.path, n.status.length])).toEqual([
       ["a.md", 6],
@@ -1575,7 +1595,7 @@ describe("the verification of bite b's fix pass", () => {
     const catalog = loadFiles({
       "p.md": `---\ntype: Note\ntitle: P\nsources:\n${entries.join("")}---\n\nBody.\n`,
     });
-    const out = projectPage(only(catalog, "p.md"), NOW, 0, RESULT_BUDGET);
+    const out = projectPage(only(catalog, "p.md"), NOW, 0, RESULT_BUDGET, { located: HERE });
     expect(out.provenance?.sources).toHaveLength(10);
     expect(out.citation.length).toBeLessThanOrEqual(RESULT_BUDGET / 4);
     expect(JSON.stringify(out.citation).length).toBeLessThanOrEqual(RESULT_BUDGET / 4);
@@ -1587,7 +1607,7 @@ describe("the verification of bite b's fix pass", () => {
       { "p.md": `---\ntype: Note\ntitle: P\nstatus: ${yaml(long("w"))}\n---\n\nBody.\n` },
       true,
     );
-    const out = projectPage(only(catalog, "p.md"), NOW, 0, RESULT_BUDGET);
+    const out = projectPage(only(catalog, "p.md"), NOW, 0, RESULT_BUDGET, { located: HERE });
     expect(out.citation).toContain(`[Note, "${long("w", 200)}"…, unverified`);
     expect(out.citation.length).toBeLessThan(500);
     expect(out.provenance?.status.length).toBe(2_001);
@@ -1598,7 +1618,7 @@ describe("the verification of bite b's fix pass", () => {
       "p.md": `---\ntype: Note\ntitle: P\n---\n\nSee [one](https://x.test/${long("u")}) and [two](q.md).\n`,
       "q.md": "---\ntype: Note\ntitle: Q\n---\n\nQ.\n",
     });
-    const out = projectCitations(citationsOf(catalog, only(catalog, "p.md")), RESULT_BUDGET);
+    const out = projectCitations(citationsOf(catalog, only(catalog, "p.md")), RESULT_BUDGET, HERE);
     expect(out.truncated).toBe(false);
     expect(out.mentions.rows.map((m) => [m.kind, m.raw.length])).toEqual([
       ["external", 2_001],
@@ -1612,7 +1632,7 @@ describe("the verification of bite b's fix pass", () => {
       "d1.md": `---\ntype: Note\ntitle: D1\nsources:\n  - { resource: t.md, author: ${yaml(long("a"))}, last_modified: ${yaml(long("m"))} }\n---\n\nD.\n`,
       "d2.md": "---\ntype: Note\ntitle: D2\nsources:\n  - { resource: t.md }\n---\n\nD.\n",
     });
-    const out = projectCitations(citationsOf(catalog, only(catalog, "t.md")), RESULT_BUDGET);
+    const out = projectCitations(citationsOf(catalog, only(catalog, "t.md")), RESULT_BUDGET, HERE);
     expect(out.truncated).toBe(false);
     expect(
       out.inboundDerivations.rows.map((r) => [r.from, r.author?.length, r.lastModified?.length]),

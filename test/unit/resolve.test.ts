@@ -295,3 +295,78 @@ describe("resolvePageName across bundles (D74)", () => {
     expect(found("foo.md.md", split)).toMatchObject({ bundle: "b", path: "foo.md.md" });
   });
 });
+
+// The fold of bite c's build reviews, C-A-A2: the name the server prints (`<bundle>:<path>`, a path that is not plain
+// quoted) is a name the resolver takes back.
+describe("resolvePageName: a printed name (C-A-A2)", () => {
+  const options = {
+    admit: ["stable", "deprecated"],
+    dev: false,
+    integrity: "none" as const,
+    specText: "2026-08-15" as const,
+    caps: DEFAULT_CAPS,
+  };
+  const bundleOf = (bundle: string, paths: string[]): BundleView => ({
+    bundle,
+    catalog: loadBundle(
+      bundle,
+      paths.map((path) => ({ path, bytes: page(path) })),
+      options,
+      NOW,
+    ).catalog,
+  });
+
+  it("reads <bundle>:<path> in that bundle when the bundle is left out or is the same", () => {
+    const two = [
+      bundleOf("a", ["terms/alpha.md", "x.md"]),
+      bundleOf("b", ["terms/alpha.md", "x.md"]),
+    ];
+    for (const name of ["b:terms/alpha.md", "b:terms/alpha", " b:/terms/alpha.md "])
+      expect(found(name, two), name).toMatchObject({ bundle: "b", path: "terms/alpha.md" });
+    expect(found("b:terms/alpha.md", two, "b")).toMatchObject({
+      bundle: "b",
+      path: "terms/alpha.md",
+    });
+    expect(found("a:index.md", two)).toMatchObject({ bundle: "a", kind: "reserved" });
+    // Another bundle named beside the prefix: the name is read as written in that bundle, and is not there.
+    const other = resolvePageName(two, "b:x.md", "a");
+    expect(other.ok).toBe(false);
+    expect(!other.ok && other.reason).toBe("not-found");
+    // A printed name that is not there answers for the bundle it names, with that bundle's nearest paths.
+    const missing = resolvePageName(two, "b:terms/alpa.md");
+    if (missing.ok || missing.reason !== "not-found") throw new Error("expected not-found");
+    expect(missing.name).toBe("terms/alpa.md");
+    expect(missing.bundle).toBe("b");
+    expect(missing.nearest.every((near) => near.bundle === "b")).toBe(true);
+    // A prefix that is no bundle of the network is part of the name.
+    const unknown = resolvePageName(two, "zz:x.md");
+    expect(!unknown.ok && unknown.reason).toBe("not-found");
+    // A refused bundle named by its prefix answers as a refused bundle named as the bundle.
+    const fatal = { path: "", rule: "load-failed" as const, detail: "gone" };
+    const refused = [{ ...bundleOf("a", ["x.md"]), fatal }, bundleOf("b", ["y.md"])];
+    expect(resolvePageName(refused, "a:x.md")).toEqual({
+      ok: false,
+      reason: "refused-bundle",
+      bundle: "a",
+      fatal,
+    });
+  });
+
+  it("reads a page whose path holds a colon as written first, and takes its quoted form back", () => {
+    // a holds a page literally named "b:x.md"; b holds x.md: the literal path wins, as no page is preferred silently.
+    const two = [bundleOf("a", ["b:x.md"]), bundleOf("b", ["x.md"])];
+    expect(found("b:x.md", two)).toMatchObject({ bundle: "a", path: "b:x.md" });
+    expect(found("b:x.md", two, "b")).toMatchObject({ bundle: "b", path: "x.md" });
+    // The path printed quoted, as a line prints a path that is not plain, alone or after its bundle.
+    expect(found('"b:x.md"', two)).toMatchObject({ bundle: "a", path: "b:x.md" });
+    expect(found('a:"b:x.md"', two)).toMatchObject({ bundle: "a", path: "b:x.md" });
+    expect(found('b:"x.md"', two)).toMatchObject({ bundle: "b", path: "x.md" });
+    // A quoted path's escapes are read back: a quotation mark, and a character a line writes as \u escape.
+    const odd = [bundleOf("a", ['say "hi".md', "zero\u200bwidth.md"])];
+    expect(found('a:"say \\"hi\\".md"', odd)).toMatchObject({ path: 'say "hi".md' });
+    expect(found('a:"zero\\\\u200bwidth.md"', odd)).toMatchObject({ path: "zero\u200bwidth.md" });
+    // What is not a JSON string is no quoted name.
+    const broken = resolvePageName(odd, 'a:"unclosed.md');
+    expect(!broken.ok && broken.reason).toBe("not-found");
+  });
+});
