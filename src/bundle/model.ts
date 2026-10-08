@@ -242,6 +242,8 @@ export interface Page {
   replacement?: PagePath;
   links: Link[];
   footnoteReferences: FootnoteReference[];
+  /** The page's path fields, classified by the loader once the bundle's admission is known (D69); empty before. */
+  pathEdges: PathEdge[];
   frontmatter: Record<string, unknown>;
   body: string;
   /** The body's prose for snippets, captured once at load; absent when the body could not be analysed. */

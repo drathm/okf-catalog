@@ -7,7 +7,38 @@
   "attachments": 2,
   "hidden": 0,
   "refusals": [],
-  "degradations": [],
+  "degradations": [
+    {
+      "path": "computations/gross-margin-period.md",
+      "code": "path-field-root-relative",
+      "field": "sources[0].resource",
+      "detail": "4 path fields name nothing from the page's folder and were read from the bundle root, as written without a leading /: sources[0].resource, sources[1].resource, executor.resource, attester.resource"
+    },
+    {
+      "path": "computations/revenue-ytd.md",
+      "code": "path-field-root-relative",
+      "field": "sources[0].resource",
+      "detail": "4 path fields name nothing from the page's folder and were read from the bundle root, as written without a leading /: sources[0].resource, sources[1].resource, executor.resource, attester.resource"
+    },
+    {
+      "path": "metrics/gross-margin.md",
+      "code": "path-field-root-relative",
+      "field": "sources[0].resource",
+      "detail": "2 path fields name nothing from the page's folder and were read from the bundle root, as written without a leading /: sources[0].resource, sources[1].resource"
+    },
+    {
+      "path": "metrics/revenue.md",
+      "code": "path-field-root-relative",
+      "field": "sources[0].resource",
+      "detail": "1 path field names nothing from the page's folder and was read from the bundle root, as written without a leading /: sources[0].resource"
+    },
+    {
+      "path": "tables/orders.md",
+      "code": "path-field-root-relative",
+      "field": "sources[1].resource",
+      "detail": "1 path field names nothing from the page's folder and was read from the bundle root, as written without a leading /: sources[1].resource"
+    }
+  ],
   "unknownTypes": [],
   "unknownStatuses": [],
   "brokenLinks": [],

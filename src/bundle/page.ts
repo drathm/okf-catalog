@@ -439,6 +439,7 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
     sources,
     links,
     footnoteReferences: facts.footnoteReferences,
+    pathEdges: [],
     frontmatter: data,
     body: split.body,
     ...(facts.prose === undefined ? {} : { prose: facts.prose }),
