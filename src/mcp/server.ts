@@ -8,6 +8,7 @@ import { registerTools } from "./tools.js";
 export const INSTRUCTIONS = [
   "This server serves one company's knowledge bundle (Open Knowledge Format).",
   "Start with `catalog` to see what exists, search with keywords through `search`, then read a page whole with `get_page`.",
+  "Ask `citations` what a page cites and what cites it, and `provenance` where its sources lead; neither fetches, opens or runs anything.",
   "Cite every answer with the page's path, its trust tier, its verifier and its recheck date as the result states them; say so when a page is overdue or deprecated, and follow a replacement.",
   "When no page answers, say that there is none. Never claim a page says what it does not.",
   DATA_SENTENCE,
