@@ -33,9 +33,12 @@ options:
   --admit <status>    admit this status: stable, deprecated or a word of the company's own, never draft;
                       may be repeated; default from the configuration
   --commit <sha>      the source commit to record in the manifest; the zero commit without it
+  --allow-empty       write the bundle even when no page is admitted; without it that is refused, so a typo
+                      in the statuses cannot publish a bundle with no page
   --help              print this text
 
-exit codes: 0 packed; 1 the loader refused a file; 2 usage, configuration or output-folder problem
+exit codes: 0 packed; 1 the loader refused a file; 2 usage, configuration or output-folder problem, or no
+page admitted without --allow-empty
 `;
 
 const ZERO_COMMIT = "0".repeat(40);
@@ -67,6 +70,7 @@ export function runPack(argv: string[], io: CommandIo): number {
         out: { type: "string" },
         admit: { type: "string", multiple: true },
         commit: { type: "string" },
+        "allow-empty": { type: "boolean", default: false },
       },
       allowPositionals: false,
       strict: true,
@@ -163,6 +167,15 @@ export function runPack(argv: string[], io: CommandIo): number {
   if (report.fatal !== undefined || report.refusals.length > 0) {
     io.stderr(renderReport(report));
     return 1;
+  }
+  // A bundle with no admitted page is refused unless asked for: a typo in serve.admit or --admit admits nothing,
+  // and the publish recipe would otherwise push a bundle with no page (D77, amended after the build review).
+  if (catalog.pages.size === 0 && parsed.values["allow-empty"] !== true) {
+    io.stderr(renderReport(report));
+    io.stderr(
+      `no page is admitted by the statuses ${options.admit.map((word) => JSON.stringify(word)).join(", ")}, so nothing was written; check them for a typo, or pass --allow-empty to write a bundle with no page\n`,
+    );
+    return 2;
   }
 
   // What travels: admitted pages, reserved files and attachments as walked, and an index where a folder of pages lacks one.

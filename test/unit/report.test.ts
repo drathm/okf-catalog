@@ -39,6 +39,22 @@ describe("renderReport", () => {
   });
 });
 
+describe("renderReport: admitted words that match no page (D77, build review A-E1)", () => {
+  it("names each admitted word no page carries, quoted, and says nothing when every word matches", () => {
+    const load = (admit: string[]) =>
+      loadBundle(
+        "b",
+        readFixture("behaviours"),
+        { admit, dev: false, integrity: "none", specText: "2026-08-15", caps: DEFAULT_CAPS },
+        NOW,
+      ).report;
+    expect(renderReport(load(["stable", "depreciated", "a, b"]))).toContain(
+      'Admitted statuses that match no page: "depreciated", "a, b"',
+    );
+    expect(renderReport(load(["stable", "deprecated"]))).not.toContain("match no page");
+  });
+});
+
 describe("renderReport: detail lines (review round 1)", () => {
   it("prints each degradation with its path and detail, and says when integrity was skipped", () => {
     const { report } = loadBundle(

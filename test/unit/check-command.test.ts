@@ -109,6 +109,27 @@ describe("okf-catalog check", () => {
     );
   });
 
+  it("names an admitted word that matches no page in its report (D77, build review A-E1)", async () => {
+    const run = await runCli([
+      "check",
+      join(FIXTURES, "behaviours"),
+      "--admit",
+      "stable,depreciated",
+    ]);
+    expect(run.code).toBe(0);
+    expect(run.stdout).toContain('Admitted statuses that match no page: "depreciated"');
+    const json = await runCli([
+      "check",
+      join(FIXTURES, "behaviours"),
+      "--json",
+      "--admit",
+      "stable,depreciated",
+    ]);
+    expect((JSON.parse(json.stdout) as { unmatchedAdmits: string[] }).unmatchedAdmits).toEqual([
+      "depreciated",
+    ]);
+  });
+
   it("refuses an empty --admit or --types list as a usage error", async () => {
     const admit = await runCli(["check", join(FIXTURES, "spec-example"), "--admit", ""]);
     expect(admit.code).toBe(2);

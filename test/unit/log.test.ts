@@ -55,6 +55,19 @@ describe("createLog", () => {
     expect(JSON.stringify(out.lines)).not.toMatch(/secret text|page text/);
   });
 
+  it("writes the warning of an admitted word that matches no page with its word (D77)", () => {
+    const out = sink();
+    const log = createLog(out, "info", () => new Date(0));
+    log.warn("serve.admit", { word: "depreciated", detail: "matches no page" });
+    expect(JSON.parse(out.lines[0] ?? "{}")).toEqual({
+      time: "1970-01-01T00:00:00.000Z",
+      level: "warn",
+      event: "serve.admit",
+      word: "depreciated",
+      detail: "matches no page",
+    });
+  });
+
   it("escapes control characters inside string fields", () => {
     const out = sink();
     const log = createLog(out, "info", () => new Date(0));

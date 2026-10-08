@@ -259,4 +259,9 @@ export interface Report {
   missingOnDisk: string[];
   foldersWithoutIndex: string[];
   encodedFolders: string[];
+  /**
+   * The words of the admission list, other than the three known statuses, that no page carries, as listed and
+   * trimmed, each once: a typo such as `depreciated` admits nothing, and says so (D77, amended after the build review).
+   */
+  unmatchedAdmits: string[];
 }
