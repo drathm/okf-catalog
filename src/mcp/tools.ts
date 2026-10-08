@@ -18,7 +18,7 @@ import {
 } from "../catalog/outputs.js";
 import { resolvePageName } from "../catalog/resolve.js";
 import type { Generation, Runtime, ToolOptions } from "../catalog/runtime.js";
-import { DATA_SENTENCE, safe } from "../catalog/text.js";
+import { DATA_SENTENCE, escapeControls, safe } from "../catalog/text.js";
 import type { Log } from "../log.js";
 import type { Engine } from "../search/engine.js";
 import { search } from "../search/search.js";
@@ -31,7 +31,10 @@ type ToolResult = {
   logFields?: Record<string, number>;
 };
 
-const FOLDER_LIST_CAP = 50;
+/** The most entries an error line lists before it gives the total. */
+const LIST_CAP = 50;
+/** The most characters of one listed value, its escapes counted, before it is cut with an ellipsis. */
+const VALUE_CAP = 200;
 /** The most tags a search may ask for; each is a word or two, at most as long as a type. */
 const TAG_LIST_CAP = 8;
 
@@ -52,14 +55,33 @@ function folderList(catalog: Catalog): string {
   const names = [...catalog.folders.keys()]
     .sort(byCodeUnit)
     .map((f) => (f === "" ? "(root)" : safe(f)));
-  const shown = names.slice(0, FOLDER_LIST_CAP).join(", ");
-  return names.length > FOLDER_LIST_CAP ? `${shown} … (${names.length} folders)` : shown;
+  const shown = names.slice(0, LIST_CAP).join(", ");
+  return names.length > LIST_CAP ? `${shown} … (${names.length} folders)` : shown;
 }
 
-/** Values in use for an error line: made safe, the first 50 printed, then the total when there are more. */
+/**
+ * One value in use, as stored: neither trimmed nor collapsed, so a padded tag shows its spaces and a comma stays
+ * inside one value; its unsafe characters escaped, cut at 200 characters with an ellipsis after the quote, then
+ * JSON-quoted (build review A-A3, A-A6). The cut counts escapes, so no value prints more than about 400 characters.
+ */
+function listedValue(value: string): string {
+  let kept = "";
+  let cut = false;
+  for (const character of value) {
+    const piece = escapeControls(character);
+    if (kept.length + piece.length > VALUE_CAP) {
+      cut = true;
+      break;
+    }
+    kept += piece;
+  }
+  return `${JSON.stringify(kept)}${cut ? "…" : ""}`;
+}
+
+/** Values in use for an error line: each listed as stored and quoted, the first 50, then the total when there are more. */
 function valueList(values: readonly string[], noun: string): string {
-  const shown = values.slice(0, FOLDER_LIST_CAP).map(safe).join(", ");
-  if (values.length > FOLDER_LIST_CAP) return `${shown} … (${values.length} ${noun})`;
+  const shown = values.slice(0, LIST_CAP).map(listedValue).join(", ");
+  if (values.length > LIST_CAP) return `${shown} … (${values.length} ${noun})`;
   return shown || "(none)";
 }
 
@@ -198,7 +220,7 @@ export function registerTools(
         type = types.find((t) => t.toLowerCase() === wantedType.toLowerCase());
         if (type === undefined) {
           return fail(
-            `no page has the type ${JSON.stringify(safe(wantedType))}; the types in use are: ${types.map(safe).join(", ") || "(none)"}`,
+            `no page has the type ${JSON.stringify(safe(wantedType))}; the types in use are: ${valueList(types, "types")}`,
           );
         }
       }
