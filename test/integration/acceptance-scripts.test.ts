@@ -291,5 +291,36 @@ describe("the acceptance scripts", { timeout: 60_000 }, () => {
       ["--expect-path", "policies/margin-standard.md", "--expect-trust"],
     );
     expect(cited.status).toBe(0);
+    // The 0.4 item: beyond one bundle the answer names the page's bundle as well as its path (D74).
+    const named = verify(
+      [
+        init,
+        call("mcp__okf-catalog__get_page"),
+        result(
+          "spec-example:policies/revenue-recognition.md (bundle spec-example, human-reviewed) says …",
+        ),
+      ],
+      ["--expect-path", "policies/revenue-recognition.md", "--expect-bundle", "spec-example"],
+    );
+    expect(named.status).toBe(0);
+    const unnamed = verify(
+      [
+        init,
+        call("mcp__okf-catalog__get_page"),
+        result("policies/revenue-recognition.md (human-reviewed) says …"),
+      ],
+      ["--expect-path", "policies/revenue-recognition.md", "--expect-bundle", "spec-example"],
+    );
+    expect(unnamed.stdout).toContain("the answer does not name the bundle spec-example");
+    expect(unnamed.status).toBe(1);
+  });
+
+  it("claude.sh's question item checks the answer names the bundle when one is given (the 0.4 item)", () => {
+    const script = readFileSync(join(ACCEPTANCE, "claude.sh"), "utf8");
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the shell's own parameter expansion is the case under test
+    expect(script).toContain('BUNDLE="${4:-}"');
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: the shell's own parameter expansion is the case under test
+    expect(script).toContain('${BUNDLE:+--expect-bundle "$BUNDLE"}');
+    expect(script).toContain('question "<text>" <expected page path> [<bundle>]');
   });
 });
