@@ -602,4 +602,31 @@ describe("QmdEngine: a network of bundles (D73, D75)", () => {
     expect(await e.index("acme", pages)).toMatchObject({ documents: 2, unchanged: 2, indexed: 0 });
     await e.close();
   });
+
+  // The fold of bite c's build reviews, C-A-B1: decode() keeps a hit only when its first segment is a configured
+  // bundle (D73). open() rebuilds a store with another collection's pages, so this is the guard behind it: rows of a
+  // collection the engine was not opened for, written into its store after the open, never become hits.
+  it("drops a hit of a collection that is not one of its bundles", async () => {
+    const dir = temp();
+    const pages = [note("a.md", "zebra one"), note("b.md", "zebra two"), note("c.md", "plain")];
+    const e = await QmdEngine.open({ bundles: ["aa"], dir });
+    try {
+      await e.index("aa", pages);
+      const { default: Database } = await import("better-sqlite3");
+      const db = new Database(join(dir, "index.sqlite"));
+      db.prepare(
+        "INSERT INTO documents (collection, path, title, hash, created_at, modified_at, active) SELECT 'stray', path, title, hash, created_at, modified_at, active FROM documents WHERE collection = 'aa' AND active = 1",
+      ).run();
+      // The store holds the stray rows, searchable: qmd keeps the full-text table in step with its documents.
+      const stray = db
+        .prepare("SELECT count(*) AS n FROM documents_fts WHERE filepath LIKE 'stray/%'")
+        .get() as { n: number };
+      db.close();
+      expect(stray.n).toBe(3);
+      const hits = await e.lex(["zebra"], 50);
+      expect(hits.map((hit) => `${hit.bundle}:${hit.path}`).sort()).toEqual(["aa:a.md", "aa:b.md"]);
+    } finally {
+      await e.close();
+    }
+  });
 });
