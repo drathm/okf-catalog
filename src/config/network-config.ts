@@ -394,6 +394,85 @@ function folderProblems(
   return problems;
 }
 
+/**
+ * A repository as two bundles are compared (C-A-A6): its host without regard to case, and its path without a leading
+ * `/` or `~/`, a trailing `.git` or `/`; the scheme, the user and the port aside, so `git@host:acme/kb.git` and
+ * `https://host/acme/kb` are one repository. The path keeps its case: a server may tell two repositories apart by it.
+ */
+function repositoryKey(value: string): string {
+  let host = "";
+  let path = value;
+  if (SCP_LIKE.test(value)) {
+    const at = value.indexOf("@");
+    const colon = value.indexOf(":", at);
+    host = value.slice(at + 1, colon);
+    path = value.slice(colon + 1);
+  } else {
+    try {
+      const url = new URL(value);
+      host = url.hostname;
+      path = url.pathname;
+    } catch {
+      return value;
+    }
+  }
+  const trimmed = path
+    .replace(/^(?:\/|~\/)+/, "")
+    .replace(/\/+$/, "")
+    .replace(/\.git$/, "")
+    .replace(/\/+$/, "");
+  return `${host.toLowerCase()}/${trimmed}`;
+}
+
+/** A bundle path's segments: none for the repository's root, `.`. */
+const pathSegments = (bundlePath: string): string[] =>
+  bundlePath === "." ? [] : bundlePath.split("/");
+
+/**
+ * Repository bundles that would serve one tree (D76; C-A-A6): of one repository and branch, the same bundle path, or
+ * one inside the other, would serve the same files twice. Another branch is another tree.
+ */
+function treeProblems(
+  bundles: ReadonlyArray<{ bundle: BundleConfig; key: (name: string) => string }>,
+): string[] {
+  const problems: string[] = [];
+  const trees = bundles.map(({ bundle }) =>
+    bundle.source.kind === "git"
+      ? {
+          repository: repositoryKey(bundle.source.repository),
+          branch: bundle.source.branch,
+          segments: pathSegments(bundle.source.bundlePath),
+        }
+      : undefined,
+  );
+  bundles.forEach(({ key }, index) => {
+    const tree = trees[index];
+    if (tree === undefined) return;
+    for (let other = 0; other < index; other += 1) {
+      const there = trees[other];
+      if (
+        there === undefined ||
+        there.repository !== tree.repository ||
+        there.branch !== tree.branch
+      )
+        continue;
+      const [short, long] =
+        there.segments.length <= tree.segments.length
+          ? [there.segments, tree.segments]
+          : [tree.segments, there.segments];
+      if (!short.every((segment, i) => long[i] === segment)) continue;
+      const name = JSON.stringify(bundles[other]?.bundle.id);
+      problems.push(
+        short.length === long.length
+          ? `${key("source")}: the same repository, branch and bundle_path as bundle ${name}; two bundles never share a file`
+          : `${key("source.bundle_path")}: lies inside the bundle_path of bundle ${name} in the same repository and branch, or holds it; two bundles never share a file`,
+      );
+      return;
+    }
+  });
+  return problems;
+}
+
 /** The `company:` form: a network of the company's name with one bundle of that id (D-G). */
 function parseCompanyForm(
   document: object,
@@ -465,6 +544,7 @@ function parseNetworkForm(
   });
   if (problems.length > 0) return { ok: false, problems };
   problems.push(...folderProblems(raw.network, resolved, where.options));
+  problems.push(...treeProblems(resolved));
   if (problems.length > 0) return { ok: false, problems };
   return {
     ok: true,

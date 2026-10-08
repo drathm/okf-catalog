@@ -535,3 +535,52 @@ describe("parseNetworkConfig: local folders by their real paths (D76)", () => {
     expect(at(network(another))).toEqual([]);
   });
 });
+
+// The fold of bite c's build reviews, C-A-A6: two repository bundles never serve one tree, the same one or one inside
+// the other, of one repository and branch (D76).
+describe("parseNetworkConfig: repository bundles that would serve one tree (D76)", () => {
+  const repo = (id: string, repository: string, more = ""): string =>
+    `  - id: ${id}\n    source:\n      repository: "${repository}"\n${more}`;
+  const at = (...bundles: string[]): string[] =>
+    problems(`network: acme\nbundles:\n${bundles.join("")}`);
+  const KB = "https://example.test/acme/kb.git";
+
+  it("refuses the same repository, branch and bundle_path twice, however the repository is written", () => {
+    const same =
+      'bundles[1].source: the same repository, branch and bundle_path as bundle "a"; two bundles never share a file';
+    expect(at(repo("a", KB), repo("b", KB))).toEqual([same]);
+    for (const other of [
+      "https://EXAMPLE.test/acme/kb",
+      "https://example.test/acme/kb.git/",
+      "git@example.test:acme/kb.git",
+      "ssh://git@example.test/acme/kb",
+    ])
+      expect(at(repo("a", KB), repo("b", other)), other).toEqual([same]);
+    // The defaults count as written: the branch published and the bundle path ".".
+    expect(
+      at(repo("a", KB, "      branch: published\n      bundle_path: .\n"), repo("b", KB)),
+    ).toEqual([same]);
+  });
+
+  it("refuses a bundle_path inside another's, or holding it, in one repository and branch", () => {
+    const nested = (of: string): string[] => [
+      `bundles[1].source.bundle_path: lies inside the bundle_path of bundle "${of}" in the same repository and branch, or holds it; two bundles never share a file`,
+    ];
+    expect(
+      at(repo("a", KB, "      bundle_path: kb\n"), repo("b", KB, "      bundle_path: kb/eu\n")),
+    ).toEqual(nested("a"));
+    expect(
+      at(repo("a", KB, "      bundle_path: kb/eu\n"), repo("b", KB, "      bundle_path: kb\n")),
+    ).toEqual(nested("a"));
+    expect(at(repo("a", KB), repo("b", KB, "      bundle_path: kb\n"))).toEqual(nested("a"));
+  });
+
+  it("takes two trees that share nothing: another branch, a sibling folder, another repository", () => {
+    expect(at(repo("a", KB), repo("b", KB, "      branch: staging\n"))).toEqual([]);
+    expect(
+      at(repo("a", KB, "      bundle_path: kb\n"), repo("b", KB, "      bundle_path: kb2\n")),
+    ).toEqual([]);
+    expect(at(repo("a", KB), repo("b", "https://example.test/acme/kb-two.git"))).toEqual([]);
+    expect(at(repo("a", KB), repo("b", "https://other.test/acme/kb.git"))).toEqual([]);
+  });
+});
