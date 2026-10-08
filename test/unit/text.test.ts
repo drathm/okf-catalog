@@ -940,3 +940,50 @@ describe("a backslash before a quotation mark in every line of the two graph too
     }
   });
 });
+
+describe("a search hit's page-written values, cut as a page header's are (the verification of bite b's fix pass)", () => {
+  const hit = (patch: Partial<SearchHit>): SearchHit => ({
+    path: "terms/alpha.md",
+    title: "Alpha",
+    type: "Term",
+    status: "stable",
+    trust: "human-reviewed",
+    overdue: false,
+    score: 1,
+    rung: "all-terms",
+    sources: 0,
+    ...patch,
+  });
+  const long = "x".repeat(100_000);
+  // What a page header prints of a long value: its first 200 characters, quoted, then an ellipsis after the quote.
+  const cut = `"${"x".repeat(200)}"…`;
+
+  it("prints at most 200 characters of a title, type, status, resource or recheck date", () => {
+    expect(hitLine(hit({ title: long }), undefined, undefined)).toBe(
+      `terms/alpha.md — ${cut} [Term, stable, human-reviewed, no recheck date, no sources]`,
+    );
+    expect(hitLine(hit({ type: long }), undefined, undefined)).toBe(
+      `terms/alpha.md — Alpha [${cut}, stable, human-reviewed, no recheck date, no sources]`,
+    );
+    expect(hitLine(hit({ status: long }), undefined, undefined)).toBe(
+      `terms/alpha.md — Alpha [Term, ${cut}, human-reviewed, no recheck date, no sources]`,
+    );
+    expect(hitLine(hit({ resource: long }), undefined, undefined)).toBe(
+      `terms/alpha.md — Alpha [Term, stable, human-reviewed, no recheck date, no sources, resource: ${cut}]`,
+    );
+    expect(hitLine(hit({ staleAfter: long }), undefined, "unparseable")).toBe(
+      `terms/alpha.md — Alpha [Term, stable, human-reviewed, recheck date unparseable (${cut}), no sources]`,
+    );
+    // All five at once: the line stays the size of a page header, whatever the page wrote.
+    const all = hitLine(
+      hit({ title: long, type: long, status: long, resource: long, staleAfter: long }),
+      "a snippet",
+      "unparseable",
+    );
+    expect(all.length).toBeLessThan(1_500);
+    // A value within the cap prints as before.
+    expect(hitLine(hit({ title: "x".repeat(200) }), undefined, undefined)).toBe(
+      `terms/alpha.md — ${"x".repeat(200)} [Term, stable, human-reviewed, no recheck date, no sources]`,
+    );
+  });
+});

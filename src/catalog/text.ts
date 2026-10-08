@@ -204,7 +204,11 @@ const statusFact = (status: string, cap = Number.POSITIVE_INFINITY): string =>
 const typeFact = (type: string, options: LineOptions, cap = Number.POSITIVE_INFINITY): string =>
   fact(type, options.undeclaredTypes?.has(type) !== true, cap);
 
-/** One search hit as a line: path, title, the bracketed facts, the quoted snippet, the replacement. */
+/**
+ * One search hit as a line: path, title, the bracketed facts, the quoted snippet, the replacement; each value the
+ * page wrote printed whole up to 200 characters and cut there, as a page header prints it (the verification of bite
+ * b's fix pass).
+ */
 export function hitLine(
   hit: SearchHit,
   snippet: string | undefined,
@@ -216,15 +220,15 @@ export function hitLine(
       ? undefined
       : { raw: hit.staleAfter, form: form ?? "date", overdue: hit.overdue };
   const facts = [
-    typeFact(hit.type, options),
-    statusFact(hit.status),
+    typeFact(hit.type, options, HEADER_CAP),
+    statusFact(hit.status, HEADER_CAP),
     hit.trust,
-    recheckPhrase(recheck),
+    recheckPhrase(recheck, HEADER_CAP),
     sourceCount(hit.sources),
-    ...(hit.resource === undefined ? [] : [`resource: ${plainOrQuoted(hit.resource)}`]),
+    ...(hit.resource === undefined ? [] : [`resource: ${plainOrQuoted(hit.resource, HEADER_CAP)}`]),
   ].join(", ");
   const snippetPart = snippet === undefined || snippet.length === 0 ? "" : ` ${quoted(snippet)}`;
-  return `${printed(hit.path, "path")} — ${printed(hit.title, "title")} [${facts}]${snippetPart}${deprecationSuffix(hit.status, hit.replacement)}`;
+  return `${printed(hit.path, "path")} — ${printed(hit.title, "title", HEADER_CAP)} [${facts}]${snippetPart}${deprecationSuffix(hit.status, hit.replacement, HEADER_CAP)}`;
 }
 
 const instant = (v: Verification): number =>

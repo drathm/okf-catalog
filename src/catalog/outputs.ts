@@ -454,20 +454,23 @@ export function projectSearch(
   const hits = response.hits.map((hit) => {
     const page = catalog.pages.get(hit.path);
     const text = snippet(page ?? {}, response.terms);
+    // Each value the page wrote is cut at the field cap, as a row's values are, and the line prints at most 200 of
+    // each, as a page header does; nothing ranks on them (the verification of bite b's fix pass).
+    const cut = capFields(hit, ["title", "type", "status", "resource", "staleAfter"]);
     return {
       path: hit.path,
-      title: hit.title,
-      type: hit.type,
-      status: hit.status,
+      title: cut.title,
+      type: cut.type,
+      status: cut.status,
       trust: hit.trust,
       recheck: {
-        raw: hit.staleAfter ?? null,
+        raw: cut.staleAfter ?? null,
         form: page?.staleAfter?.form ?? null,
         overdue: hit.overdue,
       },
       replacement: hit.replacement ?? null,
       sources: hit.sources,
-      resource: hit.resource ?? null,
+      resource: cut.resource ?? null,
       rung: hit.rung,
       termsMatched: hit.termsMatched ?? null,
       snippet: text,

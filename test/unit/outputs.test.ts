@@ -32,7 +32,8 @@ import {
 } from "../../src/catalog/outputs.js";
 import type { Generation } from "../../src/catalog/runtime.js";
 import { MARKER } from "../../src/catalog/text.js";
-import type { SearchResponse } from "../../src/search/search.js";
+import { type SearchResponse, search } from "../../src/search/search.js";
+import { fakeEngine } from "../helpers/fake-runtime.js";
 import { NOW, readFixture } from "../helpers/fixtures.js";
 
 const { catalog, report } = loadBundle(
@@ -1373,5 +1374,52 @@ describe("the last rows go until the result fits (bite b's build review B-I-B6)"
       const out = projectWalk(walk, budget);
       within(out, walkText(out), budget);
     }
+  });
+});
+
+describe("the verification of bite b's fix pass", () => {
+  /** A bundle from a map of path to text, loaded as a served bundle loads it, integrity off. */
+  const loadFiles = (files: Record<string, string>, dev = false): Catalog =>
+    loadBundle(
+      "b",
+      Object.entries(files).map(([path, text]) => ({ path, bytes: Buffer.from(text) })),
+      {
+        admit: ["stable", "deprecated"],
+        dev,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    ).catalog;
+  const long = (char: string, n = 100_000): string => char.repeat(n);
+  const yaml = (value: string): string => JSON.stringify(value);
+
+  it("cuts a search hit's page-written values at 2 000 characters in the structured hit and 200 on its line", async () => {
+    // A status of the company's own word is served in development mode, so every value here reaches a hit.
+    const catalog = loadFiles(
+      {
+        "long.md": `---\ntype: ${yaml(long("t"))}\ntitle: ${yaml(long("n"))}\nstatus: ${yaml(long("s"))}\nresource: ${yaml(long("r"))}\nstale_after: ${yaml(long("a"))}\ndescription: The keyword page.\n---\n\nThe keyword page.\n`,
+      },
+      true,
+    );
+    const response = await search(
+      catalog,
+      fakeEngine(catalog),
+      { question: "keyword", includeStale: true, limit: 8 },
+      NOW,
+    );
+    const out = projectSearch(response, catalog, NOW, { dev: true });
+    expect(() => SearchOutputSchema.parse(out)).not.toThrow();
+    expect(out.hits.map((h) => h.path)).toEqual(["long.md"]);
+    const [hit] = out.hits;
+    expect(hit?.title).toBe(`${long("n", 2_000)}…`);
+    expect(hit?.type).toBe(`${long("t", 2_000)}…`);
+    expect(hit?.status).toBe(`${long("s", 2_000)}…`);
+    expect(hit?.resource).toBe(`${long("r", 2_000)}…`);
+    expect(hit?.recheck.raw).toBe(`${long("a", 2_000)}…`);
+    expect(hit?.citation.length).toBeLessThan(1_500);
+    expect(hit?.citation).toContain(`"${long("n", 200)}"…`);
+    expect(JSON.stringify(out).length).toBeLessThan(15_000);
   });
 });
