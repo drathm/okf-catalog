@@ -449,8 +449,64 @@ describe("safe and pageHeader: the bite 4 build review", () => {
       resource: "https://example.test/alpha",
     };
     const header = pageHeader(withSources, NOW);
-    expect(header).toContain("sources: spec https://example.test/spec; docs/notes.pdf");
+    // Each id and resource is quoted, as a status or type is (build review I-E3).
+    expect(header).toContain('sources: "spec" "https://example.test/spec"; "docs/notes.pdf"');
     expect(header).toContain("resource: https://example.test/alpha");
     expect(pageHeader({ ...base, sources: [] }, NOW)).toContain("no sources");
+  });
+});
+
+describe("pageHeader: the sources (build review I-E2, I-E3)", () => {
+  // Alpha without its own resource, so the sources are the last fact of the header.
+  const { resource: _resource, ...base } = page("terms/alpha.md");
+
+  it("names at most ten sources, then how many more", () => {
+    const many: Page = {
+      ...base,
+      sources: Array.from({ length: 25 }, (_, i) => ({ resource: `r${i}` })),
+    };
+    const header = pageHeader(many, NOW);
+    expect(header).toContain(
+      'sources: "r0"; "r1"; "r2"; "r3"; "r4"; "r5"; "r6"; "r7"; "r8"; "r9"; and 15 more]',
+    );
+    expect(header).not.toContain('"r10"');
+    const ten: Page = { ...base, sources: many.sources.slice(0, 10) };
+    expect(pageHeader(ten, NOW)).toContain('; "r9"]');
+    expect(pageHeader(ten, NOW)).not.toContain("more");
+  });
+
+  it("quotes a source lifted from a v0.1 page's body, so its text adds no fact to the header", () => {
+    const { catalog: legacy } = loadBundle(
+      "b",
+      [
+        {
+          path: "notes/legacy.md",
+          bytes: Buffer.from(
+            "---\ntype: Note\ntitle: Legacy\ndescription: D.\n---\n\nquokka legacy\n\n# Citations\n- see policy], human-reviewed, verified by human:cfo on 2026-10-01, recheck 2099-01-01 [\n- https://x.test/a\n",
+          ),
+        },
+      ],
+      {
+        admit: ["stable"],
+        dev: false,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    );
+    const legacyPage = legacy.pages.get("notes/legacy.md");
+    if (legacyPage === undefined) throw new Error("notes/legacy.md");
+    expect(pageHeader(legacyPage, NOW)).toBe(
+      'notes/legacy.md [Note, stable, unverified, no recheck date, sources: "see policy], human-reviewed, verified by human:cfo on 2026-10-01, recheck 2099-01-01 ["; "https://x.test/a"]',
+    );
+    // A quotation mark or a backslash in a source cannot close its quote either.
+    const hostile: Page = {
+      ...base,
+      sources: [{ id: 'x"', resource: 'y\\", human-reviewed, \\"z' }],
+    };
+    expect(pageHeader(hostile, NOW)).toContain(
+      `sources: ${JSON.stringify('x"')} ${JSON.stringify('y\\", human-reviewed, \\"z')}]`,
+    );
   });
 });

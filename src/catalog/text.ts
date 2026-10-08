@@ -61,6 +61,9 @@ function deprecationSuffix(status: string, replacement: string | undefined): str
   return "";
 }
 
+/** The most sources a page header names; the rest are counted. */
+const HEADER_SOURCES = 10;
+
 /** How many sources a page lists, as a phrase. */
 export const sourceCount = (count: number): string =>
   count === 0 ? "no sources" : `${count} source${count === 1 ? "" : "s"}`;
@@ -163,12 +166,18 @@ export function pageHeader(page: Page, now: Date, options: LineOptions = {}): st
           overdue:
             page.staleAfter.at !== undefined && now.getTime() >= page.staleAfter.at.getTime(),
         };
+  // The first sources by name, each id and resource quoted, since either can be body text (a v0.1 citation item);
+  // past ten, a count, so a long list cannot crowd the body out of the result (build review I-E2, I-E3).
+  const named = page.sources
+    .slice(0, HEADER_SOURCES)
+    .map((s) =>
+      s.id === undefined ? quoted(s.resource) : `${quoted(s.id)} ${quoted(s.resource)}`,
+    );
+  const more = page.sources.length - named.length;
   const sources =
     page.sources.length === 0
       ? "no sources"
-      : `sources: ${page.sources
-          .map((s) => (s.id === undefined ? safe(s.resource) : `${safe(s.id)} ${safe(s.resource)}`))
-          .join("; ")}`;
+      : `sources: ${[...named, ...(more > 0 ? [`and ${more} more`] : [])].join("; ")}`;
   const facts = [
     typeFact(page.type, options),
     statusFact(page.status),

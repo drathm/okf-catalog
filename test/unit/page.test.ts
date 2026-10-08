@@ -645,4 +645,29 @@ describe("parsePage: usage counts and the OKF 0.1 fallbacks (R4, R5, R6)", () =>
     expect(subsection.sources).toEqual([]);
     expect(codes(subsection)).not.toContain("legacy-citations");
   });
+
+  it("cuts each legacy citation item at 500 characters and says how many were cut (build review I-E2)", () => {
+    const words = "w".repeat(800);
+    const url = `https://x.test/${"u".repeat(700)}`;
+    const cut = parsed(
+      `---\ntype: T\ntitle: T\ndescription: D\n---\n\n# Citations\n- ${words}\n- [${"t".repeat(600)}](${url})\n- short\n`,
+    );
+    expect(cut.sources).toEqual([
+      { resource: `${"w".repeat(500)}…` },
+      { resource: `${url.slice(0, 500)}…`, title: `${"t".repeat(500)}…` },
+      { resource: "short" },
+    ]);
+    expect(cut.degradations).toEqual([
+      expect.objectContaining({
+        code: "legacy-citations",
+        detail: expect.stringContaining("2 cut at 500 characters"),
+      }),
+    ]);
+    // An item of exactly 500 characters is whole.
+    const whole = parsed(
+      `---\ntype: T\ntitle: T\ndescription: D\n---\n\n# Citations\n- ${"w".repeat(500)}\n`,
+    );
+    expect(whole.sources).toEqual([{ resource: "w".repeat(500) }]);
+    expect(whole.degradations[0]?.detail).not.toContain("cut");
+  });
 });

@@ -33,6 +33,17 @@ export type ParsePageResult = { ok: true; page: Page } | { ok: false; refusal: R
 
 const STATUSES: ReadonlySet<string> = new Set<Status>(["draft", "stable", "deprecated"]);
 
+/** Characters kept of a legacy citation item's text, and of its link, as a source's resource or title (D63). */
+const CITATION_CAP = 500;
+
+/** A legacy citation item's text or link, cut at the cap with an ellipsis, never inside a surrogate pair. */
+function capCitation(text: string): string {
+  if (text.length <= CITATION_CAP) return text;
+  const code = text.charCodeAt(CITATION_CAP - 1);
+  const end = code >= 0xd800 && code <= 0xdbff ? CITATION_CAP - 1 : CITATION_CAP;
+  return `${text.slice(0, end)}…`;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -363,23 +374,31 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
   // The OKF 0.1 `# Citations` list (§13.1, D63): sources only on a page that carries none of the v0.2 fields that
   // replaced it, so a v0.2 page's own list of citations stays body text. One link gives a resource and a title;
   // anything else, a bare URL included (autolinks are not parsed), gives its text as the resource.
+  // Each item is body text of any length, so its text and its link are cut at 500 characters, the bound bite b
+  // gives a reference block (build review I-E2).
   if (
     absent("generated") &&
     absent("verified") &&
     absent("sources") &&
     facts.citations.length > 0
   ) {
+    let cut = 0;
     for (const citation of facts.citations) {
+      const long =
+        citation.text.length > CITATION_CAP || (citation.url?.length ?? 0) > CITATION_CAP;
+      if (long) cut += 1;
+      const text = capCitation(citation.text);
       sources.push(
         citation.url === undefined
-          ? { resource: citation.text }
-          : { resource: citation.url, title: citation.text },
+          ? { resource: text }
+          : { resource: capCitation(citation.url), title: text },
       );
     }
+    const items = facts.citations.length;
     degrade(
       "legacy-citations",
       "sources",
-      `${facts.citations.length} item${facts.citations.length === 1 ? "" : "s"} of an OKF 0.1 # Citations list read as sources, since the page has no generated, verified or sources`,
+      `${items} item${items === 1 ? "" : "s"} of an OKF 0.1 # Citations list read as sources, since the page has no generated, verified or sources${cut > 0 ? `; ${cut} cut at ${CITATION_CAP} characters` : ""}`,
     );
   }
 

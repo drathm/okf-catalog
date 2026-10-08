@@ -736,7 +736,10 @@ describe("get_page and the OKF 0.1 fallbacks (R5, R6)", () => {
       "https://wiki.acme/finance/cost-allocation",
     ]);
     expect(() => PageOutputSchema.parse(structured)).not.toThrow();
-    expect(text(r).split("\n")[0]).toContain("sources: https://wiki.acme/finance/fpa-handbook");
+    // Each source is quoted in the header, being body text on a v0.1 page (build review I-E3).
+    expect(text(r).split("\n")[0]).toBe(
+      'metrics/income-statement.md [Metric, stable, unverified, no recheck date, sources: "https://wiki.acme/finance/fpa-handbook"; "https://wiki.acme/finance/revenue-recognition"; "https://wiki.acme/finance/cost-allocation"]',
+    );
   });
 });
 

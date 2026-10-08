@@ -324,6 +324,41 @@ describe("result bounds (bite 4 build review)", () => {
     expect(() => PageOutputSchema.parse(out)).not.toThrow();
   });
 
+  it("returns the body of a v0.1 page with 900 citations in full-size windows (build review I-E2)", () => {
+    // The independent reviewer's page: ordinary URL citations, about 59 characters each. Its header once listed all
+    // 900 sources, 52 KB, and left room for one character of body per call.
+    const prose = "Some prose. ".repeat(500);
+    const items = Array.from(
+      { length: 900 },
+      (_, i) =>
+        `- https://wiki.example.test/finance/policies/document-${String(i).padStart(4, "0")}`,
+    ).join("\n");
+    const text = `---\ntype: Reference\ntitle: Bibliography\ndescription: D\n---\n\n${prose}\n\n# Citations\n${items}\n`;
+    const loaded = loadBundle(
+      "b",
+      [{ path: "p.md", bytes: Buffer.from(text) }],
+      {
+        admit: ["stable"],
+        dev: false,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    );
+    const bibliography = loaded.catalog.pages.get("p.md");
+    if (bibliography === undefined) throw new Error("p.md");
+    expect(bibliography.sources).toHaveLength(900);
+    const first = projectPage(bibliography, NOW, 0, RESULT_BUDGET);
+    expect(first.citation).toContain("; and 890 more]");
+    expect(first.citation.length).toBeLessThan(2_000);
+    expect(first.truncated).toBe(true);
+    expect(first.body.length).toBeGreaterThan(RESULT_BUDGET - 3_000);
+    const second = projectPage(bibliography, NOW, first.nextOffset ?? 0, RESULT_BUDGET);
+    expect(second.truncated).toBe(false);
+    expect(first.body + second.body).toBe(bibliography.body);
+  });
+
   it("keeps get_page a small multiple of the page however many sources inherit a wide window (build review I-E1, A-A2)", () => {
     // The page window is just under the 2 000-character cap, so no note replaces it: a copy per source would make
     // the result about a hundred times the file.
