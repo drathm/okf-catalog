@@ -310,7 +310,10 @@ options = {
   hiddenFolders: walked.hiddenFolders,
 };
 if (walked.fatal !== undefined) options.walkFatal = walked.fatal;
+// The load alone, timed beside the resident set after it: what the loader stores per page is measured here.
+const loadStarted = performance.now();
 const { catalog, report } = loadBundle("bench", walked.files, options, NOW);
+const loadMs = Math.round(performance.now() - loadStarted);
 if (report.fatal !== undefined)
   fail(EXIT_USAGE, `the bundle was refused: ${report.fatal.rule} ${report.fatal.path}`);
 memory.afterLoad = rss();
@@ -1082,6 +1085,7 @@ const meta = {
     ms: indexMs,
     dbBytes: statSync(join(work, "index.sqlite")).size,
   },
+  loadMs,
   memory: { rssAfterBytes: rss(), heapUsedBytes: process.memoryUsage().heapUsed, phases: memory },
 };
 const result = { meta, summary, paired, modes: modesResult };

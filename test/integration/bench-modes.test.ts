@@ -149,6 +149,7 @@ describe("the benchmark harness's modes path", { timeout: 120_000 }, () => {
     const summaryFile = files.find((f) => f.endsWith(".summary.json"));
     expect(summaryFile).toBeDefined();
     const summary = JSON.parse(readFileSync(join(out, summaryFile as string), "utf8")) as {
+      meta: { loadMs: number; memory: { phases: { afterLoad: number } } };
       modes: {
         stub: boolean;
         embed: { errors: number; chunksEmbedded: number };
@@ -156,6 +157,11 @@ describe("the benchmark harness's modes path", { timeout: 120_000 }, () => {
       };
       summary: Record<string, { all: { n: number } }>;
     };
+    // The load's own time beside the resident set after it, so a change to what the loader stores is measured
+    // (bite b's stored edges and inbound maps, plan P15).
+    expect(Number.isInteger(summary.meta.loadMs)).toBe(true);
+    expect(summary.meta.loadMs).toBeGreaterThanOrEqual(0);
+    expect(summary.meta.memory.phases.afterLoad).toBeGreaterThan(0);
     expect(summary.modes.stub).toBe(true);
     expect(summary.modes.embed.errors).toBe(0);
     expect(summary.modes.embed.chunksEmbedded).toBeGreaterThan(0);
