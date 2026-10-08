@@ -70,25 +70,15 @@ function lookup(
   return held === undefined ? undefined : { kind: "unserved", target: held };
 }
 
-/** A path's shape (issue 5): a leading `/`, `./` or `../`, a slash anywhere, or a dot in the last segment. */
-function hasPathShape(value: string): boolean {
-  return (
-    value.startsWith("/") ||
-    value.startsWith("./") ||
-    value.startsWith("../") ||
-    value.includes("/") ||
-    value.slice(value.lastIndexOf("/") + 1).includes(".")
-  );
-}
-
 /**
- * Classifies one path field's value (issue 5's steps, with D70's departures), for the page at `fromPath`. A scheme
- * or a leading `//` is a URL leaf, its fragment kept. Otherwise one fragment and one query are stripped (an empty
- * remainder names nothing on any field), and the path resolves as a body link's does: from the root after a
- * leading `/`, else from the page's folder; then its two names are looked up. A bare relative path that contains a
- * slash and names nothing from the page's folder is read once from the bundle root, the form the specification's
- * own example uses (D70); a single-segment name, `./x` and `../x` never are. Only a source's resource that names
- * nothing, holds whitespace and has no path shape is a scope. Nothing is fetched, opened or run.
+ * Classifies one path field's value (issue 5's steps, with D70's departures), for the page at `fromPath`. A value
+ * that holds whitespace once trimmed is a description, never a path or a URL: a scope on a source, nothing in the
+ * bundle on any other field (bite b's build review B-A-E1). Otherwise a scheme or a leading `//` is a URL leaf, its
+ * fragment kept; one fragment and one query are stripped (an empty remainder names nothing on any field), and the
+ * path resolves as a body link's does: from the root after a leading `/`, else from the page's folder; then its two
+ * names are looked up. A bare relative path that still holds a slash once normalised and names nothing from the
+ * page's folder is read once from the bundle root, the form the specification's own example uses (D70); a name
+ * that normalises to one segment, `./x` and `../x` never are (B-A-A7). Nothing is fetched, opened or run.
  */
 export function classifyPathField(
   value: string,
@@ -97,6 +87,7 @@ export function classifyPathField(
   index: PathFieldIndex,
 ): PathTarget {
   const trimmed = value.trim();
+  if (/\s/.test(trimmed)) return role === "source" ? { kind: "scope" } : { kind: "unresolved" };
   if (SCHEME.test(trimmed) || trimmed.startsWith("//")) return { kind: "url" };
   const stripped = trimmed.split("#")[0]?.split("?")[0] ?? "";
   if (stripped.length === 0) return { kind: "unresolved" };
@@ -106,11 +97,12 @@ export function classifyPathField(
   const found = lookup(resolvePath(stripped, absolute ? "" : folder), folderHint, index);
   if (found !== undefined) return found;
   const bare = !absolute && !stripped.startsWith("./") && !stripped.startsWith("../");
-  if (bare && folder !== "" && stripped.includes("/")) {
-    const rooted = lookup(resolvePath(stripped, ""), folderHint, index);
+  // The guard reads the path as it resolves, not as written: `a/../revenue` is the single segment `revenue`.
+  const normalised = resolvePath(stripped, "");
+  if (bare && folder !== "" && normalised !== undefined && normalised.includes("/")) {
+    const rooted = lookup(normalised, folderHint, index);
     if (rooted !== undefined) return { ...rooted, fromRoot: true };
   }
-  if (role === "source" && /\s/.test(trimmed) && !hasPathShape(trimmed)) return { kind: "scope" };
   return { kind: "unresolved" };
 }
 
@@ -118,10 +110,10 @@ export function classifyPathField(
 const NAMED_FIELDS = 5;
 
 /**
- * A page's path fields as edges, in the order the walk reads them: `resource` when it is a non-empty string, each
- * source's `resource`, then the contract's `computation`, `executor.resource` and `attester.resource` when they are
- * strings (D69). A page whose fields were read from the bundle root carries one `path-field-root-relative`
- * degradation, however many fields it names.
+ * A page's path fields as edges, in the order the walk reads them: `resource` when the page wrote it as a non-empty
+ * string (a number or a boolean read as text is no path, issue 5), each source's `resource`, then the contract's
+ * `computation`, `executor.resource` and `attester.resource` when they are strings (D69). A page whose fields were
+ * read from the bundle root carries one `path-field-root-relative` degradation, however many fields it names.
  */
 export function pathEdgesOf(
   page: Page,
@@ -137,7 +129,11 @@ export function pathEdgesOf(
       ...classifyPathField(raw, role, page.path, index),
     });
   };
-  if (page.resource !== undefined && page.resource.length > 0)
+  if (
+    typeof page.frontmatter.resource === "string" &&
+    page.resource !== undefined &&
+    page.resource.length > 0
+  )
     add("resource", "resource", page.resource);
   page.sources.forEach((source, i) => {
     add("source", `sources[${i}].resource`, source.resource, i);

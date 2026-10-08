@@ -82,8 +82,9 @@ describe("classifyPathField: issue 5's sentences", () => {
 
   it("calls missing.md on a source unresolved", () => {
     expect(at("missing.md")).toEqual({ kind: "unresolved" });
-    // A dot in the last segment is a path's shape, so a phrase that ends in one is no scope either.
-    expect(at("see the ledger v2.1")).toEqual({ kind: "unresolved" });
+    // A phrase with whitespace is a scope description whatever its last word looks like (bite b's build review
+    // B-A-E1); the path's shape is judged only on a value without whitespace.
+    expect(at("see the ledger v2.1")).toEqual({ kind: "scope" });
   });
 
   it("leaves an https resource a url leaf, its fragment and all", () => {
@@ -253,5 +254,50 @@ describe("classifyPathField: the root retry and unserved pages (D70)", () => {
     // Admitted candidates win: a held draft never makes an edge ambiguous.
     expect(from("/foo.md")).toEqual({ kind: "concept", target: "foo.md" });
     expect(from("/metrics")).toEqual({ kind: "folder", target: "metrics" });
+  });
+});
+
+describe("classifyPathField: bite b's build reviews (B-A-E1, B-A-A7, B-A-A9)", () => {
+  it("reads a value with whitespace as a scope description, never a path or a URL", () => {
+    // The adversarial reviewer's four scope descriptors: a trailing dot, a scheme-like word, a dotted project and
+    // a slash, each misread as a path or a URL before.
+    for (const value of [
+      "all queries in BigQuery project X.",
+      "BigQuery: all queries in project X",
+      "all queries in project acme.sales",
+      "all queries / dataset Y",
+    ]) {
+      expect(at(value), value).toEqual({ kind: "scope" });
+      for (const role of ROLES.filter((r) => r !== "source"))
+        expect(at(value, role), `${role}: ${value}`).toEqual({ kind: "unresolved" });
+    }
+    // Without whitespace, the shape and the scheme decide as before.
+    expect(at("BigQuery:x")).toEqual({ kind: "url" });
+    expect(at("acme.sales")).toEqual({ kind: "unresolved" });
+  });
+
+  it("judges the single-segment guard and the root retry on the normalised path", () => {
+    const index = indexOver(["revenue.md", "tables/orders.md", "policies/revenue-recognition.md"]);
+    const from = (value: string) => classifyPathField(value, "source", "tables/orders.md", index);
+    // Each normalises to the single segment revenue: never read from the root.
+    for (const value of ["a/../revenue", "a/../revenue.md", "x/./../revenue", "tables/../revenue"])
+      expect(from(value), value).toEqual({ kind: "unresolved" });
+    // A path that still holds a slash once normalised is read from the root, as written without ../ first.
+    expect(from("x/../policies/revenue-recognition.md")).toEqual({
+      kind: "concept",
+      target: "policies/revenue-recognition.md",
+      fromRoot: true,
+    });
+  });
+
+  it("emits no edge for a resource that is not a string", () => {
+    const files: BundleFile[] = [
+      {
+        path: "a.md",
+        bytes: Buffer.from("---\ntype: Note\ntitle: A\nresource: 42\n---\n\nBody.\n"),
+      },
+    ];
+    const page = parsed(files, "a.md");
+    expect(pathEdgesOf(page, indexOver(["a.md"])).edges).toEqual([]);
   });
 });
