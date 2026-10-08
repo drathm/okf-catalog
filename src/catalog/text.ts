@@ -38,9 +38,26 @@ export const escapeControls = (text: string): string =>
     return cp > 0xffff ? `\\u{${cp.toString(16)}}` : `\\u${cp.toString(16).padStart(4, "0")}`;
   });
 
+/** Horizontal whitespace collapsed to one space, and the ends trimmed. */
+const collapse = (text: string): string => text.replace(/[ \t\f\v ]+/g, " ").trim();
+
 /** A value made safe for a server-voice line: horizontal whitespace collapsed, trimmed, controls escaped. */
-export const safe = (text: string): string =>
-  escapeControls(text.replace(/[ \t\f\v ]+/g, " ").trim());
+export const safe = (text: string): string => escapeControls(collapse(text));
+
+/**
+ * Text cut at `cap` characters once its controls are escaped: an escape counts whole and is never split, nor is a
+ * surrogate pair. The kept text, and whether any was cut. The values in use that an error lists and the sources a
+ * page header names are cut so, at 200 characters (build review A-A3, and the fix pass's verification).
+ */
+export function cutEscaped(text: string, cap: number): { kept: string; cut: boolean } {
+  let kept = "";
+  for (const character of text) {
+    const piece = escapeControls(character);
+    if (kept.length + piece.length > cap) return { kept, cut: true };
+    kept += piece;
+  }
+  return { kept, cut: false };
+}
 
 export interface Recheck {
   raw: string;
@@ -65,6 +82,8 @@ function deprecationSuffix(status: string, replacement: string | undefined): str
 
 /** The most sources a page header names; the rest are counted. */
 const HEADER_SOURCES = 10;
+/** The most characters of a named source's id or resource, its escapes counted, before an ellipsis. */
+const SOURCE_CAP = 200;
 
 /** How many sources a page lists, as a phrase. */
 export const sourceCount = (count: number): string =>
@@ -74,8 +93,20 @@ export const sourceCount = (count: number): string =>
  * Page text inside a server-voice quotation: made safe, then its backslashes and quotation marks escaped, the
  * backslashes first, so neither can close the quote. The result is a JSON string whose value is the safe text.
  */
-const quoted = (text: string): string =>
-  `"${safe(text).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+const quoted = (text: string): string => `"${escapeQuotes(safe(text))}"`;
+
+/** Backslashes escaped, then quotation marks: what makes safe text the value of a JSON string. */
+const escapeQuotes = (text: string): string => text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+/**
+ * A source's id or resource as the page header names it: quoted as `quoted` quotes, and cut at 200 characters, its
+ * escapes counted, with an ellipsis after the quote, as the values in use are listed; a frontmatter source's id and
+ * resource are of any length (the fix pass's verification).
+ */
+const quotedSource = (text: string): string => {
+  const { kept, cut } = cutEscaped(collapse(text), SOURCE_CAP);
+  return `"${escapeQuotes(kept)}"${cut ? "…" : ""}`;
+};
 
 /**
  * What a bare fact must not carry besides a control character: a comma or a bracket, which would read as another
@@ -175,12 +206,15 @@ export function pageHeader(page: Page, now: Date, options: LineOptions = {}): st
           overdue:
             page.staleAfter.at !== undefined && now.getTime() >= page.staleAfter.at.getTime(),
         };
-  // The first sources by name, each id and resource quoted, since either can be body text (a v0.1 citation item);
-  // past ten, a count, so a long list cannot crowd the body out of the result (build review I-E2, I-E3).
+  // The first sources by name, each id and resource quoted, since either can be body text (a v0.1 citation item),
+  // and cut at 200 characters, since a frontmatter source's can be of any length; past ten, a count, so neither a
+  // long list nor a long source can crowd the body out of the result (build review I-E2, I-E3; its verification).
   const named = page.sources
     .slice(0, HEADER_SOURCES)
     .map((s) =>
-      s.id === undefined ? quoted(s.resource) : `${quoted(s.id)} ${quoted(s.resource)}`,
+      s.id === undefined
+        ? quotedSource(s.resource)
+        : `${quotedSource(s.id)} ${quotedSource(s.resource)}`,
     );
   const more = page.sources.length - named.length;
   const sources =

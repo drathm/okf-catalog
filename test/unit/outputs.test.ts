@@ -391,6 +391,34 @@ describe("result bounds (bite 4 build review)", () => {
     expect(first.body + second.body).toBe(bibliography.body);
   });
 
+  it("returns a full-size body window however long a frontmatter source's id and resource are (the fix pass's verification)", () => {
+    // A 200 000-character resource once made a 200 KB header and left one character of body per call.
+    const resource = `https://x.test/${"r".repeat(200_000)}`;
+    const prose = "Some prose. ".repeat(4_000);
+    const text = `---\ntype: Note\ntitle: L\ndescription: D\nsources:\n  - id: "${"i".repeat(5_000)}"\n    resource: "${resource}"\n---\n\n${prose}\n`;
+    const loaded = loadBundle(
+      "b",
+      [{ path: "l.md", bytes: Buffer.from(text) }],
+      {
+        admit: ["stable"],
+        dev: false,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    );
+    const longSource = loaded.catalog.pages.get("l.md");
+    if (longSource === undefined) throw new Error("l.md");
+    const out = projectPage(longSource, NOW, 0, RESULT_BUDGET);
+    expect(out.citation.length).toBeLessThan(1_000);
+    expect(out.truncated).toBe(true);
+    expect(out.body.length).toBeGreaterThan(RESULT_BUDGET - 3_000);
+    // The structured output is untouched: its lists come under the result budget in bite b (D82).
+    expect(out.provenance?.sources[0]?.resource).toBe(resource);
+    expect(() => PageOutputSchema.parse(out)).not.toThrow();
+  });
+
   it("keeps get_page a small multiple of the page however many sources inherit a wide window (build review I-E1, A-A2)", () => {
     // The page window is just under the 2 000-character cap, so no note replaces it: a copy per source would make
     // the result about a hundred times the file.

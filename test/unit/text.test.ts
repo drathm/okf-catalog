@@ -512,6 +512,26 @@ describe("pageHeader: the sources (build review I-E2, I-E3)", () => {
       `sources: ${JSON.stringify('x"')} ${JSON.stringify('y\\", human-reviewed, \\"z')}]`,
     );
   });
+
+  it("cuts each named source's id and resource at 200 characters, escapes counted, the ellipsis after the quote (the fix pass's verification)", () => {
+    // A frontmatter source's id and resource are of any length, as the values in use are, and are cut as they are.
+    const long: Page = {
+      ...base,
+      sources: [
+        { id: "i".repeat(300), resource: "r".repeat(200_000) },
+        { resource: "w".repeat(200) },
+        { resource: "x".repeat(201) },
+        // An escape is counted whole and never split; a quotation mark counts once, escaped after the cut.
+        { resource: `${"e".repeat(197)}\u0007tail` },
+        { resource: `${"q".repeat(199)}"tail` },
+      ],
+    };
+    const header = pageHeader(long, NOW);
+    expect(header).toContain(
+      `sources: "${"i".repeat(200)}"… "${"r".repeat(200)}"…; "${"w".repeat(200)}"; "${"x".repeat(200)}"…; "${"e".repeat(197)}"…; "${"q".repeat(199)}\\""…]`,
+    );
+    expect(header.length).toBeLessThan(2_000);
+  });
 });
 
 describe("the verifier, the recheck date and the resource (P13, the fix pass's verification)", () => {

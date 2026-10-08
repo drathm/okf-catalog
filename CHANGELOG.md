@@ -25,7 +25,7 @@ The work of 0.2.0: the readiness fixes cut from issues 2 and 3, the readiness le
 - `pack` refuses to write a bundle in which no page is admitted (exit 2) unless given `--allow-empty`, so the publish recipe, which never passes it, fails on a typo that empties the bundle instead of publishing a branch with no page.
 - Every tool's input schema is strict: an argument a tool does not take, such as `tags` or `minTrust`, fails with the SDK's validation error instead of being dropped in silence.
 - Text lines quote a status outside the three known values, a type the company did not declare, and any type or status, declared or not, that carries a comma, a bracket, a quotation mark, a backslash or a control character; the verifier, a recheck date and the page's resource are quoted whenever they carry such a character. Inside the quotes, backslashes and quotation marks are escaped, backslashes first, so no character of the value can add a fact to a citation's brackets or close the quote.
-- A page's citation header names at most ten sources, each id and resource quoted as a status or type is, then how many more, so a long list of sources can neither add facts to the header nor crowd the body out of `get_page`'s result.
+- A page's citation header names at most ten sources, each id and resource quoted as a status or type is and cut at 200 characters with an ellipsis, then how many more, so neither a long list of sources nor a long source can add facts to the header or crowd the body out of `get_page`'s result.
 - A page `usage_window` that is not a mapping of `from` and `to`, and a contract field without the shape the specification gives it, are reported `field-ignored`.
 
 ### Deprecated

@@ -18,7 +18,7 @@ import {
 } from "../catalog/outputs.js";
 import { resolvePageName } from "../catalog/resolve.js";
 import type { Generation, Runtime, ToolOptions } from "../catalog/runtime.js";
-import { DATA_SENTENCE, escapeControls, safe } from "../catalog/text.js";
+import { cutEscaped, DATA_SENTENCE, safe } from "../catalog/text.js";
 import type { Log } from "../log.js";
 import type { Engine } from "../search/engine.js";
 import { search } from "../search/search.js";
@@ -65,16 +65,7 @@ function folderList(catalog: Catalog): string {
  * JSON-quoted (build review A-A3, A-A6). The cut counts escapes, so no value prints more than about 400 characters.
  */
 function listedValue(value: string): string {
-  let kept = "";
-  let cut = false;
-  for (const character of value) {
-    const piece = escapeControls(character);
-    if (kept.length + piece.length > VALUE_CAP) {
-      cut = true;
-      break;
-    }
-    kept += piece;
-  }
+  const { kept, cut } = cutEscaped(value, VALUE_CAP);
   return `${JSON.stringify(kept)}${cut ? "…" : ""}`;
 }
 
