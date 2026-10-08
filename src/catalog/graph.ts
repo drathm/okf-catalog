@@ -9,7 +9,13 @@ import type {
   UsageWindow,
 } from "../bundle/model.js";
 import type { Catalog } from "./model.js";
-import { type EffectiveWindow, effectiveWindow, isOverdue } from "./provenance.js";
+import {
+  type DatedWindow,
+  type EffectiveWindow,
+  effectiveWindow,
+  isOverdue,
+  sourceWindow,
+} from "./provenance.js";
 
 /** Rows a list carries beside its total, the status lists' cap (issue 5); a provenance node's sources too. */
 export const LIST_CAP = 50;
@@ -36,7 +42,10 @@ export interface InboundMention {
   heading?: string;
 }
 
-/** A source as the two tools return it: as written, with the window that frames its count (§5.1). */
+/**
+ * A source as the two tools return it: as written, with the window that frames its count (§5.1), an inherited one
+ * named and not copied, since the page's own window is in the same result (D62).
+ */
 export interface SourceFacts {
   id?: string;
   resource: string;
@@ -62,7 +71,10 @@ export interface Unjoined {
   heading?: string;
 }
 
-/** A page whose `resource` or a source's `resource` names this one, with that source's signals. */
+/**
+ * A page whose `resource` or a source's `resource` names this one, with that source's signals; its window with its
+ * dates, since the deriving page's own window is not in the result.
+ */
 export interface Derivation {
   from: PagePath;
   field: string;
@@ -70,12 +82,14 @@ export interface Derivation {
   author?: string;
   usageCount?: number;
   lastModified?: string;
-  window?: EffectiveWindow;
+  window?: DatedWindow;
 }
 
 /** What a page cites and what cites it, each list whole: the projection caps and budgets them. */
 export interface Citations {
   path: PagePath;
+  /** The page's shared window, once: the claims' and the bibliography's sources that inherit it name it. */
+  usageWindow?: UsageWindow;
   /** The body was not analysed, or only its first part: mentions and claims cover what was. */
   partial: boolean;
   mentions: Mention[];
@@ -89,7 +103,7 @@ export interface Citations {
 const withHeading = <T extends object>(value: T, heading: string | undefined): T =>
   heading === undefined ? value : { ...value, heading };
 
-/** A source's facts, its window taken by the one inheritance rule (D62): its own, else the page's. */
+/** A source's facts, its window taken by the one inheritance rule (D62): its own, else the page's, named. */
 function sourceFacts(source: Source, pageWindow: UsageWindow | undefined): SourceFacts {
   const facts: SourceFacts = { resource: source.resource };
   if (source.id !== undefined) facts.id = source.id;
@@ -171,12 +185,12 @@ export function citationsOf(catalog: Catalog, page: Page): Citations {
       if (source.author !== undefined) derivation.author = source.author;
       if (source.usageCount !== undefined) derivation.usageCount = source.usageCount;
       if (source.lastModified !== undefined) derivation.lastModified = source.lastModified;
-      const window = effectiveWindow(source, deriving?.usageWindow);
+      const window = sourceWindow(source, deriving?.usageWindow);
       if (window !== undefined) derivation.window = window;
       return derivation;
     },
   );
-  return {
+  const result: Citations = {
     path: page.path,
     partial: page.degradations.some(
       (d) => d.code === "body-unanalysed" || d.code === "body-truncated",
@@ -188,6 +202,8 @@ export function citationsOf(catalog: Catalog, page: Page): Citations {
     unjoined,
     inboundDerivations,
   };
+  if (page.usageWindow !== undefined) result.usageWindow = { ...page.usageWindow };
+  return result;
 }
 
 /**
@@ -216,6 +232,8 @@ export interface WalkNode {
   parent?: PagePath;
   trust: Trust;
   recheck?: { raw: string; form: StaleAfter["form"]; overdue: boolean };
+  /** The page's shared window, once: its edges whose source inherits it name it. */
+  usageWindow?: UsageWindow;
   /** The page's sources, of which the first 50 are walked and listed. */
   sourcesTotal: number;
   /** The depth stopped this branch at an edge that would have entered a new concept. */
@@ -294,6 +312,7 @@ export function walkProvenance(catalog: Catalog, start: Page, depth: number, now
     };
     const from = nodes[parent];
     if (from !== undefined) node.parent = from.path;
+    if (page.usageWindow !== undefined) node.usageWindow = { ...page.usageWindow };
     if (page.staleAfter !== undefined)
       node.recheck = {
         raw: page.staleAfter.raw,

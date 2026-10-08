@@ -48,8 +48,11 @@ export interface BodyFacts {
 }
 
 const SENTENCE_CAP = 200;
-/** Characters of a claim's block kept (issue 5): the sentence a footnote supports, not the page around it. */
-const BLOCK_CAP = 500;
+/**
+ * Characters of a claim's block kept (issue 5): the sentence a footnote supports, not the page around it. The same
+ * bound cuts an OKF 0.1 citation item read as a source (D63, bite a's build review I-E2).
+ */
+export const BLOCK_CAP = 500;
 export const ANALYSIS_BUDGET = 256 * 1024;
 const MAX_NESTING = 256;
 const MAX_EMPHASIS_RUNS = 2000;
@@ -157,7 +160,7 @@ function proseWithBlocks(tree: Nodes): string {
 const CLAIM_BLOCKS = new Set(["paragraph", "heading", "listItem", "blockquote", "tableCell"]);
 
 /** The first `cap` characters of a text, one fewer when the cut would split a surrogate pair. */
-function cutAt(text: string, cap: number): string {
+export function cutAt(text: string, cap: number): string {
   if (text.length <= cap) return text;
   const code = text.charCodeAt(cap - 1);
   return text.slice(0, code >= 0xd800 && code <= 0xdbff ? cap - 1 : cap);

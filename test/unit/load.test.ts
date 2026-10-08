@@ -189,6 +189,38 @@ describe("loadBundle on the behaviours bundle", () => {
   });
 });
 
+describe("loadBundle: admitted words that match no page (D77, build review A-E1)", () => {
+  it("reports each admitted word outside the three known statuses that no page carries, once, as written", () => {
+    const { report } = loadBundle(
+      "b",
+      readFixture("behaviours"),
+      options({
+        admit: ["stable", " depreciated ", "Archived", "deprecated", "DEPRECIATED", "obsolete"],
+      }),
+      NOW,
+    );
+    // Archived is carried by notes/unknown-status.md, in any case; the known words are never typos.
+    expect(report.unmatchedAdmits).toEqual(["depreciated", "obsolete"]);
+    // A bundle with no deprecated page says nothing of deprecated, which the default list names.
+    const plain = loadBundle(
+      "x",
+      readFixture("no-manifest"),
+      options({ integrity: "none" }),
+      NOW,
+    ).report;
+    expect(plain.unmatchedAdmits).toEqual([]);
+    // A refused bundle's pages were never read: nothing is said of its words.
+    const refused = loadBundle(
+      "x",
+      readFixture("no-manifest"),
+      options({ admit: ["stable", "depreciated"] }),
+      NOW,
+    ).report;
+    expect(refused.fatal).toBeDefined();
+    expect(refused.unmatchedAdmits).toEqual([]);
+  });
+});
+
 // The readiness ledger (issue 2's "Holds", D59, row 31): an unknown okf_version degrades, it never refuses.
 describe("loadBundle: the readiness ledger (D59)", () => {
   it("serves a bundle whose root index declares an unknown okf_version", () => {

@@ -5,7 +5,7 @@ import type { SearchResponse } from "../search/search.js";
 import { snippet } from "../search/snippet.js";
 import { type Citations, LIST_CAP, type Walk, type WalkEdge, type WalkNode } from "./graph.js";
 import type { Catalog } from "./model.js";
-import { type EffectiveWindow, provenanceOf } from "./provenance.js";
+import { type DatedWindow, type EffectiveWindow, provenanceOf } from "./provenance.js";
 import type { Generation, RuntimeStatus, ToolOptions } from "./runtime.js";
 import {
   citationsHeader,
@@ -19,6 +19,7 @@ import {
   MARKER,
   mentionLine,
   pageHeader,
+  pageWindowLine,
   provenanceHeader,
   reservedHeader,
   safe,
@@ -89,8 +90,23 @@ const Verification = z.strictObject({ by: z.string(), at: z.string().optional() 
 const Omitted = z.strictObject({ omitted: z.string() });
 const orOmitted = <T extends z.ZodTypeAny>(schema: T) => z.union([schema, Omitted]);
 const Window = z.strictObject({ from: z.string(), to: z.string() });
-/** The window that frames a source's count, its own or the page's (D62), or its note past the cap (D78). */
+/**
+ * The window that frames a source's count where its page's own window is in the same result (D62, merge ruling 1
+ * of bite b's fold): the source's own window with its dates, or the page's named and not copied, its dates being
+ * that page's `usageWindow`; or the note past the cap (D78). get_page's sources, a claim's sources, the
+ * bibliography and a walk edge carry it.
+ */
 const EffectiveWindowSchema = orOmitted(
+  z.union([
+    z.strictObject({ from: z.string(), to: z.string(), inherited: z.literal(false) }),
+    z.strictObject({ inherited: z.literal(true) }),
+  ]),
+);
+/**
+ * The window that frames a source's count on a row from another page, whose window the result does not carry: the
+ * dates always, and whether they are that page's shared window (an inbound derivation); or the note past the cap.
+ */
+const DatedWindowSchema = orOmitted(
   z.strictObject({ from: z.string(), to: z.string(), inherited: z.boolean() }),
 );
 const SourceSchema = z.strictObject({
@@ -291,6 +307,8 @@ export const CitationsOutputSchema = z.strictObject({
   path: z.string(),
   summary: z.string(),
   notice: z.string(),
+  /** The page's shared window, once: the sources of its claims and bibliography that inherit it name it (D62). */
+  usageWindow: orOmitted(Window).optional(),
   /** The body was not analysed, or only its first part: mentions and claims cover what was. */
   partial: z.boolean(),
   /** The result budget cut rows: each list keeps its order and its total. */
@@ -336,7 +354,7 @@ export const CitationsOutputSchema = z.strictObject({
       author: z.string().optional(),
       usageCount: z.number().optional(),
       lastModified: z.string().optional(),
-      window: EffectiveWindowSchema.optional(),
+      window: DatedWindowSchema.optional(),
     }),
   ),
 });
@@ -382,6 +400,8 @@ export const ProvenanceOutputSchema = z.strictObject({
       parent: z.string().optional(),
       trust: Trust,
       recheck: z.strictObject({ raw: z.string(), form: Form, overdue: z.boolean() }).optional(),
+      /** The page's shared window, once: its edges whose source inherits it name it (D62). */
+      usageWindow: orOmitted(Window).optional(),
       sourcesTotal: z.number(),
       /** The depth stopped this branch. */
       truncated: z.boolean(),
@@ -787,7 +807,9 @@ export function projectStatus(
 
 /** One line for the `status` text block: the counts, the engine, the lock, the last attempt, and the report's lists as counts. */
 export function statusSummary(out: StatusOutput): string {
-  const n = (count: number, word: string): string => `${count} ${word}${count === 1 ? "" : "s"}`;
+  // One and many, the irregular ones written out (build review A-D8).
+  const n = (count: number, one: string, many = `${one}s`): string =>
+    `${count} ${count === 1 ? one : many}`;
   const parts = [
     `${out.company}: ${out.admitted} pages admitted, ${out.excludedByStatus} excluded by status, ${n(out.overdue, "overdue page")}, ${n(out.refusals.count, "refusal")}, ${n(out.degradations.count, "degradation")}`,
     `integrity ${out.integrity}`,
@@ -809,7 +831,7 @@ export function statusSummary(out: StatusOutput): string {
     ...(out.engine.resetOnOpen === null
       ? []
       : [`engine store rebuilt at open: ${out.engine.resetOnOpen}`]),
-    `${n(out.unknownTypes.count, "unknown type")}, ${n(out.unknownStatuses.count, "unknown status")}, ${n(out.brokenLinks.count, "broken link")}, ${n(out.linksToUnserved.count, "link to an unserved page")}, ${n(out.foldersWithoutIndex.count, "folder without an index")}, ${n(out.missingOnDisk.count, "manifest entry missing on disk")}`,
+    `${n(out.unknownTypes.count, "unknown type")}, ${n(out.unknownStatuses.count, "unknown status", "unknown statuses")}, ${n(out.brokenLinks.count, "broken link")}, ${n(out.linksToUnserved.count, "link to an unserved page", "links to an unserved page")}, ${n(out.foldersWithoutIndex.count, "folder without an index", "folders without an index")}, ${n(out.missingOnDisk.count, "manifest entry missing on disk", "manifest entries missing on disk")}`,
   ];
   if (out.lastAttempt !== null)
     parts.push(`last attempt ${out.lastAttempt.outcome} at ${out.lastAttempt.at}`);
@@ -826,13 +848,15 @@ export function statusSummary(out: StatusOutput): string {
   return parts.join("; ");
 }
 
-type WindowOut = z.infer<typeof EffectiveWindowSchema>;
-const windowOut = (window: EffectiveWindow | undefined): { window?: WindowOut } =>
+/** A row's window as a result carries it: whole within its cap, else its note (D78). */
+const windowOut = <W extends EffectiveWindow | DatedWindow>(
+  window: W | undefined,
+): { window?: W | { omitted: string } } =>
   window === undefined ? {} : { window: typedField("window", window) };
 
 type CitationList = Exclude<
   keyof CitationsOutput,
-  "path" | "summary" | "notice" | "partial" | "truncated"
+  "path" | "summary" | "notice" | "usageWindow" | "partial" | "truncated"
 >;
 /** The lists of `citations` in the order issue 5 gives them, which is the order the budget spends (D82). */
 const CITATION_LISTS: readonly CitationList[] = [
@@ -863,9 +887,10 @@ const CITATION_HEADINGS: Record<CitationList, string> = {
   inboundDerivations: "inbound derivations",
 };
 
-/** The text block of `citations`: the header, the notice, then each list's heading and its rows. */
+/** The text block of `citations`: the header, the notice, the page's window, then each list's heading and its rows. */
 export function citationsText(output: CitationsOutput): string {
   const lines = [output.summary, output.notice];
+  if (output.usageWindow !== undefined) lines.push(pageWindowLine(output.usageWindow));
   for (const list of CITATION_LISTS) {
     const { total, rows } = output[list];
     lines.push(listHeading(CITATION_HEADINGS[list], total, rows.length));
@@ -925,6 +950,9 @@ export function projectCitations(citations: Citations, budget: number): Citation
         listCap: LIST_CAP,
       }),
       notice: NOTICE,
+      ...(citations.usageWindow === undefined
+        ? {}
+        : { usageWindow: typedField("usageWindow", citations.usageWindow) }),
       partial: citations.partial,
       truncated,
       mentions: { total: totals.mentions, rows: kept.mentions },
@@ -979,10 +1007,11 @@ function edgeOut({ window, candidates, ...edge }: WalkEdge): EdgeOut {
   };
 }
 
-function nodeOut({ edges, recheck, ...node }: WalkNode): NodeOut {
+function nodeOut({ edges, recheck, usageWindow, ...node }: WalkNode): NodeOut {
   return {
     ...node,
     ...(recheck === undefined ? {} : { recheck: { ...recheck } }),
+    ...(usageWindow === undefined ? {} : { usageWindow: typedField("usageWindow", usageWindow) }),
     edges: edges.map(edgeOut),
   };
 }

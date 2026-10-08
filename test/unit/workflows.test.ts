@@ -58,6 +58,13 @@ describe("the repository's own workflows", () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     // Lexical only: no model is fetched or loaded in CI.
     expect(runs.join("\n")).not.toMatch(/--modes|pull-models/);
+    // A guard that may fail quietly, or not run, is no guard (build review A-B9): no continue-on-error and no
+    // condition, on the job or on any of its steps.
+    const job = guard as Record<string, unknown> & { steps: Array<Record<string, unknown>> };
+    for (const holder of [job, ...job.steps]) {
+      expect(Object.keys(holder)).not.toContain("continue-on-error");
+      expect(Object.keys(holder)).not.toContain("if");
+    }
   });
 
   it("keep the CI workflow on read-only permissions", () => {

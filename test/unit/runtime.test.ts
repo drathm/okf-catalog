@@ -493,6 +493,35 @@ describe("createRuntime (bite 5: a source that fails, falls back and reports)", 
     await runtime.shutdown();
   });
 
+  it("warns at each load of every admitted word that matches no page (D77, build review A-E1)", async () => {
+    const records: Array<{ event: string; fields: Record<string, unknown> }> = [];
+    const log = {
+      error() {},
+      warn: (event: string, fields: Record<string, unknown> = {}) =>
+        void records.push({ event, fields }),
+      info() {},
+      debug() {},
+    };
+    const runtime = createRuntime({
+      company: "b",
+      source: memorySource(readFixture("behaviours")),
+      prepare: async () => ({ engine: countingEngine(), lock: "exclusive" as const }),
+      load: { ...options, admit: ["stable", "deprecated", "depreciated"] },
+      clock: () => NOW,
+      log,
+    });
+    runtime.start();
+    const generation = await runtime.ready();
+    expect(generation.report.unmatchedAdmits).toEqual(["depreciated"]);
+    expect(records).toEqual([
+      { event: "serve.admit", fields: { word: "depreciated", detail: "matches no page" } },
+    ]);
+    // A refresh that swaps loads again and says so again; the configuration has not changed.
+    expect((await runtime.refresh()).outcome).toBe("swapped");
+    expect(records.filter((r) => r.event === "serve.admit")).toHaveLength(2);
+    await runtime.shutdown();
+  });
+
   it("logs the detail a failing load carries on refresh.failed, beside the one-line message", async () => {
     const records: Array<{ event: string; fields: Record<string, unknown> }> = [];
     const log = {

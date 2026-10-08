@@ -5,7 +5,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { createMcpHandler } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
-import { PageOutputSchema } from "../../src/catalog/outputs.js";
+import { PageOutputSchema, RESULT_BUDGET } from "../../src/catalog/outputs.js";
 import type { Generation, Runtime, ToolOptions } from "../../src/catalog/runtime.js";
 import { MARKER } from "../../src/catalog/text.js";
 import { createServerFactory, INSTRUCTIONS } from "../../src/mcp/server.js";
@@ -146,6 +146,43 @@ describe("search", () => {
     expect(text(unknown)).toMatch(/terms/);
   });
 
+  it("lists the folders on an unknown topic as it lists the values in use: JSON-quoted, cut at 200 characters, at most 50 (the fix pass's verification)", async () => {
+    const note = (path: string) => ({
+      path,
+      bytes: Buffer.from(`---\ntype: Note\ntitle: ${path}\n---\n\nquince\n`),
+    });
+    // A comma stays inside one folder name, and a long name is cut; the root keeps its server-voice label.
+    const odd = loadGeneration(
+      [note("finance, legal/a.md"), note(`${"d".repeat(300)}/b.md`)],
+      { integrity: "none" },
+      NOW,
+    );
+    const s = await session(fakeRuntime(odd));
+    const expected = `the folders are: (root), "${"d".repeat(200)}"…, "finance, legal"`;
+    const topic = await s.call("search", { question: "quince", topic: "nowhere" });
+    expect(topic.isError).toBe(true);
+    expect(text(topic)).toBe(`there is no folder "nowhere"; ${expected}`);
+    // catalog names the folders on a miss with the same list.
+    expect(text(await s.call("catalog", { folder: "nowhere" }))).toBe(
+      `there is no folder "nowhere"; ${expected}`,
+    );
+    // Fifty listed, then the total, and the whole error within the result budget however long the names are.
+    const many = loadGeneration(
+      Array.from({ length: 60 }, (_, i) =>
+        note(`f${String(i).padStart(2, "0")}${"z".repeat(1_000)}/p.md`),
+      ),
+      { integrity: "none" },
+      NOW,
+    );
+    const m = await session(fakeRuntime(many));
+    const listed = text(await m.call("search", { question: "quince", topic: "n".repeat(1_024) }));
+    expect(listed).toMatch(
+      /the folders are: \(root\), "f00z{197}"…, "f01z{197}"…, .*, "f48z{197}"… … \(61 folders\)$/,
+    );
+    expect(listed).not.toContain('"f49');
+    expect(listed.length).toBeLessThan(RESULT_BUDGET);
+  });
+
   it("includes overdue pages by default, flagged, and leaves them out for fresh or include_stale false", async () => {
     const s = await session(fakeRuntime(stable));
     const byDefault = await s.call("search", { question: "zeta" });
@@ -184,7 +221,7 @@ describe("search", () => {
   it("labels drafts under development mode and never shows them otherwise", async () => {
     const d = await session(fakeRuntime(dev), { ...options, dev: true });
     const r = await d.call("search", { question: "draft", freshness: "any" });
-    expect(text(r)).toContain("development mode: drafts admitted");
+    expect(text(r)).toContain("development mode: drafts and unknown statuses admitted");
     expect(text(r)).toMatch(/\[[^\]]*, draft, /);
     const s = await session(fakeRuntime(stable));
     expect(text(await s.call("search", { question: "draft", freshness: "any" }))).not.toMatch(
@@ -249,7 +286,11 @@ describe("search", () => {
       if (zeta === "error") {
         expect(r.isError, label).toBe(true);
         expect(r.structuredContent, label).toBeUndefined();
-        expect(text(r), label).toMatch(/^freshness and include_stale disagree/);
+        expect(text(r), label).toBe(
+          args.freshness === "any"
+            ? 'freshness and include_stale disagree: freshness "any" includes pages past their recheck date and include_stale false leaves them out; pass freshness alone'
+            : 'freshness and include_stale disagree: freshness "fresh" leaves out pages past their recheck date and include_stale true includes them; pass freshness alone',
+        );
         // Refused before search runs: a question of common words gets this error, not the common-word one.
         const common = await s.call("search", { question: "what is the", ...args });
         expect(text(common), label).toMatch(/^freshness and include_stale disagree/);
@@ -275,11 +316,11 @@ describe("search", () => {
     expect(await first(noType)).toMatch(/^there is no folder "nowhere"/);
     const { topic: _topic, ...noTopic } = noType;
     expect(await first(noTopic)).toBe(
-      'no page has the tag "nope"; the tags in use are: alpha, beta, delta, deprecated, epsilon, eta, gamma, glossary, one, theta, three-four, two, zeta',
+      'no page has the tag "nope"; the tags in use are: "alpha", "beta", "delta", "deprecated", "epsilon", "eta", "gamma", "glossary", "one", "theta", "three-four", "two", "zeta"',
     );
     const { tag: _tag, ...noTag } = noTopic;
     expect(await first(noTag)).toBe(
-      'no page has the status "nope"; the statuses in use are: deprecated, stable',
+      'no page has the status "nope"; the statuses in use are: "deprecated", "stable"',
     );
     const { status: _status, ...onlyFreshness } = noTag;
     expect(await first(onlyFreshness)).toMatch(/^freshness and include_stale disagree/);
@@ -302,13 +343,84 @@ describe("search", () => {
     );
     const m = await session(fakeRuntime(many));
     const unknown = await m.call("search", { question: "quokka", tag: "nope" });
-    expect(text(unknown)).toMatch(/the tags in use are: t00, t01, .*, t49 … \(60 tags\)$/);
+    expect(text(unknown)).toMatch(/the tags in use are: "t00", "t01", .*, "t49" … \(60 tags\)$/);
     expect(text(unknown)).not.toContain("t50");
     const late = await m.call("search", { question: "quokka", tag: "T59" });
     expect(late.isError).not.toBe(true);
     expect(
       (late.structuredContent as { hits: Array<{ path: string }> }).hits.map((h) => h.path),
     ).toEqual(["t/p59.md"]);
+  });
+
+  it("lists each value in use as stored, JSON-quoted, cut at 200 characters, the whole error bounded (build review A-A3, A-A6)", async () => {
+    const note = (path: string, front: string) => ({
+      path,
+      bytes: Buffer.from(`---\ntype: Note\ntitle: ${path}\n${front}---\n\nquince\n`),
+    });
+    const huge = "t".repeat(100_000);
+    const odd = loadGeneration(
+      [
+        note("a.md", `tags: [small, ${huge}]\n`),
+        note("b.md", "tags: [' spaced ', 'finance, legal', \"line\\nbreak\"]\n"),
+      ],
+      { integrity: "none" },
+      NOW,
+    );
+    const s = await session(fakeRuntime(odd));
+    const r = await s.call("search", { question: "quince", tag: "nope" });
+    expect(r.isError).toBe(true);
+    const error = text(r);
+    // One line, every value quoted as it is stored: a padded tag shows its spaces, a comma stays inside one value.
+    expect(error.split("\n")).toHaveLength(1);
+    expect(error).toBe(
+      `no page has the tag "nope"; the tags in use are: " spaced ", "finance, legal", "line\\\\u000abreak", "small", "${"t".repeat(200)}"…`,
+    );
+    expect(error.length).toBeLessThan(RESULT_BUDGET);
+    // A spaced stored tag can never be asked for, since requests are trimmed; the list shows why.
+    const spaced = await s.call("search", { question: "quince", tag: "spaced" });
+    expect(text(spaced)).toContain('" spaced "');
+    // The type list follows the same rule, count and length: 50 printed, then the total.
+    const many = loadGeneration(
+      [
+        ...Array.from({ length: 59 }, (_, i) => ({
+          path: `t/p${i}.md`,
+          bytes: Buffer.from(
+            `---\ntype: Type${String(i).padStart(2, "0")}\ntitle: P${i}\n---\n\nquince\n`,
+          ),
+        })),
+        {
+          path: "t/long.md",
+          bytes: Buffer.from(`---\ntype: ${"A".repeat(100_000)}\ntitle: L\n---\n\nquince\n`),
+        },
+      ],
+      { integrity: "none" },
+      NOW,
+    );
+    const m = await session(fakeRuntime(many));
+    const types = text(await m.call("search", { question: "quince", type: "nope" }));
+    expect(types).toMatch(
+      /^no page has the type "nope"; the types in use are: "A{200}"…, "Type00", /,
+    );
+    expect(types).toMatch(/, "Type48" … \(60 types\)$/);
+    expect(types).not.toContain("Type49");
+    expect(types.length).toBeLessThan(RESULT_BUDGET);
+    // And the status list, in development mode, where unknown statuses are served (build review I-B5).
+    const statuses = loadGeneration(
+      Array.from({ length: 60 }, (_, i) => ({
+        path: `s/p${i}.md`,
+        bytes: Buffer.from(
+          `---\ntype: Note\ntitle: P${i}\nstatus: s${String(i).padStart(2, "0")}\n---\n\nquince\n`,
+        ),
+      })),
+      { dev: true, integrity: "none" },
+      NOW,
+    );
+    const d = await session(fakeRuntime(statuses), { ...options, dev: true });
+    const listed = text(await d.call("search", { question: "quince", status: "nope" }));
+    expect(listed).toMatch(/the statuses in use are: "s00", "s01", .*, "s49" … \(60 statuses\)$/);
+    expect(listed).not.toContain("s50");
+    const late = await d.call("search", { question: "quince", status: "S59" });
+    expect(late.isError).not.toBe(true);
   });
 
   it("fails nine tags or a tag over 200 characters at the schema", async () => {
@@ -359,6 +471,23 @@ describe("search", () => {
     const trimmed = await s.call("search", { question: "glossary", tag: [" alpha ", ""] });
     expect(paths(trimmed)).toEqual(["terms/alpha.md"]);
     expect(text(trimmed).split("\n")[0]).toContain("1 page without the tag left out");
+  });
+
+  it("lists the statuses pages are served with, not as written (build review A-B6)", async () => {
+    const page = (path: string, status: string) => ({
+      path,
+      bytes: Buffer.from(`---\ntype: Note\ntitle: ${path}\nstatus: ${status}\n---\n\nquince\n`),
+    });
+    const generation = loadGeneration(
+      [page("a.md", "' Archived '"), page("b.md", "Stable")],
+      { admit: ["stable", "archived"], integrity: "none" },
+      NOW,
+    );
+    expect(generation.catalog.pages.size).toBe(2);
+    const s = await session(fakeRuntime(generation));
+    expect(text(await s.call("search", { question: "quince", status: "nope" }))).toBe(
+      'no page has the status "nope"; the statuses in use are: "Archived", "stable"',
+    );
   });
 
   it("keeps a page min_trust dropped readable through get_page", async () => {
@@ -713,6 +842,24 @@ describe("get_page and the concept id (R7)", () => {
     expect(text(both)).toBe(
       '"foo.md" names more than one page: foo.md (ask for "foo"), foo.md.md (ask for "foo.md.md")',
     );
+    // In a chain of three the middle page has no name of its own; the error says so instead of offering a name
+    // that answers with the same error (build review I-E5, A-A7).
+    const chain = loadGeneration(
+      ["foo.md", "foo.md.md", "foo.md.md.md"].map((path) => ({ path, bytes: page(path) })),
+      { integrity: "none" },
+      NOW,
+    );
+    const c = await session(fakeRuntime(chain));
+    expect(text(await c.call("get_page", { path: "foo.md.md" }))).toBe(
+      '"foo.md.md" names more than one page: foo.md.md (no name reaches it alone), foo.md.md.md (ask for "foo.md.md.md")',
+    );
+    // The path's description promises a name of its own only where there is one (the fix pass's verification).
+    const getPage = (await c.client.listTools()).tools.find((t) => t.name === "get_page");
+    if (getPage === undefined) throw new Error("get_page is not listed");
+    const path = (getPage.inputSchema.properties as Record<string, { description?: string }>).path;
+    expect(path?.description).toMatch(
+      /names each page, with a name that means it alone where there is one\.$/,
+    );
     const miss = await s.call("get_page", { path: "guides/b" });
     expect(miss.isError).toBe(true);
     expect(text(miss)).toMatch(
@@ -747,7 +894,10 @@ describe("get_page and the OKF 0.1 fallbacks (R5, R6)", () => {
       "https://wiki.acme/finance/cost-allocation",
     ]);
     expect(() => PageOutputSchema.parse(structured)).not.toThrow();
-    expect(text(r).split("\n")[0]).toContain("sources: https://wiki.acme/finance/fpa-handbook");
+    // Each source is quoted in the header, being body text on a v0.1 page (build review I-E3).
+    expect(text(r).split("\n")[0]).toBe(
+      'metrics/income-statement.md [Metric, stable, unverified, no recheck date, sources: "https://wiki.acme/finance/fpa-handbook"; "https://wiki.acme/finance/revenue-recognition"; "https://wiki.acme/finance/cost-allocation"]',
+    );
   });
 });
 

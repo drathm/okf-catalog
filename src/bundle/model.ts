@@ -41,6 +41,11 @@ export interface Source {
   lastModified?: string;
   /** The entry's own window, which overrides the page's shared one (§5.1); never a copy of the page's. */
   usageWindow?: UsageWindow;
+  /**
+   * Set when the entry wrote a `usage_window` that is not a `from`/`to` mapping: it is reported, and the entry takes
+   * no window, not the page's, since its producer framed its count otherwise (D62). Never part of a result.
+   */
+  usageWindowIgnored?: true;
 }
 
 /** One typed, named hole of an attested computation (§10.2): `{ name, type, required }`. */
@@ -312,4 +317,9 @@ export interface Report {
   missingOnDisk: string[];
   foldersWithoutIndex: string[];
   encodedFolders: string[];
+  /**
+   * The words of the admission list, other than the three known statuses, that no page carries, as listed and
+   * trimmed, each once: a typo such as `depreciated` admits nothing, and says so (D77, amended after the build review).
+   */
+  unmatchedAdmits: string[];
 }

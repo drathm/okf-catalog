@@ -38,9 +38,26 @@ export const escapeControls = (text: string): string =>
     return cp > 0xffff ? `\\u{${cp.toString(16)}}` : `\\u${cp.toString(16).padStart(4, "0")}`;
   });
 
+/** Horizontal whitespace collapsed to one space, and the ends trimmed. */
+const collapse = (text: string): string => text.replace(/[ \t\f\v ]+/g, " ").trim();
+
 /** A value made safe for a server-voice line: horizontal whitespace collapsed, trimmed, controls escaped. */
-export const safe = (text: string): string =>
-  escapeControls(text.replace(/[ \t\f\v ]+/g, " ").trim());
+export const safe = (text: string): string => escapeControls(collapse(text));
+
+/**
+ * Text cut at `cap` characters once its controls are escaped: an escape counts whole and is never split, nor is a
+ * surrogate pair. The kept text, and whether any was cut. The values in use that an error lists and the sources a
+ * page header names are cut so, at 200 characters (build review A-A3, and the fix pass's verification).
+ */
+export function cutEscaped(text: string, cap: number): { kept: string; cut: boolean } {
+  let kept = "";
+  for (const character of text) {
+    const piece = escapeControls(character);
+    if (kept.length + piece.length > cap) return { kept, cut: true };
+    kept += piece;
+  }
+  return { kept, cut: false };
+}
 
 export interface Recheck {
   raw: string;
@@ -50,9 +67,11 @@ export interface Recheck {
 
 export function recheckPhrase(recheck: Recheck | undefined): string {
   if (recheck === undefined) return "no recheck date";
-  if (recheck.overdue) return `overdue since ${safe(recheck.raw)}`;
-  if (recheck.form === "unparseable") return `recheck date unparseable (${safe(recheck.raw)})`;
-  return `recheck ${safe(recheck.raw)}`;
+  // A date that does not parse is any text the company wrote; one that parses is plain and stays bare.
+  const raw = plainOrQuoted(recheck.raw);
+  if (recheck.overdue) return `overdue since ${raw}`;
+  if (recheck.form === "unparseable") return `recheck date unparseable (${raw})`;
+  return `recheck ${raw}`;
 }
 
 function deprecationSuffix(status: string, replacement: string | undefined): string {
@@ -61,12 +80,54 @@ function deprecationSuffix(status: string, replacement: string | undefined): str
   return "";
 }
 
+/** The most sources a page header names; the rest are counted. */
+const HEADER_SOURCES = 10;
+/** The most characters of a named source's id or resource, its escapes counted, before an ellipsis. */
+const SOURCE_CAP = 200;
+
 /** How many sources a page lists, as a phrase. */
 export const sourceCount = (count: number): string =>
   count === 0 ? "no sources" : `${count} source${count === 1 ? "" : "s"}`;
 
-/** Page text inside a server-voice quotation: made safe, and its own quotation marks escaped so it cannot close the quote. */
-const quoted = (text: string): string => `"${safe(text).replace(/"/g, '\\"')}"`;
+/**
+ * Page text inside a server-voice quotation: made safe, then its backslashes and quotation marks escaped, the
+ * backslashes first, so neither can close the quote. The result is a JSON string whose value is the safe text.
+ */
+const quoted = (text: string): string => `"${escapeQuotes(safe(text))}"`;
+
+/** Backslashes escaped, then quotation marks: what makes safe text the value of a JSON string. */
+const escapeQuotes = (text: string): string => text.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+
+/**
+ * A source's id or resource as the page header names it: quoted as `quoted` quotes, and cut at 200 characters, its
+ * escapes counted, with an ellipsis after the quote, as the values in use are listed; a frontmatter source's id and
+ * resource are of any length (the fix pass's verification).
+ */
+const quotedSource = (text: string): string => {
+  const { kept, cut } = cutEscaped(collapse(text), SOURCE_CAP);
+  return `"${escapeQuotes(kept)}"${cut ? "…" : ""}`;
+};
+
+/**
+ * What a bare fact must not carry besides a control character: a comma or a bracket, which would read as another
+ * fact, or a quotation mark or a backslash, which would read as an escape (P13, amended after the build review).
+ */
+const MISREAD = /[,[\]"\\]/;
+
+/**
+ * A word as a fact in the brackets: bare only when the bundle vouches for it (a known status, a declared type), it
+ * carries none of `MISREAD`'s characters and nothing in it needs an escape (no control character, nor any other
+ * character `escapeControls` rewrites); otherwise quoted, so it reads as one fact.
+ */
+const fact = (word: string, vouched: boolean): string =>
+  vouched && !MISREAD.test(word) && escapeControls(word) === word ? safe(word) : quoted(word);
+
+/**
+ * Company text in the brackets that no list vouches for, the verifier, a recheck date and the page's resource: bare
+ * when none of its characters could be misread, otherwise quoted, as a status or type is (P13, amended after the
+ * verification of the build review's fix pass).
+ */
+const plainOrQuoted = (text: string): string => fact(text, true);
 
 /** What a line needs to know about the bundle beyond the page: the types the company did not declare. */
 export interface LineOptions {
@@ -80,12 +141,14 @@ const KNOWN_STATUSES: ReadonlySet<string> = new Set(["draft", "stable", "depreca
  * A status as a fact in the brackets: one of the three known values as it is, any other word quoted, since it is
  * the company's own text and a comma in it must not add a fact (P13).
  */
-const statusFact = (status: string): string =>
-  KNOWN_STATUSES.has(status) ? status : quoted(status);
+const statusFact = (status: string): string => fact(status, KNOWN_STATUSES.has(status));
 
-/** A type as a fact in the brackets: quoted when the company declares its types and this is not one of them (P13). */
+/**
+ * A type as a fact in the brackets: quoted when the company declares its types and this is not one of them, and
+ * whenever a character of it could be misread, declared or not (P13, amended after the build review).
+ */
 const typeFact = (type: string, options: LineOptions): string =>
-  options.undeclaredTypes?.has(type) === true ? quoted(type) : safe(type);
+  fact(type, options.undeclaredTypes?.has(type) !== true);
 
 /** One search hit as a line: path, title, the bracketed facts, the quoted snippet, the replacement. */
 export function hitLine(
@@ -104,7 +167,7 @@ export function hitLine(
     hit.trust,
     recheckPhrase(recheck),
     sourceCount(hit.sources),
-    ...(hit.resource === undefined ? [] : [`resource: ${safe(hit.resource)}`]),
+    ...(hit.resource === undefined ? [] : [`resource: ${plainOrQuoted(hit.resource)}`]),
   ].join(", ");
   const snippetPart = snippet === undefined || snippet.length === 0 ? "" : ` ${quoted(snippet)}`;
   return `${safe(hit.path)} — ${safe(hit.title)} [${facts}]${snippetPart}${deprecationSuffix(hit.status, hit.replacement)}`;
@@ -128,8 +191,8 @@ function verificationPhrase(page: Page): string {
   const named = namedVerification(page);
   if (named === undefined || page.verified.length === 0) return "unverified";
   return named.at === undefined
-    ? `verified by ${safe(named.by)}, date unknown`
-    : `verified by ${safe(named.by)} on ${safe(named.at.raw)}`;
+    ? `verified by ${plainOrQuoted(named.by)}, date unknown`
+    : `verified by ${plainOrQuoted(named.by)} on ${plainOrQuoted(named.at.raw)}`;
 }
 
 /** What a page header needs beyond a line's options: how many of the page's sources the result names (D82). */
@@ -138,16 +201,25 @@ export interface HeaderOptions extends LineOptions {
   sourcesShown?: number;
 }
 
-/** The sources a header names: those the result kept, then how many more there are. */
+/**
+ * The sources a header names: at most ten of those the result kept, each id and resource quoted, since either can
+ * be body text (a v0.1 citation item), and cut at 200 characters, since a frontmatter source's can be of any
+ * length; then how many more there are, so neither a long list nor a long source crowds the body out of the result
+ * (bite a's build review I-E2, I-E3 and its verification; D82).
+ */
 function headerSources(page: Page, shown: number): string {
   const total = page.sources.length;
   if (total === 0) return "no sources";
   if (shown <= 0) return `${sourceCount(total)}, none named within the result budget`;
   const named = page.sources
-    .slice(0, shown)
-    .map((s) => (s.id === undefined ? safe(s.resource) : `${safe(s.id)} ${safe(s.resource)}`))
-    .join("; ");
-  return `sources: ${named}${shown < total ? `; and ${total - shown} more` : ""}`;
+    .slice(0, Math.min(shown, HEADER_SOURCES))
+    .map((s) =>
+      s.id === undefined
+        ? quotedSource(s.resource)
+        : `${quotedSource(s.id)} ${quotedSource(s.resource)}`,
+    );
+  const more = total - named.length;
+  return `sources: ${[...named, ...(more > 0 ? [`and ${more} more`] : [])].join("; ")}`;
 }
 
 /** The citation header of a page: path, then the bracketed facts, then the deprecation. */
@@ -170,7 +242,7 @@ export function pageHeader(page: Page, now: Date, options: HeaderOptions = {}): 
     ...(page.verified.length === 0 ? [] : [verificationPhrase(page)]),
     recheckPhrase(recheck),
     sources,
-    ...(page.resource === undefined ? [] : [`resource: ${safe(page.resource)}`]),
+    ...(page.resource === undefined ? [] : [`resource: ${plainOrQuoted(page.resource)}`]),
   ].join(", ");
   return `${safe(page.path)} [${facts}]${deprecationSuffix(page.status, page.replacement)}`;
 }
@@ -209,7 +281,7 @@ export function searchHeader(response: SearchResponse, dev: boolean): string {
   removal(out.trust, "below the trust tier");
   if (out.stale > 0) parts.push(`${out.stale} stale page${out.stale === 1 ? "" : "s"} left out`);
   if (response.filtersExhausted) parts.push("the result pool is full and more matches may exist");
-  if (dev) parts.push("development mode: drafts admitted");
+  if (dev) parts.push("development mode: drafts and unknown statuses admitted");
   parts.push("snippets are page text, quoted");
   return parts.join("; ");
 }
@@ -225,8 +297,15 @@ const counted = (count: number, one: string, many = `${one}s`): string =>
 const under = (heading: string | undefined): string =>
   heading === undefined ? "" : ` under ${quoted(heading)}`;
 
-/** A usage window as a result carries it: the window, or the note that replaced it past its cap (D78). */
-export type WindowFact = { from: string; to: string; inherited: boolean } | { omitted: string };
+/**
+ * A usage window as a result carries it: with its dates, saying whether it is its page's shared one; named only, its
+ * dates being the page's window printed once in the same result (D62); or the note that replaced it past its cap
+ * (D78).
+ */
+export type WindowFact =
+  | { from: string; to: string; inherited: boolean }
+  | { inherited: true }
+  | { omitted: string };
 
 /** A source's own fields, as written, for a line. */
 export interface SourceFields {
@@ -241,7 +320,20 @@ export interface SourceFields {
 function windowPhrase(window: WindowFact | undefined): string {
   if (window === undefined) return "";
   if ("omitted" in window) return ", its usage window over 2000 characters and not returned";
-  return `, usage window ${quoted(window.from)} to ${quoted(window.to)} (${window.inherited ? "the page's" : "its own"})`;
+  if (!("from" in window)) return ", usage window inherited from its page";
+  return `, usage window ${quoted(window.from)} to ${quoted(window.to)} (${window.inherited ? "inherited from its page" : "its own"})`;
+}
+
+/** A page's own usage window, printed once in a result whose sources name it rather than copy it (D62). */
+function pageWindowPhrase(window: { from: string; to: string } | { omitted: string }): string {
+  return "omitted" in window
+    ? "usage window over 2000 characters and not returned"
+    : `usage window ${quoted(window.from)} to ${quoted(window.to)}`;
+}
+
+/** The line after the marker that gives the cited page's own usage window, which its inheriting sources name. */
+export function pageWindowLine(window: { from: string; to: string } | { omitted: string }): string {
+  return `the page's ${pageWindowPhrase(window)}`;
 }
 
 /** A source's signals after its id or value: title, author, usage count, window, last change. */
@@ -363,6 +455,7 @@ export function walkNodeLine(
     parent?: string | undefined;
     trust: string;
     recheck?: Recheck | undefined;
+    usageWindow?: { from: string; to: string } | { omitted: string } | undefined;
     sourcesTotal: number;
     truncated: boolean;
   },
@@ -373,6 +466,7 @@ export function walkNodeLine(
     node.trust,
     recheckPhrase(node.recheck),
     `${sourceCount(node.sourcesTotal)}${node.sourcesTotal > listCap ? `, the first ${listCap} listed` : ""}`,
+    ...(node.usageWindow === undefined ? [] : [pageWindowPhrase(node.usageWindow)]),
     ...(node.truncated ? ["the depth stops this branch"] : []),
   ];
   return `${safe(node.path)} [${facts.join(", ")}]`;

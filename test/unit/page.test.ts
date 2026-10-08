@@ -516,6 +516,13 @@ describe("parsePage: the contract fields and the page window (R2, R3)", () => {
       ["executor: text", undefined],
       ["attester: { resource: 3 }", undefined],
       ["runtime: [bigquery, dbt]", undefined],
+      // A parameter whose name is blank has no name (build review A-B7).
+      ['parameters:\n  - { name: "  ", type: integer }', { parameters: [] }],
+      // A mapping with none of the keys the specification gives it is reported too (build review I-A3).
+      ["attester: { path: attesters/check.py }", undefined],
+      ["attester: {}", undefined],
+      ["executor: { resources: run.md }", undefined],
+      ["executor: {}", undefined],
     ];
     for (const [yaml, contract] of cases) {
       const r = inline("x.md", `---\ntype: T\ntitle: T\ndescription: D\n${yaml}\n---\n`);
@@ -542,6 +549,43 @@ describe("parsePage: the contract fields and the page window (R2, R3)", () => {
       ]);
     }
     expect(page("terms/alpha.md").usageWindow).toEqual({ from: "2000-01-01", to: "2000-01-31" });
+  });
+
+  it("reports a source's own usage_window that is not a from-to mapping, and the source takes no window (build review I-A1, A-A5)", () => {
+    const withSourceWindow = (value: string) =>
+      inline(
+        "x.md",
+        `---\ntype: T\ntitle: T\ndescription: D\nusage_window: { from: 2026-06-01, to: 2026-06-30 }\nsources:\n  - resource: https://x.test/own\n    usage_count: 7\n    usage_window: ${value}\n  - resource: https://x.test/none\n    usage_count: 3\n---\n`,
+      );
+    for (const value of ["{ from: 2025-01-01 }", "2025", "[a, b]", "{ from: 1, to: 2 }"]) {
+      const r = withSourceWindow(value);
+      if (!r.ok) throw new Error(`${value}: refused ${r.refusal.rule}`);
+      // The source wrote a window of its own: its count is not framed by the page's, which it did not ask for.
+      expect(r.page.sources, value).toEqual([
+        { resource: "https://x.test/own", usageCount: 7, usageWindowIgnored: true },
+        { resource: "https://x.test/none", usageCount: 3 },
+      ]);
+      expect(r.page.degradations, value).toEqual([
+        expect.objectContaining({
+          code: "source-malformed",
+          field: "sources",
+          detail: expect.stringContaining("sources[0].usage_window"),
+        }),
+      ]);
+    }
+    // A well-formed own window is kept; a key with no value is no window, and inherits as before.
+    const own = withSourceWindow("{ from: 2025-01-01, to: 2025-12-31 }");
+    if (!own.ok) throw new Error(own.refusal.rule);
+    expect(own.page.sources[0]).toEqual({
+      resource: "https://x.test/own",
+      usageCount: 7,
+      usageWindow: { from: "2025-01-01", to: "2025-12-31" },
+    });
+    expect(own.page.degradations).toEqual([]);
+    const none = withSourceWindow("null");
+    if (!none.ok) throw new Error(none.refusal.rule);
+    expect(none.page.sources[0]).toEqual({ resource: "https://x.test/own", usageCount: 7 });
+    expect(none.page.degradations).toEqual([]);
   });
 });
 
@@ -626,5 +670,30 @@ describe("parsePage: usage counts and the OKF 0.1 fallbacks (R4, R5, R6)", () =>
     );
     expect(subsection.sources).toEqual([]);
     expect(codes(subsection)).not.toContain("legacy-citations");
+  });
+
+  it("cuts each legacy citation item at 500 characters and says how many were cut (build review I-E2)", () => {
+    const words = "w".repeat(800);
+    const url = `https://x.test/${"u".repeat(700)}`;
+    const cut = parsed(
+      `---\ntype: T\ntitle: T\ndescription: D\n---\n\n# Citations\n- ${words}\n- [${"t".repeat(600)}](${url})\n- short\n`,
+    );
+    expect(cut.sources).toEqual([
+      { resource: `${"w".repeat(500)}…` },
+      { resource: `${url.slice(0, 500)}…`, title: `${"t".repeat(500)}…` },
+      { resource: "short" },
+    ]);
+    expect(cut.degradations).toEqual([
+      expect.objectContaining({
+        code: "legacy-citations",
+        detail: expect.stringContaining("2 cut at 500 characters"),
+      }),
+    ]);
+    // An item of exactly 500 characters is whole.
+    const whole = parsed(
+      `---\ntype: T\ntitle: T\ndescription: D\n---\n\n# Citations\n- ${"w".repeat(500)}\n`,
+    );
+    expect(whole.sources).toEqual([{ resource: "w".repeat(500) }]);
+    expect(whole.degradations[0]?.detail).not.toContain("cut");
   });
 });

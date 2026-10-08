@@ -20,6 +20,7 @@ const COUNTS = [
  */
 const ALLOWED: Record<string, readonly string[]> = {
   "serve.start": ["company", "source", "lock", "dev", "node", "configRule", "note"],
+  "serve.admit": ["word", "detail"],
   "serve.refusing": ["problem", "detail"],
   "serve.shutdown": ["reason"],
   "engine.reset": ["detail"],

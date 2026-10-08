@@ -83,18 +83,11 @@ describe("citationsOf", () => {
       "uses/ambiguous.md": note(sources("{ resource: /foo.md, usage_count: 2 }")),
     });
     const cited = citationsOf(catalog, pageOf(catalog, "policy.md"));
+    // The page's window is on the result once; its sources that inherit it name it (merge ruling 1).
+    expect(cited.usageWindow).toEqual({ from: "2026-01-01", to: "2026-03-31" });
     expect(cited.bibliography).toEqual([
-      {
-        id: "law",
-        resource: "https://x.test/law",
-        title: "The law",
-        window: { from: "2026-01-01", to: "2026-03-31", inherited: true },
-      },
-      {
-        resource: "https://x.test/memo",
-        author: "team:legal",
-        window: { from: "2026-01-01", to: "2026-03-31", inherited: true },
-      },
+      { id: "law", resource: "https://x.test/law", title: "The law", window: { inherited: true } },
+      { resource: "https://x.test/memo", author: "team:legal", window: { inherited: true } },
     ]);
     // A footnote with no source is unjoined, once per reference, and never a claim.
     expect(cited.unjoined).toEqual([
@@ -237,10 +230,12 @@ describe("walkProvenance", () => {
         author: "team:c",
         usageCount: 9,
         lastModified: "2026-03-03",
-        window: { from: "2026-01-01", to: "2026-06-30", inherited: true },
+        window: { inherited: true },
         walk: "already-entered",
       },
     ]);
+    // The node carries its page's window once, which that edge names.
+    expect(walk.nodes[2]?.usageWindow).toEqual({ from: "2026-01-01", to: "2026-06-30" });
     // A shorter path wins: d reached directly from a is entered at level 1, and b's edge to it is a later reach.
     const shortcut = bundle({
       "a.md": note(sources("{ resource: b.md }", "{ resource: d.md }")),
@@ -308,9 +303,10 @@ describe("walkProvenance", () => {
     const walk = walkProvenance(catalog, pageOf(catalog, "a.md"), 4, NOW);
     expect(walk.nodes[0]?.edges.map((e) => [e.usageCount ?? null, e.window ?? null])).toEqual([
       [1, { from: "2026-04-01", to: "2026-04-30", inherited: false }],
-      [2, { from: "2026-01-01", to: "2026-03-31", inherited: true }],
-      [null, { from: "2026-01-01", to: "2026-03-31", inherited: true }],
+      [2, { inherited: true }],
+      [null, { inherited: true }],
     ]);
+    expect(walk.nodes[0]?.usageWindow).toEqual({ from: "2026-01-01", to: "2026-03-31" });
     // usage_count is returned and orders nothing: the rows stay in the page's order.
     const plain = walkProvenance(catalog, pageOf(catalog, "b.md"), 4, NOW);
     expect(plain.nodes[0]?.edges[0]).toMatchObject({ usageCount: 3 });

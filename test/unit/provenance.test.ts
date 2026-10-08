@@ -164,7 +164,8 @@ describe("provenance: the usage window (R3)", () => {
       ...own,
       inherited: false,
     });
-    expect(effectiveWindow({ resource: "b" }, shared)).toEqual({ ...shared, inherited: true });
+    // An inherited window is named, not copied: the page's usageWindow carries its dates once (build review I-E1).
+    expect(effectiveWindow({ resource: "b" }, shared)).toEqual({ inherited: true });
     expect(effectiveWindow({ resource: "c" }, undefined)).toBeUndefined();
     const prov = provenanceOf(
       page({
@@ -176,8 +177,30 @@ describe("provenance: the usage window (R3)", () => {
     expect(prov.usageWindow).toEqual(shared);
     expect(prov.sources).toEqual([
       { resource: "a", usageWindow: own, effectiveWindow: { ...own, inherited: false } },
-      { resource: "b", effectiveWindow: { ...shared, inherited: true } },
+      { resource: "b", effectiveWindow: { inherited: true } },
     ]);
+    // One source that inherits: the dates stay on the page, once.
+    const one = provenanceOf(
+      page({ usageWindow: shared, sources: [{ resource: "d" }] }),
+      new Date("2026-10-06T12:00:00Z"),
+    );
+    expect(one.usageWindow).toEqual(shared);
+    expect(one.sources).toEqual([{ resource: "d", effectiveWindow: { inherited: true } }]);
+    // A source whose own window was malformed takes none, not the page's (build review I-A1, A-A5), and the marker
+    // that says so stays out of the result.
+    expect(effectiveWindow({ resource: "e", usageWindowIgnored: true }, shared)).toBeUndefined();
+    const ignored = provenanceOf(
+      page({
+        usageWindow: shared,
+        sources: [{ resource: "e", usageCount: 7, usageWindowIgnored: true }, { resource: "f" }],
+      }),
+      new Date("2026-10-06T12:00:00Z"),
+    );
+    expect(ignored.sources).toEqual([
+      { resource: "e", usageCount: 7 },
+      { resource: "f", effectiveWindow: { inherited: true } },
+    ]);
+    expect(Object.keys(ignored.sources[0] ?? {})).toEqual(["resource", "usageCount"]);
     // Nothing is copied onto the stored sources: the page keeps only what it was given.
     const alone = provenanceOf(page({ sources: [{ resource: "c" }] }), new Date());
     expect(alone.sources).toEqual([{ resource: "c" }]);

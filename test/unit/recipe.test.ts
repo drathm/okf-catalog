@@ -92,6 +92,10 @@ describe("the publish recipe", () => {
     expect([...order].sort((a, b) => a - b)).toEqual(order);
     expect(push).not.toMatch(/push .*--force|--force-with-lease/);
     expect(push).toMatch(/MESSAGE="publish \$COMMIT"/);
+    // pack refuses a bundle in which no page is admitted unless told otherwise; the recipe never tells it, so a typo
+    // in serve.admit that empties the bundle fails the run (D77), and the README says so.
+    expect(pack).not.toContain("--allow-empty");
+    expect(readme).toMatch(/fails when no page is admitted[^.]*--allow-empty/);
   });
 
   it("pins the interpreter the checker lock was built for, and names the checkers' settings", () => {

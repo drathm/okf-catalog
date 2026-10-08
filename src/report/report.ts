@@ -25,6 +25,11 @@ export function renderReport(report: Report): string {
     lines.push("Degraded:");
     for (const d of report.degradations) lines.push(`  ${d.path}: ${d.code} (${d.detail})`);
   }
+  if (report.unmatchedAdmits.length > 0) {
+    lines.push(
+      `Admitted statuses that match no page: ${report.unmatchedAdmits.map((word) => JSON.stringify(word)).join(", ")}`,
+    );
+  }
   if (report.unknownTypes.length > 0)
     lines.push(`Undeclared types: ${report.unknownTypes.join(", ")}`);
   if (report.unknownStatuses.length > 0) {

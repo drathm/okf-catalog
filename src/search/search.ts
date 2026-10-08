@@ -74,11 +74,15 @@ export interface SearchResponse {
   /** Engine queries made and rows they returned, for cost accounting: every row carries its page body. */
   engineQueries: number;
   rowsFetched: number;
-  /** A topic filter was set, the pool reached its cap, and the answer is still short: the topic may hold more. */
+  /**
+   * A topic filter was set, the pool reached its cap with the engine holding more rows past it, and the answer is
+   * still short: the topic may hold more.
+   */
   topicExhausted: boolean;
   /**
    * A restrictive filter was set (a type, a topic, a tag, a status, a trust floor above unverified, or overdue pages
-   * left out), the pool reached its cap, and the answer is still short: a matching page may sit past the cap.
+   * left out), the pool reached its cap with the engine holding more rows past it, and the answer is still short: a
+   * matching page may sit past the cap. An engine that ran out under the cap showed every match: no flag.
    */
   filtersExhausted: boolean;
 }
@@ -276,6 +280,9 @@ export async function search(
   // First rung: all terms, widening while short and the engine still had more to give.
   let pool = Math.min(limit * POOL_FACTOR, POOL_CAP);
   let first: Candidate[] = [];
+  // Whether the last first-rung query saw every row the engine holds for the terms. At the cap with the answer
+  // short, only an engine that had more can be hiding a matching page (build review A-A4).
+  let ranOut = false;
   for (;;) {
     const { hits: engineHits, exhausted } = await lexComplete(
       engine,
@@ -283,6 +290,7 @@ export async function search(
       pool,
       cost,
     );
+    ranOut = exhausted;
     first = [];
     for (const hit of engineHits) {
       const page = admit(hit);
@@ -346,8 +354,8 @@ export async function search(
     pool,
     engineQueries: cost.queries,
     rowsFetched: cost.rows,
-    topicExhausted: prefix !== undefined && pool >= POOL_CAP && hits.length < limit,
-    filtersExhausted: restrictive && pool >= POOL_CAP && hits.length < limit,
+    topicExhausted: prefix !== undefined && pool >= POOL_CAP && !ranOut && hits.length < limit,
+    filtersExhausted: restrictive && pool >= POOL_CAP && !ranOut && hits.length < limit,
   };
 }
 

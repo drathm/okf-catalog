@@ -1,7 +1,7 @@
 import { decodeUtf8, parseFrontmatter, splitFrontmatter } from "./frontmatter.js";
 import { type LinkIndex, resolveLink } from "./links.js";
 import { sha256Hex } from "./manifest.js";
-import { readBody } from "./markdown.js";
+import { BLOCK_CAP, cutAt, readBody } from "./markdown.js";
 import type {
   BundleFile,
   Contract,
@@ -32,6 +32,16 @@ export interface PageContext {
 export type ParsePageResult = { ok: true; page: Page } | { ok: false; refusal: Refusal };
 
 const STATUSES: ReadonlySet<string> = new Set<Status>(["draft", "stable", "deprecated"]);
+
+/**
+ * Characters kept of a legacy citation item's text, and of its link, as a source's resource or title (D63): the
+ * bound of a claim's block, one constant for both.
+ */
+const CITATION_CAP = BLOCK_CAP;
+
+/** A legacy citation item's text or link, cut at the cap with an ellipsis, never inside a surrogate pair. */
+const capCitation = (text: string): string =>
+  text.length <= CITATION_CAP ? text : `${cutAt(text, CITATION_CAP)}…`;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -336,9 +346,21 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
               `sources[${i}].usage_count is ${kindOf(count)}, not a number; ignored`,
             );
           if (typeof entry.last_modified === "string") source.lastModified = entry.last_modified;
+          // An own window that is not a from-to mapping is reported, and the source then takes no window at all: the
+          // page's would frame a count its producer framed otherwise (§5.1, D62).
           const w = entry.usage_window;
           if (isRecord(w) && typeof w.from === "string" && typeof w.to === "string")
             source.usageWindow = { from: w.from, to: w.to };
+          else if (w !== undefined && w !== null) {
+            source.usageWindowIgnored = true;
+            degrade(
+              "source-malformed",
+              "sources",
+              isRecord(w)
+                ? `sources[${i}].usage_window lacks a from or a to written as a date; ignored, and the source does not take the page's window`
+                : `sources[${i}].usage_window is ${kindOf(w)}, not a mapping of from and to; ignored, and the source does not take the page's window`,
+            );
+          }
           sources.push(source);
         } else {
           degrade("source-malformed", "sources", `sources[${i}] has no resource; ignored`);
@@ -351,23 +373,31 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
   // The OKF 0.1 `# Citations` list (§13.1, D63): sources only on a page that carries none of the v0.2 fields that
   // replaced it, so a v0.2 page's own list of citations stays body text. One link gives a resource and a title;
   // anything else, a bare URL included (autolinks are not parsed), gives its text as the resource.
+  // Each item is body text of any length, so its text and its link are cut at 500 characters, the bound bite b
+  // gives a reference block (build review I-E2).
   if (
     absent("generated") &&
     absent("verified") &&
     absent("sources") &&
     facts.citations.length > 0
   ) {
+    let cut = 0;
     for (const citation of facts.citations) {
+      const long =
+        citation.text.length > CITATION_CAP || (citation.url?.length ?? 0) > CITATION_CAP;
+      if (long) cut += 1;
+      const text = capCitation(citation.text);
       sources.push(
         citation.url === undefined
-          ? { resource: citation.text }
-          : { resource: citation.url, title: citation.text },
+          ? { resource: text }
+          : { resource: capCitation(citation.url), title: text },
       );
     }
+    const items = facts.citations.length;
     degrade(
       "legacy-citations",
       "sources",
-      `${facts.citations.length} item${facts.citations.length === 1 ? "" : "s"} of an OKF 0.1 # Citations list read as sources, since the page has no generated, verified or sources`,
+      `${items} item${items === 1 ? "" : "s"} of an OKF 0.1 # Citations list read as sources, since the page has no generated, verified or sources${cut > 0 ? `; ${cut} cut at ${CITATION_CAP} characters` : ""}`,
     );
   }
 
@@ -535,6 +565,13 @@ function readContract(
         else ignored("executor.receipt", executor.receipt, "a list");
       }
       if (Object.keys(kept).length > 0) contract.executor = kept;
+      // A mapping with neither key the text gives it is ignored, and says so (build review I-A3).
+      if (!present(executor.resource) && !present(executor.receipt))
+        degrade(
+          "field-ignored",
+          "executor",
+          "executor has neither a resource nor a receipt; ignored",
+        );
     }
   }
 
@@ -545,7 +582,7 @@ function readContract(
       if (typeof attester.resource === "string")
         contract.attester = { resource: attester.resource };
       else ignored("attester.resource", attester.resource, "text");
-    }
+    } else degrade("field-ignored", "attester", "attester has no resource; ignored");
   }
 
   return Object.keys(contract).length > 0 ? contract : undefined;

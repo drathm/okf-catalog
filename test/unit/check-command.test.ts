@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { CHECK_USAGE } from "../../src/commands/check.js";
 import { runCli } from "../helpers/cli.js";
 import { FIXTURES } from "../helpers/fixtures.js";
 
@@ -82,6 +83,51 @@ describe("okf-catalog check", () => {
       expect(run.code, bad).toBe(2);
       expect(run.stderr, bad).toMatch(/OKF_CATALOG_NOW/);
     }
+  });
+
+  it("takes a status word of the company's own in --admit, as pack does, and refuses draft or a blank word (build review I-C1)", async () => {
+    // Trimmed, compared without regard to case, any word but draft: the rule serve.admit and pack --admit follow (D77).
+    const run = await runCli([
+      "check",
+      join(FIXTURES, "behaviours"),
+      "--json",
+      "--admit",
+      " stable , deprecated , Archived ",
+    ]);
+    expect(run.code).toBe(0);
+    const report = JSON.parse(run.stdout) as { admitted: number; excludedByStatus: number };
+    expect(report.admitted).toBe(18);
+    expect(report.excludedByStatus).toBe(1);
+    for (const admit of ["draft", "stable,Draft", "stable,,deprecated", "stable, "]) {
+      const refused = await runCli(["check", join(FIXTURES, "behaviours"), "--admit", admit]);
+      expect(refused.code, admit).toBe(2);
+      expect(refused.stdout, admit).toBe("");
+      expect(refused.stderr, admit).toMatch(/^--admit /);
+    }
+    expect(CHECK_USAGE).toMatch(
+      /--admit <stable,deprecated> +statuses to serve, any word but draft/,
+    );
+  });
+
+  it("names an admitted word that matches no page in its report (D77, build review A-E1)", async () => {
+    const run = await runCli([
+      "check",
+      join(FIXTURES, "behaviours"),
+      "--admit",
+      "stable,depreciated",
+    ]);
+    expect(run.code).toBe(0);
+    expect(run.stdout).toContain('Admitted statuses that match no page: "depreciated"');
+    const json = await runCli([
+      "check",
+      join(FIXTURES, "behaviours"),
+      "--json",
+      "--admit",
+      "stable,depreciated",
+    ]);
+    expect((JSON.parse(json.stdout) as { unmatchedAdmits: string[] }).unmatchedAdmits).toEqual([
+      "depreciated",
+    ]);
   });
 
   it("refuses an empty --admit or --types list as a usage error", async () => {

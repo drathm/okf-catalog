@@ -26,7 +26,7 @@ import {
 } from "../catalog/outputs.js";
 import { type Found, resolvePageName } from "../catalog/resolve.js";
 import type { Generation, Runtime, ToolOptions } from "../catalog/runtime.js";
-import { DATA_SENTENCE, safe } from "../catalog/text.js";
+import { cutEscaped, DATA_SENTENCE, safe } from "../catalog/text.js";
 import type { Log } from "../log.js";
 import type { Engine } from "../search/engine.js";
 import { search } from "../search/search.js";
@@ -39,7 +39,10 @@ type ToolResult = {
   logFields?: Record<string, number>;
 };
 
-const FOLDER_LIST_CAP = 50;
+/** The most entries an error line lists before it gives the total. */
+const LIST_CAP = 50;
+/** The most characters of one listed value, its escapes counted, before it is cut with an ellipsis. */
+const VALUE_CAP = 200;
 /** The most tags a search may ask for; each is a word or two, at most as long as a type. */
 const TAG_LIST_CAP = 8;
 
@@ -56,18 +59,34 @@ const blank = (value: string | undefined): string | undefined =>
 /** A folder as the search filter normalises it: no leading or trailing slashes; the empty string is the root. */
 const normaliseFolder = (value: string): string => value.trim().replace(/^\/+|\/+$/g, "");
 
+/**
+ * The folders for an error line, listed as the values in use are: each JSON-quoted and cut at 200 characters, so a
+ * comma stays inside one name and a long name cannot fill the error; the root by its label; the first 50, then the
+ * total (the fix pass's verification).
+ */
 function folderList(catalog: Catalog): string {
-  const names = [...catalog.folders.keys()]
-    .sort(byCodeUnit)
-    .map((f) => (f === "" ? "(root)" : safe(f)));
-  const shown = names.slice(0, FOLDER_LIST_CAP).join(", ");
-  return names.length > FOLDER_LIST_CAP ? `${shown} … (${names.length} folders)` : shown;
+  const names = [...catalog.folders.keys()].sort(byCodeUnit);
+  const shown = names
+    .slice(0, LIST_CAP)
+    .map((f) => (f === "" ? "(root)" : listedValue(f)))
+    .join(", ");
+  return names.length > LIST_CAP ? `${shown} … (${names.length} folders)` : shown;
 }
 
-/** Values in use for an error line: made safe, the first 50 printed, then the total when there are more. */
+/**
+ * One value in use, as stored: neither trimmed nor collapsed, so a padded tag shows its spaces and a comma stays
+ * inside one value; its unsafe characters escaped, cut at 200 characters with an ellipsis after the quote, then
+ * JSON-quoted (build review A-A3, A-A6). The cut counts escapes, so no value prints more than about 400 characters.
+ */
+function listedValue(value: string): string {
+  const { kept, cut } = cutEscaped(value, VALUE_CAP);
+  return `${JSON.stringify(kept)}${cut ? "…" : ""}`;
+}
+
+/** Values in use for an error line: each listed as stored and quoted, the first 50, then the total when there are more. */
 function valueList(values: readonly string[], noun: string): string {
-  const shown = values.slice(0, FOLDER_LIST_CAP).map(safe).join(", ");
-  if (values.length > FOLDER_LIST_CAP) return `${shown} … (${values.length} ${noun})`;
+  const shown = values.slice(0, LIST_CAP).map(listedValue).join(", ");
+  if (values.length > LIST_CAP) return `${shown} … (${values.length} ${noun})`;
   return shown || "(none)";
 }
 
@@ -95,7 +114,7 @@ const PAGE_NAME = z
   .min(1)
   .max(1024)
   .describe(
-    "The page's path in the bundle, as a search result or a catalog lists it, or its concept id (the path without .md).",
+    "The page's path in the bundle, as a search result or a catalog lists it, or its concept id (the path without .md). An exact path is ambiguous when a sibling page X.md.md exists, X.md being that page's concept id too; the error then names each page, with a name that means it alone where there is one.",
   );
 
 /**
@@ -112,7 +131,10 @@ function resolveName(generation: Generation, value: string): Found | ToolResult 
     case "ambiguous":
       return fail(
         `${JSON.stringify(safe(resolution.name))} names more than one page: ${resolution.candidates
-          .map((c) => `${safe(c.path)} (ask for ${JSON.stringify(safe(c.ask))})`)
+          .map(
+            (c) =>
+              `${safe(c.path)} (${c.ask === undefined ? "no name reaches it alone" : `ask for ${JSON.stringify(safe(c.ask))}`})`,
+          )
           .join(", ")}`,
       );
     case "not-found":
@@ -194,7 +216,7 @@ export function registerTools(
     {
       title: "Search the knowledge bundle",
       description: describeType(
-        'Finds pages by keywords. Write one concept per word; common words are dropped, and when no page holds every word the match is relaxed and the result says so. Optional filters, applied to what the index returns and never added to the keywords: type, topic, tag (one tag, or a list a page must carry all of), status, min_trust (that tier or a higher one) and freshness. With freshness and include_stale both omitted, pages past their recheck date are included and each says it is overdue; freshness "fresh" leaves them out, and include_stale is the older name for the same choice (true is "any", false is "fresh"). Each hit carries its path, type, status, trust tier, recheck date, source count, resource and a quoted snippet.',
+        'Finds pages by keywords. Write one concept per word; common words are dropped, and when no page holds every word the match is relaxed and the result says so. Optional filters, applied to what the index returns: type, topic, tag (one tag, or a list a page must carry all of), status, min_trust (that tier or a higher one) and freshness. tag, status, min_trust and freshness are never added to the keywords; type and topic also add their words to the first query. With freshness and include_stale both omitted, pages past their recheck date are included and each says it is overdue; freshness "fresh" leaves them out, and include_stale is the older name for the same choice (true is "any", false is "fresh"). Each hit carries its path, type, status, trust tier, recheck date, source count, resource and a quoted snippet.',
       ),
       inputSchema: z.strictObject({
         question: z
@@ -256,7 +278,7 @@ export function registerTools(
         type = types.find((t) => t.toLowerCase() === wantedType.toLowerCase());
         if (type === undefined) {
           return fail(
-            `no page has the type ${JSON.stringify(safe(wantedType))}; the types in use are: ${types.map(safe).join(", ") || "(none)"}`,
+            `no page has the type ${JSON.stringify(safe(wantedType))}; the types in use are: ${valueList(types, "types")}`,
           );
         }
       }
@@ -298,7 +320,7 @@ export function registerTools(
       const alias = args.include_stale;
       if ((freshness === "any" && alias === false) || (freshness === "fresh" && alias === true)) {
         return fail(
-          `freshness and include_stale disagree: freshness "${freshness}" ${freshness === "any" ? "includes" : "leaves out"} pages past their recheck date and include_stale ${alias} ${alias ? "includes" : "leaves out"} them; pass freshness alone`,
+          `freshness and include_stale disagree: freshness "${freshness}" ${freshness === "any" ? "includes" : "leaves out"} pages past their recheck date and include_stale ${alias} ${alias ? "includes them" : "leaves them out"}; pass freshness alone`,
         );
       }
       const includeStale = freshness !== undefined ? freshness === "any" : (alias ?? true);

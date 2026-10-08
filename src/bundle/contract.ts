@@ -13,6 +13,29 @@ export function admit(page: Page, admitStatuses: readonly string[], dev: boolean
   return dev && (status === "draft" || !KNOWN.has(status));
 }
 
+/**
+ * The admitted words no page carries, compared as admission compares them (trimmed, case ignored), each listed once
+ * as written. The three known statuses are left out: they are never typos, and a bundle with no deprecated page is
+ * ordinary, so the default list would say so of most bundles. A company's own word that matches nothing is what a
+ * typo looks like since D77 lets the list take any word but draft.
+ */
+export function unmatchedAdmits(
+  pages: readonly Page[],
+  admitStatuses: readonly string[],
+): string[] {
+  const carried = new Set(pages.map((page) => page.status.toLowerCase()));
+  const seen = new Set<string>();
+  const unmatched: string[] = [];
+  for (const listed of admitStatuses) {
+    const word = listed.trim();
+    const key = word.toLowerCase();
+    if (word.length === 0 || KNOWN.has(key) || carried.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    unmatched.push(word);
+  }
+  return unmatched;
+}
+
 /** Type values the company did not declare. Nothing is unknown when nothing is declared. */
 export function unknownTypes(pages: Page[], declared: string[] | undefined): string[] {
   if (declared === undefined || declared.length === 0) return [];

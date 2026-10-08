@@ -1,5 +1,12 @@
 import { buildCatalog, type Catalog, type Folder } from "../catalog/model.js";
-import { admit, capRefusals, isEngineConfig, isHidden, unknownTypes } from "./contract.js";
+import {
+  admit,
+  capRefusals,
+  isEngineConfig,
+  isHidden,
+  unknownTypes,
+  unmatchedAdmits,
+} from "./contract.js";
 import { decodeUtf8 } from "./frontmatter.js";
 import { generateIndex, type IndexPage, parseIndex } from "./index-file.js";
 import { type LinkIndex, resolveLink } from "./links.js";
@@ -62,6 +69,7 @@ export function loadBundle(
     missingOnDisk: [],
     foldersWithoutIndex: [],
     encodedFolders: [],
+    unmatchedAdmits: [],
   };
   const empty = (fatal: Refusal): LoadResult => {
     report.fatal = fatal;
@@ -231,6 +239,7 @@ export function loadBundle(
   const admitted = pages.filter((p) => admit(p, options.admit, options.dev));
   report.admitted = admitted.length;
   report.excludedByStatus = pages.length - admitted.length;
+  report.unmatchedAdmits = unmatchedAdmits(pages, options.admit);
   for (const page of pages) {
     if (
       page.statusRaw !== undefined &&
