@@ -99,7 +99,7 @@ export function classifyPathField(
   const bare = !absolute && !stripped.startsWith("./") && !stripped.startsWith("../");
   // The guard reads the path as it resolves, not as written: `a/../revenue` is the single segment `revenue`.
   const normalised = resolvePath(stripped, "");
-  if (bare && folder !== "" && normalised !== undefined && normalised.includes("/")) {
+  if (bare && folder !== "" && normalised?.includes("/") === true) {
     const rooted = lookup(normalised, folderHint, index);
     if (rooted !== undefined) return { ...rooted, fromRoot: true };
   }

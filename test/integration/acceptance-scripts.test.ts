@@ -97,7 +97,7 @@ describe("the acceptance scripts", { timeout: 60_000 }, () => {
     );
     // The 0.3 item: five runs over the cited bundle, each checked as the orders runs are.
     expect(script).toMatch(/\n {2}cites\)\n/);
-    expect(script).toContain('PAGE="${PAGE:-guides/handbook.md}"');
+    expect(script).toContain(`PAGE="\${PAGE:-guides/handbook.md}"`);
     expect(script).toContain('--expect-path "$PAGE" --forbid-text "catalog is offline"');
     expect(script).not.toContain("--bare");
     expect(script).toContain("2.1.221");

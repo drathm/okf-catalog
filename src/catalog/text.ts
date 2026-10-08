@@ -345,8 +345,10 @@ export function searchHeader(response: SearchResponse, dev: boolean): string {
 }
 
 // The lines of `citations` and `provenance` (issue 5). A header line in the server's voice comes first and holds
-// no page text; after the marker, every value a page wrote (link text, headings, claim blocks, footnote ids,
-// source fields, path-field values) is quoted and escaped, so it reads as data and cannot start a line of its own.
+// no page text but the page's path, printed by its kind; after the marker, every value a page wrote (link text,
+// headings, claim blocks, footnote ids, source fields, path-field values) is quoted and escaped, so it reads as
+// data and cannot start a line of its own, but for a path plain for its kind, which is printed bare, and a status,
+// printed by P13's rule (bite b's build reviews B-A-A8, B-A-E5).
 
 /** A count with its noun. */
 const counted = (count: number, one: string, many = `${one}s`): string =>
@@ -489,7 +491,7 @@ export function listHeading(name: string, total: number, shown: number): string 
   return `${name} (${total}${shown < total ? `, ${shown} shown` : ""}):`;
 }
 
-/** The first line of `citations`: the page and the size of each list; no page text. */
+/** The first line of `citations`: the page, by its kind, and the size of each list; no other page text. */
 export function citationsHeader(summary: {
   path: string;
   partial: boolean;
@@ -602,7 +604,7 @@ export function walkEdgeLine(
   return `- ${safe(edge.field)} ${rowQuoted(edge.raw)}: ${names[edge.kind] ?? edge.kind}${edge.fromRoot === true ? ", read from the bundle root" : ""}${walk}${id}${sourceSignals(edge)}`;
 }
 
-/** The first line of `provenance`: the start page, the depth, the walk's size and every cut; no page text. */
+/** The first line of `provenance`: the start page, by its kind, the depth, the walk's size and every cut; no other page text. */
 export function provenanceHeader(summary: {
   path: string;
   depth: number;
