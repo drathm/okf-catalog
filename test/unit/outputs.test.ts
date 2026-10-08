@@ -324,6 +324,38 @@ describe("result bounds (bite 4 build review)", () => {
     expect(() => PageOutputSchema.parse(out)).not.toThrow();
   });
 
+  it("caps each of the five contract fields on its own, the others whole (build review I-B4, A-B5)", () => {
+    const base = page("terms/alpha.md");
+    const small = {
+      runtime: "bigquery",
+      parameters: [{ name: "year", type: "integer", required: true }],
+      computation: "lib/revenue.sql",
+      executor: { resource: "skills/run-on-bq.md", receipt: ["job_id"] },
+      attester: { resource: "attesters/sql_equality.py" },
+    };
+    const long = "x".repeat(2_500);
+    const over = {
+      runtime: long,
+      parameters: [{ name: long }],
+      computation: long,
+      executor: { resource: long },
+      attester: { resource: long },
+    };
+    for (const field of Object.keys(small) as Array<keyof typeof small>) {
+      const out = projectPage(
+        { ...base, contract: { ...small, [field]: over[field] } },
+        NOW,
+        0,
+        RESULT_BUDGET,
+      );
+      expect(out.provenance?.contract, field).toEqual({
+        ...small,
+        [field]: { omitted: `the ${field} field is over 2000 characters and is not returned here` },
+      });
+      expect(() => PageOutputSchema.parse(out), field).not.toThrow();
+    }
+  });
+
   it("returns the body of a v0.1 page with 900 citations in full-size windows (build review I-E2)", () => {
     // The independent reviewer's page: ordinary URL citations, about 59 characters each. Its header once listed all
     // 900 sources, 52 KB, and left room for one character of body per call.

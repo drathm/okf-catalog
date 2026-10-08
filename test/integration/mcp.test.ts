@@ -425,6 +425,23 @@ describe("search", () => {
     expect(text(trimmed).split("\n")[0]).toContain("1 page without the tag left out");
   });
 
+  it("lists the statuses pages are served with, not as written (build review A-B6)", async () => {
+    const page = (path: string, status: string) => ({
+      path,
+      bytes: Buffer.from(`---\ntype: Note\ntitle: ${path}\nstatus: ${status}\n---\n\nquince\n`),
+    });
+    const generation = loadGeneration(
+      [page("a.md", "' Archived '"), page("b.md", "Stable")],
+      { admit: ["stable", "archived"], integrity: "none" },
+      NOW,
+    );
+    expect(generation.catalog.pages.size).toBe(2);
+    const s = await session(fakeRuntime(generation));
+    expect(text(await s.call("search", { question: "quince", status: "nope" }))).toBe(
+      'no page has the status "nope"; the statuses in use are: "Archived", "stable"',
+    );
+  });
+
   it("keeps a page min_trust dropped readable through get_page", async () => {
     const s = await session(fakeRuntime(stable));
     const r = await s.call("search", { question: "glossary", min_trust: "human-reviewed" });

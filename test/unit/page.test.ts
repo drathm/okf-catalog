@@ -497,6 +497,8 @@ describe("parsePage: the contract fields and the page window (R2, R3)", () => {
       ["executor: text", undefined],
       ["attester: { resource: 3 }", undefined],
       ["runtime: [bigquery, dbt]", undefined],
+      // A parameter whose name is blank has no name (build review A-B7).
+      ['parameters:\n  - { name: "  ", type: integer }', { parameters: [] }],
     ];
     for (const [yaml, contract] of cases) {
       const r = inline("x.md", `---\ntype: T\ntitle: T\ndescription: D\n${yaml}\n---\n`);
