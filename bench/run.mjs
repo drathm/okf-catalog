@@ -17,6 +17,10 @@
 // five only prints, as a tripwire). `bench/expected/lexical-ranks.json` is the corpus pin, and CI runs the
 // comparison on every push. For a bundle other than the public corpus the pin, like --out, stays outside this
 // checkout.
+// The network measurement (bite c, D-D, D73): `--split` also loads each top-level folder of the corpus as its own
+// bundle, one collection each in one index, runs the four unfiltered lexical configurations over the network and
+// pairs each question's gold rank with the one-bundle run's. Recorded, not gated: it writes
+// `docs/research/benchmark-network.md` for the public corpus, and the note beside the results for another bundle.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -64,6 +68,7 @@ const outDir = option("--out");
 const writeExpect = option("--write-expect");
 const expectPath = option("--expect");
 const stubEmbedder = flag("--stub-embedder");
+const split = flag("--split");
 const samples = Number(option("--samples") ?? 3);
 const fail = (code, message) => {
   process.stderr.write(`${message}\n`);
@@ -268,7 +273,8 @@ const porcelainAtStart = (git(["status", "--porcelain", "--untracked-files=no"],
   .split("\n")
   .filter(
     (line) =>
-      line.length > 0 && !/docs\/research\/benchmark-(lexical|modes|rerank)\.md$/.test(line),
+      line.length > 0 &&
+      !/docs\/research\/benchmark-(lexical|modes|rerank|network)\.md$/.test(line),
   )
   .join("\n");
 const memory = { afterLoad: 0, afterIndex: 0, afterLexical: 0, afterEmbed: 0, afterModes: 0 };
@@ -428,6 +434,102 @@ for (const config of CONFIGS) {
 }
 memory.afterLexical = rss();
 await engine.close();
+
+// --- the network measurement (--split) -----------------------------------------------------------------------
+// Each top-level folder its own bundle: its own walk, its own loadBundle call and catalog, one collection each in
+// one index (D73), searched as the server searches a network. The four unfiltered configurations only, paired
+// with the one-bundle ranks above on the gold page, which in the network is the folder's bundle and the rest.
+let network = null;
+if (split) {
+  const { NETWORK_CONFIGS, pairNetwork, splitGold } = await import("./lib/network.mjs");
+  const folders = readdirSync(corpus, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+    .map((entry) => entry.name)
+    .sort();
+  for (const id of folders) {
+    if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(id))
+      fail(
+        EXIT_USAGE,
+        `--split: the folder ${id} is not a bundle id (one lower-case path segment)`,
+      );
+  }
+  // Files at the root of the corpus belong to no folder, so to no bundle: counted, not loaded.
+  const skippedAtRoot = walked.files.filter((f) => !f.path.includes("/")).length;
+  const splitEngine = await QmdEngine.open({ bundles: folders, dir: join(work, "split") });
+  const catalogs = new Map();
+  const bundles = [];
+  const splitStarted = performance.now();
+  for (const id of folders) {
+    const own = walkBundle(join(corpus, id), caps);
+    const { walkFatal: _ignored, ...shared } = options;
+    // A manifest covers the whole tree, never one folder of it: the split loads read no manifest. The public
+    // corpus is read without one in both runs, so the two compare on the same pages.
+    const loaded = loadBundle(
+      id,
+      own.files,
+      {
+        ...shared,
+        integrity: "none",
+        walkRefusals: own.refusals,
+        hiddenPaths: own.hidden,
+        hiddenFolders: own.hiddenFolders,
+        ...(own.fatal === undefined ? {} : { walkFatal: own.fatal }),
+      },
+      NOW,
+    );
+    if (loaded.report.fatal !== undefined)
+      fail(EXIT_USAGE, `--split: the bundle ${id} was refused: ${loaded.report.fatal.rule}`);
+    catalogs.set(id, loaded.catalog);
+    const result = await splitEngine.index(
+      id,
+      [...loaded.catalog.pages.values()].map(deriveDocument),
+    );
+    bundles.push({ id, pages: loaded.report.admitted, documents: result.documents });
+  }
+  const splitIndexMs = Math.round(performance.now() - splitStarted);
+  const splitRanks = new Map();
+  for (const config of CONFIGS.filter((c) => NETWORK_CONFIGS.includes(c.key))) {
+    const outcomes = new Map();
+    splitRanks.set(config.key, outcomes);
+    for (const q of questions) {
+      const gold = splitGold(q.gold);
+      const extra = config.request(q);
+      const r = await search(
+        catalogs,
+        splitEngine,
+        {
+          question: textOf(q, config.form),
+          includeStale: true,
+          limit: config.limit ?? 5,
+          ...extra,
+        },
+        NOW,
+      );
+      const top = r.hits.slice(0, 5);
+      const position = top.findIndex((h) => h.bundle === gold.bundle && h.path === gold.path);
+      const rank = position === -1 ? null : position + 1;
+      outcomes.set(q.id, rank);
+      emit({
+        config: `split:${config.key}`,
+        id: q.id,
+        style: q.style,
+        terms: r.terms,
+        rung: r.strategy,
+        rank,
+        top5: top.map((h) => `${h.bundle}:${h.path}`),
+        considered: r.considered,
+        pool: r.pool,
+      });
+    }
+  }
+  await splitEngine.close();
+  network = {
+    bundles,
+    skippedAtRoot,
+    indexMs: splitIndexMs,
+    configs: pairNetwork(ranks, splitRanks, questions),
+  };
+}
 
 // --- summaries ---------------------------------------------------------------------------------------------
 const row = (s) => ({
@@ -1036,7 +1138,8 @@ const porcelain = (git(["status", "--porcelain", "--untracked-files=no"], repo) 
   .split("\n")
   .filter(
     (line) =>
-      line.length > 0 && !/docs\/research\/benchmark-(lexical|modes|rerank)\.md$/.test(line),
+      line.length > 0 &&
+      !/docs\/research\/benchmark-(lexical|modes|rerank|network)\.md$/.test(line),
   )
   .join("\n");
 const meta = {
@@ -1095,11 +1198,33 @@ const meta = {
   loadMs,
   memory: { rssAfterBytes: rss(), heapUsedBytes: process.memoryUsage().heapUsed, phases: memory },
 };
-const result = { meta, summary, paired, modes: modesResult };
+const result = { meta, summary, paired, modes: modesResult, network };
 writeFileSync(join(resultsDir, `${stamp}.summary.json`), `${JSON.stringify(result, null, 2)}\n`);
 process.stdout.write(
-  `${JSON.stringify({ meta, summary, paired, modes: modesResult === null ? null : { requested: modes, perMode: modesResult.perMode } }, null, 2)}\n`,
+  `${JSON.stringify({ meta, summary, paired, modes: modesResult === null ? null : { requested: modes, perMode: modesResult.perMode }, network }, null, 2)}\n`,
 );
+// The network note: into docs/research for the public corpus; beside the results, outside the checkout, otherwise.
+if (network !== null) {
+  const { renderNetworkNote } = await import("./lib/network.mjs");
+  const note = renderNetworkNote({
+    meta: {
+      ran: meta.ran,
+      okfCatalogCommit: meta.okfCatalog.commit ?? null,
+      qmd: meta.qmd,
+      node: meta.node,
+      os: meta.os,
+      corpus: meta.corpus,
+    },
+    bundles: network.bundles,
+    configs: network.configs,
+  });
+  const notePath =
+    bundleDir === undefined
+      ? join(repo, "docs", "research", "benchmark-network.md")
+      : join(resultsDir, `${stamp}.benchmark-network.md`);
+  writeFileSync(notePath, note);
+  process.stderr.write(`network measurement: written to ${notePath}\n`);
+}
 // The rank guard, after the results are written: a pin to write, or a pin to compare with (lexical rows only).
 const guardFacts = {
   clock: NOW.toISOString(),
