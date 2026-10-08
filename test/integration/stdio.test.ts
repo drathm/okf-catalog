@@ -878,6 +878,55 @@ describe("okf-catalog serve over stdio: a network (D72, D73)", { timeout: 90_000
     }
   });
 
+  // The fold of bite c's build reviews, C-I-A4: a network of one bundle refuses as a whole, as version 0 did (D74),
+  // when its bundle's part of the index cannot be brought in line (D39) or its first load cannot be indexed; either
+  // way the model reads a fixed sentence, and the log has the folder and the engine's words.
+  it("refuses a one-bundle network whose index cannot take or drop its pages, naming neither the cache path nor the engine's words", async () => {
+    const PREFIX = "the server is refusing every request until its configuration is fixed: ";
+    for (const [fixture, sentence] of [
+      // Refused by the loader (no manifest), its pages cannot leave the index: D39.
+      [
+        "no-manifest",
+        "the index could not be re-aligned with the served pages; nothing is served until the server restarts, and the log has the detail",
+      ],
+      // Loaded, its pages cannot enter the index: the first load fails.
+      ["spec-example", "the index could not take this bundle's pages; the log has the detail"],
+    ] as const) {
+      const b = box(fixture);
+      const own = join(companyDir(b), "bundles", "fixture");
+      mkdirSync(own, { recursive: true, mode: 0o700 });
+      chmodSync(own, 0o500);
+      try {
+        const run = rawServer(b);
+        run.send(INITIALIZE);
+        await run.waitFor(1);
+        run.send(INITIALIZED);
+        for (const [id, name, args] of [
+          [2, "search", { question: "revenue" }],
+          [3, "get_page", { path: "index.md" }],
+          [4, "status", {}],
+        ] as const) {
+          run.send({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
+          const answer = await run.waitFor(id);
+          // Neither channel names the cache folder, nor carries the file system's words.
+          expect(JSON.stringify(answer), `${fixture} ${name}`).not.toContain(b.cacheRoot);
+          expect(JSON.stringify(answer), `${fixture} ${name}`).not.toMatch(
+            /EACCES|permission denied/,
+          );
+          const result = answer.result as { isError?: boolean; content: Array<{ text: string }> };
+          expect(result.isError, `${fixture} ${name}`).toBe(true);
+          expect(result.content[0]?.text, `${fixture} ${name}`).toBe(`${PREFIX}${sentence}`);
+        }
+        expect((await run.end()).code).toBe(0);
+        // The log carries what the model is not told: the folder and the file system's words, under the bundle.
+        expect(run.stderr(), fixture).toMatch(/"bundle":"fixture".*EACCES/);
+        expect(run.stderr(), fixture).toContain(own);
+      } finally {
+        chmodSync(own, 0o700);
+      }
+    }
+  });
+
   // The fold of bite c's build reviews, C-I-A3: git that cannot be prepared refuses the repository bundles alone when
   // the network holds a local bundle, and the network as a whole when every bundle is a repository's.
   it("serves a local bundle while git cannot be prepared, each repository bundle refused alone as load-failed", async () => {
