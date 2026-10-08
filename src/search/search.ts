@@ -219,7 +219,8 @@ export async function search(
       (request.tags ?? []).map((tag) => tag.trim().toLowerCase()).filter((tag) => tag.length > 0),
     ),
   ];
-  const wantedStatus = request.status?.trim().toLowerCase();
+  const status = request.status?.trim().toLowerCase();
+  const wantedStatus = status === undefined || status.length === 0 ? undefined : status;
   const trustFloor = request.minTrust === undefined ? 0 : TIER_ORDER.indexOf(request.minTrust);
   const restrictive =
     wantedType !== undefined ||

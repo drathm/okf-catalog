@@ -596,6 +596,10 @@ describe("search: the filters (issue 4)", () => {
     expect(stable.filteredOut.status).toBe(2);
     expect(paths(await run("ARCHIVED"))).toEqual(["archived.md"]);
     expect(paths(await run("deprecated"))).toEqual(["old.md"]);
+    // A blank status is no filter, as a blank tag is.
+    const blank = await run("   ");
+    expect(paths(blank)).toEqual(["archived.md", "old.md", "omitted.md", "stable.md"]);
+    expect(blank.filteredOut.status).toBe(0);
   });
 
   it("applies min_trust by the tier order and leaves scores alone", async () => {
