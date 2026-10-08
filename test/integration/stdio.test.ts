@@ -878,6 +878,89 @@ describe("okf-catalog serve over stdio: a network (D72, D73)", { timeout: 90_000
     }
   });
 
+  // The fold of bite c's build reviews, C-I-A3: git that cannot be prepared refuses the repository bundles alone when
+  // the network holds a local bundle, and the network as a whole when every bundle is a repository's.
+  it("serves a local bundle while git cannot be prepared, each repository bundle refused alone as load-failed", async () => {
+    const fixtures = join(REPO, "test", "fixtures", "bundles");
+    const yaml = `network: fixture\nbundles:\n  - id: terms\n    source:\n      local: ${join(fixtures, "behaviours")}\n  - id: remote\n    source:\n      repository: "https://host.example/org/repo.git"\n`;
+    const b = box("spec-example", yaml);
+    const noGit = mkdtempSync(join(tmpdir(), "okf-catalog-nogit-"));
+    b.env.PATH = noGit;
+    try {
+      const run = rawServer(b);
+      run.send(INITIALIZE);
+      await run.waitFor(1);
+      run.send(INITIALIZED);
+      const call = async (id: number, name: string, args: Record<string, unknown>) => {
+        run.send({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
+        return (await run.waitFor(id)).result as {
+          isError?: boolean;
+          content: Array<{ text: string }>;
+          structuredContent?: Record<string, unknown>;
+        };
+      };
+      const found = await call(2, "search", { question: "alpha glossary" });
+      expect(found.isError).not.toBe(true);
+      expect(found.content[0]?.text.split("\n")[0]).toContain("not searched: remote (load-failed)");
+      const named = await call(3, "get_page", { path: "index.md", bundle: "remote" });
+      expect(named.content[0]?.text).toBe(
+        "the bundle remote was refused and nothing in it is served: load-failed: git was not found on PATH; install git 2.30 or later to serve a repository source",
+      );
+      const status = await call(4, "status", {});
+      expect(status.structuredContent?.refusing).toBeNull();
+      expect(
+        (status.structuredContent as { bundles: Array<{ id: string; state: string }> }).bundles.map(
+          (row) => [row.id, row.state],
+        ),
+      ).toEqual([
+        ["terms", "serving"],
+        ["remote", "load-failed"],
+      ]);
+      expect((await run.end()).code).toBe(0);
+      expect(run.stderr()).toMatch(/"event":"load.failed","bundle":"remote"/);
+    } finally {
+      rmSync(noGit, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an all-repository network as a whole while git cannot be prepared, and still answers status with its rows", async () => {
+    const yaml = `network: fixture\nbundles:\n  - id: one\n    source:\n      repository: "https://host.example/org/one.git"\n  - id: two\n    source:\n      repository: "https://host.example/org/two.git"\n`;
+    const b = box("spec-example", yaml);
+    const noGit = mkdtempSync(join(tmpdir(), "okf-catalog-nogit-"));
+    b.env.PATH = noGit;
+    try {
+      const run = rawServer(b);
+      run.send(INITIALIZE);
+      await run.waitFor(1);
+      run.send(INITIALIZED);
+      run.send({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "search", arguments: { question: "alpha" } },
+      });
+      const found = (await run.waitFor(2)).result as {
+        isError?: boolean;
+        content: Array<{ text: string }>;
+      };
+      expect(found.isError).toBe(true);
+      expect(found.content[0]?.text).toBe(
+        "the server is refusing every request until its configuration is fixed: git was not found on PATH; install git 2.30 or later to serve a repository source",
+      );
+      const status = await statusOver(run, 3);
+      expect(status.refusing).toMatch(/^git was not found on PATH/);
+      expect(
+        (status.bundles as Array<{ id: string; state: string }>).map((row) => [row.id, row.state]),
+      ).toEqual([
+        ["one", "load-failed"],
+        ["two", "load-failed"],
+      ]);
+      expect((await run.end()).code).toBe(0);
+    } finally {
+      rmSync(noGit, { recursive: true, force: true });
+    }
+  });
+
   it("loads a company: file as a one-bundle network and moves the version 0 cache into bundles/<id>", async () => {
     const repo = packedRepo();
     try {
