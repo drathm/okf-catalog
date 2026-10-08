@@ -1068,7 +1068,7 @@ export function projectCitations(citations: Citations, budget: number): Citation
   };
   const all: Rows = {
     mentions: first(citations.mentions).map((m) => capFields(m, ["raw", "target"])),
-    inboundMentions: first(citations.inboundMentions).map((m) => capFields(m, ["from"])),
+    inboundMentions: first(citations.inboundMentions).map((m) => capFields(m, ["from", "status"])),
     claims: first(citations.claims).map(({ sources, ...claim }) => ({
       ...capFields(claim, ["footnote"]),
       sources: sourcesOut(sources),
@@ -1076,7 +1076,7 @@ export function projectCitations(citations: Citations, budget: number): Citation
     bibliography: first(citations.bibliography).map(sourceFactsOut),
     unjoined: first(citations.unjoined).map((u) => capFields(u, ["footnote"])),
     inboundDerivations: first(citations.inboundDerivations).map(({ window, ...derivation }) => ({
-      ...capFields(derivation, ["from", "author", "lastModified"]),
+      ...capFields(derivation, ["from", "status", "author", "lastModified"]),
       ...windowOut(window),
     })),
   };
@@ -1204,7 +1204,7 @@ function edgeOut({ window, candidates, ...edge }: WalkEdge): EdgeOut {
 
 function nodeOut({ edges, recheck, usageWindow, ...node }: WalkNode): NodeOut {
   return {
-    ...capFields(node, ["path", "parent"]),
+    ...capFields(node, ["path", "parent", "status"]),
     ...(recheck === undefined ? {} : { recheck: { ...recheck, raw: capField(recheck.raw) } }),
     ...(usageWindow === undefined ? {} : { usageWindow: typedField("usageWindow", usageWindow) }),
     edges: edges.map(edgeOut),

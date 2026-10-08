@@ -1464,4 +1464,37 @@ describe("the verification of bite b's fix pass", () => {
     expect(plain).toContain("last refusal dddddddddddd symlink (notes/link.md)");
     expect(plain).toContain("FATAL manifest-missing (notes/link.md): no manifest.json");
   });
+
+  it("cuts a page's status in the rows of citations and provenance, so a long one empties no list", () => {
+    // In development mode a page is served with whatever status it writes: its rows cut it as they cut every value.
+    const catalog = loadFiles(
+      {
+        "a.md": `---\ntype: Note\ntitle: A\nsources:\n  - { resource: b.md }\n  - { resource: c.md }\n---\n\nSee [b](b.md) and [c](c.md).\n`,
+        "b.md": `---\ntype: Note\ntitle: B\nstatus: ${yaml(long("w"))}\nsources:\n  - { resource: a.md }\n---\n\nBack to [a](a.md).\n`,
+        "c.md": `---\ntype: Note\ntitle: C\nsources:\n  - { resource: a.md }\n---\n\nBack to [a](a.md).\n`,
+      },
+      true,
+    );
+    const start = catalog.pages.get("a.md");
+    if (start === undefined) throw new Error("a.md");
+    const cited = projectCitations(citationsOf(catalog, start), RESULT_BUDGET);
+    expect(cited.truncated).toBe(false);
+    expect(cited.inboundMentions.rows.map((r) => [r.from, r.status.length])).toEqual([
+      ["b.md", 2_001],
+      ["c.md", 6],
+    ]);
+    expect(cited.inboundDerivations.rows.map((r) => [r.from, r.status.length])).toEqual([
+      ["b.md", 2_001],
+      ["c.md", 6],
+    ]);
+    expect(citationsText(cited)).toContain(`- from b.md ["${long("w", 500)}"…]: "a"`);
+    const walk = projectWalk(walkProvenance(catalog, start, 4, NOW), RESULT_BUDGET);
+    expect(walk.truncated).toBe(false);
+    expect(walk.nodes.map((n) => [n.path, n.status.length])).toEqual([
+      ["a.md", 6],
+      ["b.md", 2_001],
+      ["c.md", 6],
+    ]);
+    expect(walkText(walk)).toContain(`b.md [level 1, from a.md, "${long("w", 500)}"…, unverified`);
+  });
 });
