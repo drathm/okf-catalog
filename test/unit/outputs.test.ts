@@ -1497,4 +1497,68 @@ describe("the verification of bite b's fix pass", () => {
     ]);
     expect(walkText(walk)).toContain(`b.md [level 1, from a.md, "${long("w", 500)}"…, unverified`);
   });
+
+  const only = (catalog: Catalog, path: string): Page => {
+    const found = catalog.pages.get(path);
+    if (found === undefined) throw new Error(path);
+    return found;
+  };
+
+  it("holds the page header within a quarter in the structured channel, where escaping doubles it again", () => {
+    // Ten sources whose id and resource are 200 backslashes: the header's text, each backslash escaped once, fits a
+    // quarter of the budget; its JSON, each escaped twice, would not, so the header names fewer of them.
+    const slashes = yaml(long("\\", 200));
+    const entries = Array.from(
+      { length: 10 },
+      () => `  - { id: ${slashes}, resource: ${slashes} }\n`,
+    );
+    const catalog = loadFiles({
+      "p.md": `---\ntype: Note\ntitle: P\nsources:\n${entries.join("")}---\n\nBody.\n`,
+    });
+    const out = projectPage(only(catalog, "p.md"), NOW, 0, RESULT_BUDGET);
+    expect(out.provenance?.sources).toHaveLength(10);
+    expect(out.citation.length).toBeLessThanOrEqual(RESULT_BUDGET / 4);
+    expect(JSON.stringify(out.citation).length).toBeLessThanOrEqual(RESULT_BUDGET / 4);
+    expect(Number(/; and (\d+) more/.exec(out.citation)?.[1] ?? "0")).toBeGreaterThan(0);
+  });
+
+  it("prints at most 200 characters of a long status in a page header", () => {
+    const catalog = loadFiles(
+      { "p.md": `---\ntype: Note\ntitle: P\nstatus: ${yaml(long("w"))}\n---\n\nBody.\n` },
+      true,
+    );
+    const out = projectPage(only(catalog, "p.md"), NOW, 0, RESULT_BUDGET);
+    expect(out.citation).toContain(`[Note, "${long("w", 200)}"…, unverified`);
+    expect(out.citation.length).toBeLessThan(500);
+    expect(out.provenance?.status.length).toBe(2_001);
+  });
+
+  it("cuts a link's long URL in its mention, so the mentions after it stay", () => {
+    const catalog = loadFiles({
+      "p.md": `---\ntype: Note\ntitle: P\n---\n\nSee [one](https://x.test/${long("u")}) and [two](q.md).\n`,
+      "q.md": "---\ntype: Note\ntitle: Q\n---\n\nQ.\n",
+    });
+    const out = projectCitations(citationsOf(catalog, only(catalog, "p.md")), RESULT_BUDGET);
+    expect(out.truncated).toBe(false);
+    expect(out.mentions.rows.map((m) => [m.kind, m.raw.length])).toEqual([
+      ["external", 2_001],
+      ["page", 4],
+    ]);
+  });
+
+  it("cuts a deriving source's long author and last change, so every derivation stays", () => {
+    const catalog = loadFiles({
+      "t.md": "---\ntype: Note\ntitle: T\n---\n\nT.\n",
+      "d1.md": `---\ntype: Note\ntitle: D1\nsources:\n  - { resource: t.md, author: ${yaml(long("a"))}, last_modified: ${yaml(long("m"))} }\n---\n\nD.\n`,
+      "d2.md": "---\ntype: Note\ntitle: D2\nsources:\n  - { resource: t.md }\n---\n\nD.\n",
+    });
+    const out = projectCitations(citationsOf(catalog, only(catalog, "t.md")), RESULT_BUDGET);
+    expect(out.truncated).toBe(false);
+    expect(
+      out.inboundDerivations.rows.map((r) => [r.from, r.author?.length, r.lastModified?.length]),
+    ).toEqual([
+      ["d1.md", 2_001, 2_001],
+      ["d2.md", undefined, undefined],
+    ]);
+  });
 });
