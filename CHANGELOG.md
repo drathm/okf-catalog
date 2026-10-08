@@ -4,9 +4,34 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The
 
 ## [Unreleased]
 
+The work of 0.2.0: the readiness fixes cut from issues 2 and 3, the readiness ledger as tests, the search filters of issue 4, strict input schemas and the rank guard (`docs/plans/version-0.2.md`, section 3.1; `docs/acceptance/version-0.2.md`).
+
 ### Added
 
+- `search` filters by `tag` (one tag, or a list of up to eight a page must carry all of, compared without regard to case and nothing looser), `status` (the status a page is served with), `min_trust` (that trust tier or a higher one) and `freshness` (`fresh` or `any`). They are applied after the index answers and never added to the keywords, so no engine rank moves. An unknown tag or status fails before the search with the values in use. The result counts each removal under the first check it failed (`filteredOut` gains `tag`, `status` and `trust`), says when a restrictive filter met the pool's cap with the answer short (`filtersExhausted`), and its header names each removal.
+- `get_page` takes a page's concept id, its path without `.md`, as well as its path; a name that is one page's path and another page's concept id (`foo.md` beside `foo.md.md`) is an error naming both and a name for each.
+- `get_page`'s provenance carries the contract fields of an attested computation (`runtime`, `parameters`, `computation`, `executor`, `attester`) on a page of any type, the page's `usage_window`, each source's `effectiveWindow` (its own window, else the page's, saying which), and an OKF 0.1 `timestamp`. These survive the frontmatter's 8 000-character omission, and each is held to 2 000 characters with a note of its own.
+- The two OKF 0.1 fallbacks the specification allows (§13.1): on a page without `generated`, a top-level `timestamp` is kept as its own field (reported `legacy-timestamp`); on a page with none of `generated`, `verified` and `sources`, the lists under a level-one `# Citations` heading are read as its sources (reported `legacy-citations`).
+- `serve.admit` and `pack --admit` take a status of the company's own, any word but `draft`, so a company that wants its `archived` pages served lists `archived`.
+- The rank guard: `bench/run.mjs --write-expect` and `--expect`, which pin and compare each question's gold rank in the eleven lexical configurations and exit 6 when one moves; the corpus pin `bench/expected/lexical-ranks.json`; a CI job that runs the comparison over the public corpus on Ubuntu on every push; and `test/integration/rank-guard.test.ts`, thirty answers over the `behaviours` fixture through the real engine.
+- The readiness ledger of issue 2 as tests: fourteen new tests for the sentences of its "Holds" list that no test asserted.
 - The benchmark harness measures the ladder re-ranked (`--modes rerank`): the production ladder's twenty candidates, in the question and the keyword form, scored by qmd's reranker as qmd scores them, reported by raw score and by qmd's position blend, with the keyword list twenty deep and the production-limit rows as controls; the report writes `docs/research/benchmark-rerank.md` with a pre-registered bar's verdict; `docs/research/benchmark-lexical.md` is written only by a lexical-only run. The vector index is built only for the modes that read it, and a model no mode asked for is pointed at a file that cannot exist.
+
+### Changed
+
+- With `freshness` and `include_stale` both omitted, `search` includes pages past their recheck date, each flagged `overdue since` its date, where it used to leave them out; `freshness: "fresh"` or `include_stale: false` leaves them out, and the two contradictory pairs are refused. A caller that omitted the argument now sees overdue pages, flagged.
+- A `status` other than `draft`, `stable` or `deprecated` is no longer rewritten to `draft`: the word is kept, trimmed, with its case, and reported, and the page is served only when `serve.admit` names that word, or in development mode, labelled with its own word. The three known statuses are read without regard to case, and every output schema takes any status. By default nothing new is served.
+- Every tool's input schema is strict: an argument a tool does not take, such as `tags` or `minTrust`, fails with the SDK's validation error instead of being dropped in silence.
+- Text lines quote an unknown status, and a type the company did not declare, so a comma in either cannot add a fact to a citation's brackets.
+- A page `usage_window` that is not a mapping of `from` and `to`, and a contract field without the shape the specification gives it, are reported `field-ignored`.
+
+### Deprecated
+
+- `include_stale`, now the alias of `freshness` (`true` is `any`, `false` is `fresh`). It is accepted through 0.4.x and leaves the schema in 0.5.0, when a caller that still sends it fails loudly.
+
+### Fixed
+
+- A source's `usage_count` that is not a number (a string, a list, a mapping) was dropped without a word; it is now reported `source-malformed`, as a non-finite number already was, and the source is kept.
 
 ## [0.1.3] - 2026-10-07
 
