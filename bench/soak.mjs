@@ -128,7 +128,7 @@ for (let cycle = 1; cycle <= cycles; cycle += 1) {
   }
   const search = await client.callTool({
     name: "search",
-    arguments: { question: `soak cycle ${cycle}` },
+    arguments: { question: `soak cycle ${cycle}`, freshness: "any" },
   });
   const found = JSON.stringify(search.structuredContent).includes("metrics/revenue.md");
   const row = {

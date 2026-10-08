@@ -55,7 +55,7 @@ for (const q of questions) {
   for (const [form, text] of forms) {
     let out;
     try {
-      out = await call("search", { question: text, limit, include_stale: true });
+      out = await call("search", { question: text, limit, freshness: "any" });
     } catch (error) {
       ranks.push(`${form}: absent (${error.message.replace(/^search: /, "")})`);
       continue;
