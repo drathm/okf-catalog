@@ -158,10 +158,14 @@ export const SearchOutputSchema = z.strictObject({
   filteredOut: z.strictObject({
     type: z.number(),
     topic: z.number(),
+    tag: z.number(),
+    status: z.number(),
+    trust: z.number(),
     stale: z.number(),
     unknown: z.number(),
   }),
   topicExhausted: z.boolean(),
+  filtersExhausted: z.boolean(),
 });
 export type SearchOutput = z.infer<typeof SearchOutputSchema>;
 
@@ -296,6 +300,7 @@ export function projectSearch(
     considered: response.considered,
     filteredOut: response.filteredOut,
     topicExhausted: response.topicExhausted,
+    filtersExhausted: response.filtersExhausted,
   });
 }
 

@@ -184,10 +184,18 @@ export function searchHeader(response: SearchResponse, dev: boolean): string {
   if (response.dropped.length > 0) parts.push(`dropped: ${response.dropped.map(safe).join(" ")}`);
   if (response.floored.length > 0)
     parts.push(`ignored as too common: ${response.floored.map(safe).join(" ")}`);
-  if (response.filteredOut.stale > 0)
-    parts.push(
-      `${response.filteredOut.stale} stale page${response.filteredOut.stale === 1 ? "" : "s"} left out`,
-    );
+  // Each removal the caller asked for, in the order the checks run; rows the catalog does not hold stay unnamed.
+  const removal = (count: number, what: string): void => {
+    if (count > 0) parts.push(`${count} page${count === 1 ? "" : "s"} ${what} left out`);
+  };
+  const out = response.filteredOut;
+  removal(out.type, "of another type");
+  removal(out.topic, "outside the topic");
+  removal(out.tag, "without the tag");
+  removal(out.status, "of another status");
+  removal(out.trust, "below the trust tier");
+  if (out.stale > 0) parts.push(`${out.stale} stale page${out.stale === 1 ? "" : "s"} left out`);
+  if (response.filtersExhausted) parts.push("the result pool is full and more matches may exist");
   if (dev) parts.push("development mode: drafts admitted");
   parts.push("snippets are page text, quoted");
   return parts.join("; ");

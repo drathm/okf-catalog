@@ -139,12 +139,19 @@ describe("search", () => {
     expect(text(unknown)).toMatch(/terms/);
   });
 
-  it("drops overdue pages unless asked, and the SDK rejects arguments outside the schema before the handler", async () => {
+  it("includes overdue pages by default, flagged, and leaves them out for fresh or include_stale false", async () => {
     const s = await session(fakeRuntime(stable));
-    const strict = await s.call("search", { question: "zeta" });
-    expect(text(strict)).not.toContain("terms/zeta.md");
-    const lenient = await s.call("search", { question: "zeta", include_stale: true });
-    expect(text(lenient)).toContain("overdue since 2000-01-31");
+    const byDefault = await s.call("search", { question: "zeta" });
+    expect(byDefault.isError).not.toBe(true);
+    expect(text(byDefault)).toContain("terms/zeta.md");
+    expect(text(byDefault)).toContain("overdue since 2000-01-31");
+    for (const args of [{ freshness: "fresh" }, { include_stale: false }]) {
+      const r = await s.call("search", { question: "zeta", ...args });
+      expect(r.isError, JSON.stringify(args)).not.toBe(true);
+      expect(text(r), JSON.stringify(args)).not.toContain("terms/zeta.md");
+      expect(text(r).split("\n")[0], JSON.stringify(args)).toContain("1 stale page left out");
+      expect((r.structuredContent as { filteredOut: { stale: number } }).filteredOut.stale).toBe(1);
+    }
     for (const args of [
       { question: "x".repeat(201) },
       { question: "alpha", limit: 0 },
@@ -165,13 +172,197 @@ describe("search", () => {
 
   it("labels drafts under development mode and never shows them otherwise", async () => {
     const d = await session(fakeRuntime(dev), { ...options, dev: true });
-    const r = await d.call("search", { question: "draft", include_stale: true });
+    const r = await d.call("search", { question: "draft", freshness: "any" });
     expect(text(r)).toContain("development mode: drafts admitted");
     expect(text(r)).toMatch(/\[[^\]]*, draft, /);
     const s = await session(fakeRuntime(stable));
-    expect(text(await s.call("search", { question: "draft", include_stale: true }))).not.toMatch(
+    expect(text(await s.call("search", { question: "draft", freshness: "any" }))).not.toMatch(
       /, draft, /,
     );
+  });
+
+  it("fails an argument a tool does not take, with the SDK's message", async () => {
+    const s = await session(fakeRuntime(stable));
+    for (const [name, args] of [
+      ["search", { question: "alpha", tags: ["alpha"] }],
+      ["search", { question: "alpha", minTrust: "human-reviewed" }],
+      ["search", { question: "alpha", include_overdue: true }],
+      ["get_page", { path: "terms/alpha.md", bundle: "b" }],
+      ["catalog", { folder: "terms", depth: 1 }],
+      ["status", { verbose: true }],
+    ] as const) {
+      const r = await s.call(name, args);
+      expect(r.isError, `${name} ${JSON.stringify(args)}`).toBe(true);
+      expect(text(r)).toMatch(
+        new RegExp(`^Input validation error: Invalid arguments for tool ${name}`),
+      );
+      expect(r.structuredContent).toBeUndefined();
+    }
+    // The listing says so too: no tool accepts a property it does not declare, and tag is a string or a list.
+    const tools = (await s.client.listTools()).tools;
+    for (const tool of tools)
+      expect(
+        (tool.inputSchema as { additionalProperties?: unknown }).additionalProperties,
+        tool.name,
+      ).toBe(false);
+    const search = tools.find((t) => t.name === "search");
+    const properties =
+      (
+        search?.inputSchema as
+          | { properties?: Record<string, { anyOf?: unknown[]; default?: unknown }> }
+          | undefined
+      )?.properties ?? {};
+    expect(properties.tag?.anyOf).toHaveLength(2);
+    for (const name of ["tag", "status", "min_trust", "freshness", "include_stale"]) {
+      expect(properties[name], name).toBeDefined();
+      expect(properties[name]?.default, name).toBeUndefined();
+    }
+  });
+
+  it("resolves the nine freshness pairs and refuses the two contradictions", async () => {
+    const s = await session(fakeRuntime(stable));
+    const pairs: Array<[Record<string, unknown>, boolean | "error"]> = [
+      [{}, true],
+      [{ freshness: "any" }, true],
+      [{ freshness: "fresh" }, false],
+      [{ include_stale: true }, true],
+      [{ include_stale: false }, false],
+      [{ freshness: "any", include_stale: true }, true],
+      [{ freshness: "fresh", include_stale: false }, false],
+      [{ freshness: "any", include_stale: false }, "error"],
+      [{ freshness: "fresh", include_stale: true }, "error"],
+    ];
+    for (const [args, zeta] of pairs) {
+      const label = JSON.stringify(args);
+      const r = await s.call("search", { question: "zeta", ...args });
+      if (zeta === "error") {
+        expect(r.isError, label).toBe(true);
+        expect(r.structuredContent, label).toBeUndefined();
+        expect(text(r), label).toMatch(/^freshness and include_stale disagree/);
+        // Refused before search runs: a question of common words gets this error, not the common-word one.
+        const common = await s.call("search", { question: "what is the", ...args });
+        expect(text(common), label).toMatch(/^freshness and include_stale disagree/);
+      } else {
+        expect(r.isError, label).not.toBe(true);
+        expect(text(r).includes("terms/zeta.md"), label).toBe(zeta);
+      }
+    }
+  });
+
+  it("checks type, topic, tag, status, then freshness, and names the values in use", async () => {
+    const s = await session(fakeRuntime(stable));
+    const contradiction = { freshness: "any", include_stale: false };
+    const first = async (args: Record<string, unknown>) => {
+      const r = await s.call("search", { question: "alpha", ...args });
+      expect(r.isError, JSON.stringify(args)).toBe(true);
+      expect(r.structuredContent).toBeUndefined();
+      return text(r);
+    };
+    const all = { type: "Recipe", topic: "nowhere", tag: "nope", status: "nope", ...contradiction };
+    expect(await first(all)).toMatch(/^no page has the type "Recipe"/);
+    const { type: _type, ...noType } = all;
+    expect(await first(noType)).toMatch(/^there is no folder "nowhere"/);
+    const { topic: _topic, ...noTopic } = noType;
+    expect(await first(noTopic)).toBe(
+      'no page has the tag "nope"; the tags in use are: alpha, beta, delta, deprecated, epsilon, eta, gamma, glossary, one, theta, three-four, two, zeta',
+    );
+    const { tag: _tag, ...noTag } = noTopic;
+    expect(await first(noTag)).toBe(
+      'no page has the status "nope"; the statuses in use are: deprecated, stable',
+    );
+    const { status: _status, ...onlyFreshness } = noTag;
+    expect(await first(onlyFreshness)).toMatch(/^freshness and include_stale disagree/);
+    // Outside development mode no draft is served, so draft is not a status in use; Stable is one, in any case.
+    expect(await first({ status: "draft" })).toMatch(/^no page has the status "draft"/);
+    const stableHits = await s.call("search", { question: "glossary", status: "Stable" });
+    expect(stableHits.isError).not.toBe(true);
+    expect((stableHits.structuredContent as { hits: unknown[] }).hits.length).toBeGreaterThan(0);
+    // The printed list stops at 50 with the total; a tag past that cap is still in use.
+    const tagged = (i: number) => ({
+      path: `t/p${i}.md`,
+      bytes: Buffer.from(
+        `---\ntype: Note\ntitle: P${i}\ntags: [t${String(i).padStart(2, "0")}]\n---\n\nquokka\n`,
+      ),
+    });
+    const many = loadGeneration(
+      Array.from({ length: 60 }, (_, i) => tagged(i)),
+      { integrity: "none" },
+      NOW,
+    );
+    const m = await session(fakeRuntime(many));
+    const unknown = await m.call("search", { question: "quokka", tag: "nope" });
+    expect(text(unknown)).toMatch(/the tags in use are: t00, t01, .*, t49 … \(60 tags\)$/);
+    expect(text(unknown)).not.toContain("t50");
+    const late = await m.call("search", { question: "quokka", tag: "T59" });
+    expect(late.isError).not.toBe(true);
+    expect(
+      (late.structuredContent as { hits: Array<{ path: string }> }).hits.map((h) => h.path),
+    ).toEqual(["t/p59.md"]);
+  });
+
+  it("fails nine tags or a tag over 200 characters at the schema", async () => {
+    const s = await session(fakeRuntime(stable));
+    for (const args of [
+      { tag: Array.from({ length: 9 }, () => "alpha") },
+      { tag: "x".repeat(201) },
+      { tag: ["alpha", "x".repeat(201)] },
+      { status: "x".repeat(201) },
+      { min_trust: "trusted" },
+      { freshness: "stale" },
+      { include_stale: "yes" },
+    ]) {
+      const r = await s.call("search", { question: "alpha", ...args });
+      expect(r.isError, JSON.stringify(args).slice(0, 80)).toBe(true);
+      expect(text(r)).toMatch(/^Input validation error/);
+    }
+    const eight = await s.call("search", {
+      question: "glossary",
+      tag: Array.from({ length: 8 }, () => "glossary"),
+    });
+    expect(eight.isError).not.toBe(true);
+  });
+
+  it("keeps the common-word error for a known tag, the tag error for an unknown one", async () => {
+    const s = await session(fakeRuntime(stable));
+    const known = await s.call("search", { question: "what is the", tag: "alpha" });
+    expect(known.isError).toBe(true);
+    expect(text(known)).toMatch(/common word/);
+    const unknown = await s.call("search", { question: "what is the", tag: "nope" });
+    expect(unknown.isError).toBe(true);
+    expect(text(unknown)).toMatch(/^no page has the tag "nope"/);
+  });
+
+  it("treats an empty tag list, or blank entries, as no tag filter", async () => {
+    const s = await session(fakeRuntime(stable));
+    const paths = (r: Result) =>
+      (r.structuredContent as { hits: Array<{ path: string }> }).hits.map((h) => h.path);
+    const plain = await s.call("search", { question: "glossary" });
+    expect(paths(plain)).toEqual(expect.arrayContaining(["terms/alpha.md", "terms/beta.md"]));
+    for (const tag of [[], ["", "  "], "   "]) {
+      const r = await s.call("search", { question: "glossary", tag });
+      expect(r.isError, JSON.stringify(tag)).not.toBe(true);
+      expect(paths(r), JSON.stringify(tag)).toEqual(paths(plain));
+      expect((r.structuredContent as { filteredOut: { tag: number } }).filteredOut.tag).toBe(0);
+    }
+    // Entries are trimmed: " alpha " is the stored alpha.
+    const trimmed = await s.call("search", { question: "glossary", tag: [" alpha ", ""] });
+    expect(paths(trimmed)).toEqual(["terms/alpha.md"]);
+    expect(text(trimmed).split("\n")[0]).toContain("1 page without the tag left out");
+  });
+
+  it("keeps a page min_trust dropped readable through get_page", async () => {
+    const s = await session(fakeRuntime(stable));
+    const r = await s.call("search", { question: "glossary", min_trust: "human-reviewed" });
+    const structured = r.structuredContent as {
+      hits: Array<{ path: string; trust: string }>;
+      filteredOut: { trust: number };
+    };
+    expect(structured.hits.map((h) => h.path)).toEqual(["terms/alpha.md"]);
+    expect(structured.filteredOut.trust).toBe(1);
+    expect(text(r).split("\n")[0]).toContain("1 page below the trust tier left out");
+    const beta = await s.call("get_page", { path: "terms/beta.md" });
+    expect(beta.isError).not.toBe(true);
+    expect(text(beta).split("\n")[0]).toMatch(/^terms\/beta\.md \[Term, stable, machine-confirmed/);
   });
 });
 

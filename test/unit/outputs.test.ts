@@ -110,11 +110,12 @@ describe("projections parse under their strict schemas and are JSON-safe", () =>
     dropped: [],
     floored: [],
     considered: 2,
-    filteredOut: { type: 0, topic: 0, stale: 0, unknown: 0 },
+    filteredOut: { type: 0, topic: 0, tag: 0, status: 0, trust: 0, stale: 0, unknown: 0 },
     pool: 32,
     engineQueries: 2,
     rowsFetched: 4,
     topicExhausted: false,
+    filtersExhausted: false,
   };
 
   it("search: hits carry a citation and a snippet, the summary is the header, and cost fields stay out", () => {
@@ -129,6 +130,8 @@ describe("projections parse under their strict schemas and are JSON-safe", () =>
     expect(out.summary).toContain("2 hits");
     expect("engineQueries" in out).toBe(false);
     expect("rowsFetched" in out).toBe(false);
+    expect(out.filteredOut).toEqual(response.filteredOut);
+    expect(out.filtersExhausted).toBe(false);
     expect(() => SearchOutputSchema.parse({ ...out, extra: 1 })).toThrow();
   });
 

@@ -11,6 +11,13 @@ export interface SearchRequest {
   question: string;
   type?: string;
   topic?: string;
+  /** Pages carrying every one of these tags, each compared with the stored tags in lower case and nothing looser. */
+  tags?: string[];
+  /** Pages served with this status, compared in lower case. */
+  status?: string;
+  /** Pages of this trust tier or a higher one: unverified, then machine-confirmed, then human-reviewed. */
+  minTrust?: Trust;
+  /** Overdue pages kept (flagged) or left out. Required: the tool alone resolves its freshness arguments (issue 4). */
   includeStale: boolean;
   limit: number;
   /** Run the relaxed rung when the first rung leaves the answer short (default true); the benchmark turns it off. */
@@ -52,8 +59,16 @@ export interface SearchResponse {
   floored: string[];
   /** Distinct engine hits examined across every query. */
   considered: number;
-  /** Distinct pages the filters removed, per reason. */
-  filteredOut: { type: number; topic: number; stale: number; unknown: number };
+  /** Distinct pages the filters removed, each under the first check it failed, in the order the checks run. */
+  filteredOut: {
+    type: number;
+    topic: number;
+    tag: number;
+    status: number;
+    trust: number;
+    stale: number;
+    unknown: number;
+  };
   /** The pool size the first rung ended with. */
   pool: number;
   /** Engine queries made and rows they returned, for cost accounting: every row carries its page body. */
@@ -61,6 +76,11 @@ export interface SearchResponse {
   rowsFetched: number;
   /** A topic filter was set, the pool reached its cap, and the answer is still short: the topic may hold more. */
   topicExhausted: boolean;
+  /**
+   * A restrictive filter was set (a type, a topic, a tag, a status, a trust floor above unverified, or overdue pages
+   * left out), the pool reached its cap, and the answer is still short: a matching page may sit past the cap.
+   */
+  filtersExhausted: boolean;
 }
 
 const POOL_FACTOR = 4;
@@ -75,6 +95,8 @@ const TRUST_RANK: Record<Trust, number> = {
   "machine-confirmed": 1,
   unverified: 2,
 };
+/** The tiers by name, lowest first: the order `minTrust` keeps a tier and every tier above it by. */
+const TIER_ORDER: readonly Trust[] = ["unverified", "machine-confirmed", "human-reviewed"];
 
 interface Candidate {
   page: Page;
@@ -156,12 +178,18 @@ export async function search(
   const removed = {
     type: new Set<PagePath>(),
     topic: new Set<PagePath>(),
+    tag: new Set<PagePath>(),
+    status: new Set<PagePath>(),
+    trust: new Set<PagePath>(),
     stale: new Set<PagePath>(),
     unknown: new Set<PagePath>(),
   };
   const filteredOut = () => ({
     type: removed.type.size,
     topic: removed.topic.size,
+    tag: removed.tag.size,
+    status: removed.status.size,
+    trust: removed.trust.size,
     stale: removed.stale.size,
     unknown: removed.unknown.size,
   });
@@ -179,11 +207,27 @@ export async function search(
       engineQueries: 0,
       rowsFetched: 0,
       topicExhausted: false,
+      filtersExhausted: false,
     };
   }
   const cost: QueryCost = { queries: 0, rows: 0 };
   const prefix = topicPrefix(request.topic);
   const wantedType = request.type?.trim().toLowerCase();
+  // The tag, status and trust filters read the page the catalog joined; none of them reaches the engine (issue 4).
+  const wantedTags = [
+    ...new Set(
+      (request.tags ?? []).map((tag) => tag.trim().toLowerCase()).filter((tag) => tag.length > 0),
+    ),
+  ];
+  const wantedStatus = request.status?.trim().toLowerCase();
+  const trustFloor = request.minTrust === undefined ? 0 : TIER_ORDER.indexOf(request.minTrust);
+  const restrictive =
+    wantedType !== undefined ||
+    prefix !== undefined ||
+    wantedTags.length > 0 ||
+    wantedStatus !== undefined ||
+    trustFloor > 0 ||
+    !request.includeStale;
   const extra = [
     ...(prefix === undefined ? [] : tokenize(prefix.replace(/\//g, " "))),
     ...(wantedType === undefined ? [] : tokenize(wantedType)),
@@ -204,6 +248,21 @@ export async function search(
     }
     if (prefix !== undefined && !page.path.startsWith(prefix)) {
       removed.topic.add(hit.path);
+      return undefined;
+    }
+    if (wantedTags.length > 0) {
+      const stored = new Set(page.tags.map((tag) => tag.toLowerCase()));
+      if (!wantedTags.every((tag) => stored.has(tag))) {
+        removed.tag.add(hit.path);
+        return undefined;
+      }
+    }
+    if (wantedStatus !== undefined && page.status.toLowerCase() !== wantedStatus) {
+      removed.status.add(hit.path);
+      return undefined;
+    }
+    if (TIER_ORDER.indexOf(page.trust) < trustFloor) {
+      removed.trust.add(hit.path);
       return undefined;
     }
     if (!request.includeStale && isOverdue(page.staleAfter, now)) {
@@ -287,6 +346,7 @@ export async function search(
     engineQueries: cost.queries,
     rowsFetched: cost.rows,
     topicExhausted: prefix !== undefined && pool >= POOL_CAP && hits.length < limit,
+    filtersExhausted: restrictive && pool >= POOL_CAP && hits.length < limit,
   };
 }
 

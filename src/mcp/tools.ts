@@ -1,7 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod/v4";
 import { byCodeUnit } from "../bundle/paths.js";
-import { type Catalog, listTypes } from "../catalog/model.js";
+import { type Catalog, listStatuses, listTags, listTypes } from "../catalog/model.js";
 import {
   CatalogOutputSchema,
   type PageOutput,
@@ -32,6 +32,8 @@ type ToolResult = {
 };
 
 const FOLDER_LIST_CAP = 50;
+/** The most tags a search may ask for; each is a word or two, at most as long as a type. */
+const TAG_LIST_CAP = 8;
 
 const fail = (text: string): ToolResult => ({ content: [{ type: "text", text }], isError: true });
 const ok = (text: string, structured: Record<string, unknown>): ToolResult => ({
@@ -52,6 +54,13 @@ function folderList(catalog: Catalog): string {
     .map((f) => (f === "" ? "(root)" : safe(f)));
   const shown = names.slice(0, FOLDER_LIST_CAP).join(", ");
   return names.length > FOLDER_LIST_CAP ? `${shown} … (${names.length} folders)` : shown;
+}
+
+/** Values in use for an error line: made safe, the first 50 printed, then the total when there are more. */
+function valueList(values: readonly string[], noun: string): string {
+  const shown = values.slice(0, FOLDER_LIST_CAP).map(safe).join(", ");
+  if (values.length > FOLDER_LIST_CAP) return `${shown} … (${values.length} ${noun})`;
+  return shown || "(none)";
 }
 
 function refused(generation: Generation): ToolResult | undefined {
@@ -127,9 +136,9 @@ export function registerTools(
     {
       title: "Search the knowledge bundle",
       description: describeType(
-        "Finds pages by keywords. Write one concept per word; common words are dropped, and when no page holds every word the match is relaxed and the result says so. Each hit carries its path, type, status, trust tier, recheck date, source count, resource and a quoted snippet.",
+        'Finds pages by keywords. Write one concept per word; common words are dropped, and when no page holds every word the match is relaxed and the result says so. Optional filters, applied to what the index returns and never added to the keywords: type, topic, tag (one tag, or a list a page must carry all of), status, min_trust (that tier or a higher one) and freshness. With freshness and include_stale both omitted, pages past their recheck date are included and each says it is overdue; freshness "fresh" leaves them out, and include_stale is the older name for the same choice (true is "any", false is "fresh"). Each hit carries its path, type, status, trust tier, recheck date, source count, resource and a quoted snippet.',
       ),
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         question: z
           .string()
           .min(1)
@@ -145,10 +154,35 @@ export function registerTools(
           .max(1024)
           .optional()
           .describe("Only pages under this folder of the bundle."),
+        tag: z
+          .union([z.string().max(200), z.array(z.string().max(200)).max(TAG_LIST_CAP)])
+          .optional()
+          .describe(
+            "Only pages carrying this tag, or every tag of a list of up to 8; case does not matter, and a miss lists the tags in use.",
+          ),
+        status: z
+          .string()
+          .max(200)
+          .optional()
+          .describe(
+            "Only pages served with this status (case does not matter): stable, deprecated, or a word the company admits.",
+          ),
+        min_trust: z
+          .enum(["unverified", "machine-confirmed", "human-reviewed"])
+          .optional()
+          .describe("Only pages of this trust tier or a higher one."),
+        freshness: z
+          .enum(["fresh", "any"])
+          .optional()
+          .describe(
+            '"any" includes pages past their recheck date, each flagged overdue, which is what omitting it does; "fresh" leaves them out.',
+          ),
         include_stale: z
           .boolean()
           .optional()
-          .describe("Include pages past their recheck date; they are flagged as overdue."),
+          .describe(
+            'The older name for freshness, accepted until 0.5.0: true is "any", false is "fresh".',
+          ),
         limit: z.number().int().min(1).max(25).optional().describe("How many hits, 1 to 25."),
       }),
       outputSchema: SearchOutputSchema,
@@ -179,6 +213,37 @@ export function registerTools(
         }
         if (topic.length === 0) topic = undefined;
       }
+      // Tags: each entry trimmed, blank entries dropped; an empty list is no filter. Each must be in use (issue 4).
+      const requested = typeof args.tag === "string" ? [args.tag] : (args.tag ?? []);
+      const tags = requested.map((tag) => tag.trim()).filter((tag) => tag.length > 0);
+      if (tags.length > 0) {
+        const inUse = listTags(generation.catalog);
+        const known = new Set(inUse.map((tag) => tag.toLowerCase()));
+        const missing = tags.find((tag) => !known.has(tag.toLowerCase()));
+        if (missing !== undefined) {
+          return fail(
+            `no page has the tag ${JSON.stringify(safe(missing))}; the tags in use are: ${valueList(inUse, "tags")}`,
+          );
+        }
+      }
+      const status = blank(args.status);
+      if (status !== undefined) {
+        const inUse = listStatuses(generation.catalog);
+        if (!inUse.some((served) => served.toLowerCase() === status.toLowerCase())) {
+          return fail(
+            `no page has the status ${JSON.stringify(safe(status))}; the statuses in use are: ${valueList(inUse, "statuses")}`,
+          );
+        }
+      }
+      // The freshness pair (issue 4, D65): both omitted includes overdue pages; the two contradictions are refused.
+      const freshness = args.freshness;
+      const alias = args.include_stale;
+      if ((freshness === "any" && alias === false) || (freshness === "fresh" && alias === true)) {
+        return fail(
+          `freshness and include_stale disagree: freshness "${freshness}" ${freshness === "any" ? "includes" : "leaves out"} pages past their recheck date and include_stale ${alias} ${alias ? "includes" : "leaves out"} them; pass freshness alone`,
+        );
+      }
+      const includeStale = freshness !== undefined ? freshness === "any" : (alias ?? true);
       const now = clock();
       const response = await search(
         generation.catalog,
@@ -187,7 +252,10 @@ export function registerTools(
           question: args.question,
           ...(type === undefined ? {} : { type }),
           ...(topic === undefined ? {} : { topic }),
-          includeStale: args.include_stale ?? false,
+          ...(tags.length === 0 ? {} : { tags }),
+          ...(status === undefined ? {} : { status }),
+          ...(args.min_trust === undefined ? {} : { minTrust: args.min_trust }),
+          includeStale,
           limit: args.limit ?? options.limitDefault,
         },
         now,
@@ -215,7 +283,7 @@ export function registerTools(
       description: describeType(
         "Returns one page whole, with its provenance header first: path, type, status, trust tier, verifier, recheck date and deprecation. Takes the path, or the concept id (the path without .md); a name that is one page's path and another's concept id is an error naming both. Reserved files (index.md, log.md) are served too. A long page is cut at the result budget and says where to continue.",
       ),
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         path: z
           .string()
           .min(1)
@@ -277,7 +345,7 @@ export function registerTools(
       description: describeType(
         "Returns a folder's index: its pages with their titles and descriptions, and the folder's index text as the company wrote it or as the server generated it. Start here, at the root, to see what exists.",
       ),
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         folder: z
           .string()
           .max(1024)
@@ -324,7 +392,7 @@ export function registerTools(
       description: describeType(
         "Reports what was loaded: counts of pages admitted, refused and degraded, the lists the report carries, the integrity mode, the engine's counts and the lock. Nothing in it is page text.",
       ),
-      inputSchema: z.object({}),
+      inputSchema: z.strictObject({}),
       outputSchema: StatusOutputSchema,
       annotations: { readOnlyHint: true },
     },
