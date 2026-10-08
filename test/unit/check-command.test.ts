@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { CHECK_USAGE } from "../../src/commands/check.js";
 import { runCli } from "../helpers/cli.js";
-import { FIXTURES } from "../helpers/fixtures.js";
+import { FIXTURES, NOW } from "../helpers/fixtures.js";
 
 describe("okf-catalog check", () => {
   it("exits 0 and prints the report for a bundle it can serve", async () => {
@@ -137,5 +137,21 @@ describe("okf-catalog check", () => {
     const types = await runCli(["check", join(FIXTURES, "spec-example"), "--types", ""]);
     expect(types.code).toBe(2);
     expect(types.stderr).toMatch(/--types/);
+  });
+});
+
+// Issue 3: check takes one folder and reads no configuration, so it never needs --bundle, and takes none.
+describe("okf-catalog check and a network", () => {
+  it("checks a folder without --bundle", async () => {
+    const ok = await runCli(["check", join(FIXTURES, "spec-example")], {
+      env: { OKF_CATALOG_NOW: NOW.toISOString() },
+    });
+    expect(ok.code).toBe(0);
+    expect(ok.stdout).toMatch(/9 pages admitted/);
+    const flagged = await runCli(["check", join(FIXTURES, "spec-example"), "--bundle", "acme"], {
+      env: { OKF_CATALOG_NOW: NOW.toISOString() },
+    });
+    expect(flagged.code).toBe(2);
+    expect(flagged.stderr).toMatch(/Unknown option '--bundle'/);
   });
 });

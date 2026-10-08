@@ -21,6 +21,7 @@ const COUNTS = [
 const ALLOWED: Record<string, readonly string[]> = {
   "serve.start": ["network", "form", "bundles", "lock", "node", "configRule", "note"],
   "serve.alias": ["detail"],
+  "cache.version0": ["bundle", "detail"],
   "serve.admit": ["bundle", "word", "detail"],
   "serve.refusing": ["problem", "detail"],
   "serve.shutdown": ["reason"],

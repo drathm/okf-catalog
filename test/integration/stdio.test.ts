@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -6,8 +6,10 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +25,7 @@ import {
   INITIALIZED,
   impureLines,
   NOW_ISO,
+  REPO,
   rawServer,
   type Sandbox,
   sandbox,
@@ -493,7 +496,11 @@ describe("okf-catalog serve over stdio with a repository source", { timeout: 90_
       expect(status.structuredContent.poller?.intervalMs).toBe(600_000);
       expect(status.structuredContent.lockOwner).toBeNull();
       expect(status.structuredContent.source).toBe(repo.url);
-      expect(existsSync(join(companyDir(b), "source", "repo.git", "HEAD"))).toBe(true);
+      // Each bundle's clone lives in its own folder under the network's (D73).
+      expect(
+        existsSync(join(companyDir(b), "bundles", "fixture", "source", "repo.git", "HEAD")),
+      ).toBe(true);
+      expect(existsSync(join(companyDir(b), "source"))).toBe(false);
       first.send({
         jsonrpc: "2.0",
         id: 3,
@@ -529,7 +536,9 @@ describe("okf-catalog serve over stdio with a repository source", { timeout: 90_
       expect((other.structuredContent as unknown as { poller: unknown }).poller).not.toBeNull();
       expect(other.content[0]?.text).toMatch(/lock private \(held by pid \d+ since .*, alive\)/);
       const privateSources = readdirSync(join(companyDir(b), "private")).map((pid) =>
-        existsSync(join(companyDir(b), "private", pid, "source", "repo.git", "HEAD")),
+        existsSync(
+          join(companyDir(b), "private", pid, "bundles", "fixture", "source", "repo.git", "HEAD"),
+        ),
       );
       expect(privateSources).toEqual([true]);
       expect((await second.end()).code).toBe(0);
@@ -695,5 +704,212 @@ process.exit(0);
     expect(r.content[0]?.text).not.toMatch(/not a database/);
     expect(r.content[0]?.text).not.toContain(companyDir(b));
     expect((await run.end()).code).toBe(0);
+  });
+});
+
+/** The published branch of one page, as `pack` writes it, on a bare repository reached through file://. */
+function packedRepo(): { url: string; root: string } {
+  const packWork = mkdtempSync(join(tmpdir(), "okf-catalog-stdio-net-pack-"));
+  mkdirSync(join(packWork, "kb"));
+  writeFileSync(join(packWork, "kb", "alpha.md"), PUBLISHED_PAGE);
+  writeFileSync(join(packWork, "okf-catalog.yaml"), "company: fixture\nsource:\n  local: ./kb\n");
+  const packed = join(packWork, "out");
+  const code = runPack(
+    [
+      "--config",
+      join(packWork, "okf-catalog.yaml"),
+      "--from",
+      join(packWork, "kb"),
+      "--out",
+      packed,
+    ],
+    { stdout: () => undefined, stderr: () => undefined, env: { OKF_CATALOG_NOW: NOW_ISO } },
+  );
+  if (code !== 0) throw new Error(`pack exited ${code}`);
+  const repo = publishedRepo(
+    Object.fromEntries(
+      readdirSync(packed).map((name) => [name, readFileSync(join(packed, name), "utf8")]),
+    ),
+  );
+  rmSync(packWork, { recursive: true, force: true });
+  return repo;
+}
+
+/** A status call over the raw protocol, its structured content. */
+async function statusOver(
+  run: ReturnType<typeof rawServer>,
+  id: number,
+): Promise<Record<string, unknown>> {
+  run.send({ jsonrpc: "2.0", id, method: "tools/call", params: { name: "status", arguments: {} } });
+  return ((await run.waitFor(id)).result as { structuredContent: Record<string, unknown> })
+    .structuredContent;
+}
+
+/** What a version 0 server left at the root of its folder: the clone, the link and its generation (D73). */
+function plantVersion0(dir: string): void {
+  mkdirSync(join(dir, "source"), { recursive: true, mode: 0o700 });
+  writeFileSync(join(dir, "source", "state.json"), '{"planted":"version 0"}\n');
+  mkdirSync(join(dir, "gen-1-1-1"), { recursive: true });
+  writeFileSync(join(dir, "gen-1-1-1", "page.md"), "# Page\n");
+  symlinkSync("gen-1-1-1", join(dir, "derived"));
+}
+
+// Issue 3, D72 and D73: one process, one lock, one store for a network; each bundle's folder under bundles/<id>.
+describe("okf-catalog serve over stdio: a network (D72, D73)", { timeout: 90_000 }, () => {
+  it("serves two local bundles from one lock and one store", async () => {
+    const fixtures = join(REPO, "test", "fixtures", "bundles");
+    const yaml = `network: fixture\nbundles:\n  - id: terms\n    source:\n      local: ${join(fixtures, "behaviours")}\n  - id: acme\n    source:\n      local: ${join(fixtures, "spec-example")}\n`;
+    const b = box("spec-example", yaml);
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [CLI, "serve", "--config", b.configPath],
+      env: b.env,
+      cwd: b.cwd,
+      stderr: "pipe",
+    });
+    let stderr = "";
+    transport.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    const client = new Client({ name: "test", version: "0.0.0" });
+    await client.connect(transport);
+    const status = (await client.callTool({ name: "status", arguments: {} })) as {
+      structuredContent: {
+        network: string;
+        lock: string;
+        bundles: Array<{ id: string; admitted: number; sourceKind: string; source: string }>;
+      };
+    };
+    expect(status.structuredContent.network).toBe("fixture");
+    expect(status.structuredContent.lock).toBe("exclusive");
+    expect(
+      status.structuredContent.bundles.map((row) => [row.id, row.admitted, row.sourceKind]),
+    ).toEqual([
+      ["terms", 17, "local"],
+      ["acme", 9, "local"],
+    ]);
+    const hitsOf = async (question: string) =>
+      (
+        (await client.callTool({ name: "search", arguments: { question } })) as {
+          structuredContent: { hits: Array<{ bundle: string; path: string }> };
+        }
+      ).structuredContent.hits;
+    expect((await hitsOf("alpha glossary"))[0]).toMatchObject({
+      bundle: "terms",
+      path: "terms/alpha.md",
+    });
+    expect((await hitsOf("revenue")).some((hit) => hit.bundle === "acme")).toBe(true);
+    await client.close();
+    // One lock and one store for the network; each bundle's generations behind its own link.
+    const dir = companyDir(b);
+    expect(existsSync(join(dir, "lock.sqlite"))).toBe(true);
+    expect(existsSync(join(dir, "index.sqlite"))).toBe(true);
+    const locks = execFileSync("find", [b.cacheRoot, "-name", "lock.sqlite"], { encoding: "utf8" })
+      .split("\n")
+      .filter((line) => line.length > 0);
+    expect(locks).toEqual([join(dir, "lock.sqlite")]);
+    for (const id of ["terms", "acme"]) {
+      expect(
+        readdirSync(join(dir, "bundles", id)).filter((n) => n.startsWith("gen-")),
+      ).toHaveLength(1);
+      expect(existsSync(join(dir, "bundles", id, "derived"))).toBe(true);
+    }
+    expect(stderr).toMatch(
+      /"event":"serve.start","network":"fixture","form":"network","bundles":\["terms","acme"\]/,
+    );
+    expect(stderr).not.toMatch(/"event":"serve.alias"/);
+  });
+
+  it("loads a company: file as a one-bundle network and moves the version 0 cache into bundles/<id>", async () => {
+    const repo = packedRepo();
+    try {
+      const yaml = `company: fixture\nsource:\n  repository: "${repo.url}"\n  branch: published\n`;
+      const b = box("spec-example", yaml);
+      b.env.OKF_CATALOG_GIT_PROTOCOLS = "file";
+      const dir = companyDir(b);
+      // A first server writes the network's layout; its clone, link and generation are then put back where a
+      // version 0 server kept them, at the root of the folder.
+      const first = rawServer(b);
+      first.send(INITIALIZE);
+      await first.waitFor(1);
+      first.send(INITIALIZED);
+      const before = await statusOver(first, 2);
+      const commit = (before.published as { commit: string }).commit;
+      expect((await first.end()).code).toBe(0);
+      const own = join(dir, "bundles", "fixture");
+      renameSync(join(own, "source"), join(dir, "source"));
+      const [generation] = readdirSync(own).filter((n) => n.startsWith("gen-"));
+      if (generation === undefined) throw new Error("no generation");
+      renameSync(join(own, generation), join(dir, generation));
+      symlinkSync(generation, join(dir, "derived"));
+      rmSync(join(dir, "bundles"), { recursive: true, force: true });
+      // The remote goes away: the moved clone's tree is what the next server answers from (the offline fallback).
+      renameSync(join(repo.root, "origin.git"), join(repo.root, "origin.moved"));
+      const second = rawServer(b);
+      second.send(INITIALIZE);
+      await second.waitFor(1);
+      second.send(INITIALIZED);
+      const after = await statusOver(second, 2);
+      // A company: file's status keeps version 0's shape (D74).
+      expect(after).toMatchObject({
+        company: "fixture",
+        source: repo.url,
+        admitted: 1,
+        lock: "exclusive",
+        published: { commit },
+      });
+      expect(after.network).toBeUndefined();
+      second.send({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "get_page", arguments: { path: "alpha.md" } },
+      });
+      expect(JSON.stringify(await second.waitFor(3))).toContain("alpha body");
+      expect((await second.end()).code).toBe(0);
+      // Under the lock the clone was moved into the bundle's folder, and the root link and generation removed.
+      expect(existsSync(join(own, "source", "repo.git", "HEAD"))).toBe(true);
+      expect(existsSync(join(dir, "source"))).toBe(false);
+      expect(existsSync(join(dir, "derived"))).toBe(false);
+      expect(readdirSync(dir).filter((n) => n.startsWith("gen-"))).toEqual([]);
+      // The alias is named in the log at start (D-G).
+      expect(second.stderr()).toMatch(/"event":"serve.alias"/);
+    } finally {
+      rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves the version 0 cache alone in the private fallback", async () => {
+    const b = box("spec-example");
+    const dir = companyDir(b);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    plantVersion0(dir);
+    // Another process holds the network's lock: this one serves from a private folder and moves nothing.
+    const holder = spawn(process.execPath, [join(REPO, "test", "helpers", "hold-lock.mjs"), dir], {
+      stdio: ["pipe", "pipe", "inherit"],
+    });
+    try {
+      const held = await new Promise<string>((resolve) =>
+        holder.stdout?.once("data", (chunk: Buffer) => resolve(chunk.toString().trim())),
+      );
+      expect(held).toBe("exclusive");
+      const run = rawServer(b);
+      run.send(INITIALIZE);
+      await run.waitFor(1);
+      run.send(INITIALIZED);
+      const status = await statusOver(run, 2);
+      expect(status.lock).toBe("private");
+      expect(status.admitted).toBe(9);
+      expect((await run.end()).code).toBe(0);
+      expect(readFileSync(join(dir, "source", "state.json"), "utf8")).toBe(
+        '{"planted":"version 0"}\n',
+      );
+      expect(readlinkSync(join(dir, "derived"))).toBe("gen-1-1-1");
+      expect(existsSync(join(dir, "gen-1-1-1", "page.md"))).toBe(true);
+      expect(existsSync(join(dir, "bundles"))).toBe(false);
+    } finally {
+      holder.stdin?.end();
+      holder.kill();
+    }
   });
 });
