@@ -33,7 +33,8 @@ import {
 } from "../../src/catalog/outputs.js";
 import type { BundleRuntimeStatus, Generation, RuntimeStatus } from "../../src/catalog/runtime.js";
 import { MARKER } from "../../src/catalog/text.js";
-import type { SearchResponse } from "../../src/search/search.js";
+import { type SearchResponse, search } from "../../src/search/search.js";
+import { fakeEngine } from "../helpers/fake-runtime.js";
 import { NOW, readFixture } from "../helpers/fixtures.js";
 
 const { catalog, report } = loadBundle(
@@ -1443,5 +1444,181 @@ describe("the network's catalog (D74)", () => {
       text: "# Short\n",
       truncated: false,
     });
+  });
+});
+
+describe("the verification of bite b's fix pass", () => {
+  /** A bundle from a map of path to text, loaded as a served bundle loads it, integrity off. */
+  const loadFiles = (files: Record<string, string>, dev = false): Catalog =>
+    loadBundle(
+      "b",
+      Object.entries(files).map(([path, text]) => ({ path, bytes: Buffer.from(text) })),
+      {
+        admit: ["stable", "deprecated"],
+        dev,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    ).catalog;
+  const long = (char: string, n = 100_000): string => char.repeat(n);
+  const yaml = (value: string): string => JSON.stringify(value);
+
+  it("cuts a search hit's page-written values at 2 000 characters in the structured hit and 200 on its line", async () => {
+    // A status of the company's own word is served in development mode, so every value here reaches a hit.
+    const catalog = loadFiles(
+      {
+        "long.md": `---\ntype: ${yaml(long("t"))}\ntitle: ${yaml(long("n"))}\nstatus: ${yaml(long("s"))}\nresource: ${yaml(long("r"))}\nstale_after: ${yaml(long("a"))}\ndescription: The keyword page.\n---\n\nThe keyword page.\n`,
+      },
+      true,
+    );
+    const response = await search(
+      catalog,
+      fakeEngine(catalog),
+      { question: "keyword", includeStale: true, limit: 8 },
+      NOW,
+    );
+    const out = projectSearch(response, catalog, NOW, { dev: true });
+    expect(() => SearchOutputSchema.parse(out)).not.toThrow();
+    expect(out.hits.map((h) => h.path)).toEqual(["long.md"]);
+    const [hit] = out.hits;
+    expect(hit?.title).toBe(`${long("n", 2_000)}…`);
+    expect(hit?.type).toBe(`${long("t", 2_000)}…`);
+    expect(hit?.status).toBe(`${long("s", 2_000)}…`);
+    expect(hit?.resource).toBe(`${long("r", 2_000)}…`);
+    expect(hit?.recheck.raw).toBe(`${long("a", 2_000)}…`);
+    expect(hit?.citation.length).toBeLessThan(1_500);
+    expect(hit?.citation).toContain(`"${long("n", 200)}"…`);
+    expect(JSON.stringify(out).length).toBeLessThan(15_000);
+  });
+
+  it("prints the last refusal's path and the fatal path on the status line by the path kind", () => {
+    const status = (path: string): string =>
+      statusSummary(
+        statusOf(
+          {
+            ...generation,
+            report: {
+              ...generation.report,
+              fatal: { path, rule: "manifest-missing", detail: "no manifest.json" },
+            },
+          },
+          {
+            lastRefusal: {
+              commit: "d".repeat(40),
+              rule: "symlink",
+              path,
+              detail: "a symbolic link",
+            },
+          },
+        ),
+      );
+    // A path the loader refused can hold what a plain path cannot: it is quoted, so it adds no fact to the line.
+    const odd = 'notes/a; b: "c" [d].md';
+    const line = status(odd);
+    expect(line).toContain(`last refusal dddddddddddd symlink (${JSON.stringify(odd)})`);
+    expect(line).toContain(`FATAL manifest-missing (${JSON.stringify(odd)}): no manifest.json`);
+    // A path plain for its kind stays bare.
+    const plain = status("notes/link.md");
+    expect(plain).toContain("last refusal dddddddddddd symlink (notes/link.md)");
+    expect(plain).toContain("FATAL manifest-missing (notes/link.md): no manifest.json");
+  });
+
+  it("cuts a page's status in the rows of citations and provenance, so a long one empties no list", () => {
+    // In development mode a page is served with whatever status it writes: its rows cut it as they cut every value.
+    const catalog = loadFiles(
+      {
+        "a.md": `---\ntype: Note\ntitle: A\nsources:\n  - { resource: b.md }\n  - { resource: c.md }\n---\n\nSee [b](b.md) and [c](c.md).\n`,
+        "b.md": `---\ntype: Note\ntitle: B\nstatus: ${yaml(long("w"))}\nsources:\n  - { resource: a.md }\n---\n\nBack to [a](a.md).\n`,
+        "c.md": `---\ntype: Note\ntitle: C\nsources:\n  - { resource: a.md }\n---\n\nBack to [a](a.md).\n`,
+      },
+      true,
+    );
+    const start = catalog.pages.get("a.md");
+    if (start === undefined) throw new Error("a.md");
+    const cited = projectCitations(citationsOf(catalog, start), RESULT_BUDGET);
+    expect(cited.truncated).toBe(false);
+    expect(cited.inboundMentions.rows.map((r) => [r.from, r.status.length])).toEqual([
+      ["b.md", 2_001],
+      ["c.md", 6],
+    ]);
+    expect(cited.inboundDerivations.rows.map((r) => [r.from, r.status.length])).toEqual([
+      ["b.md", 2_001],
+      ["c.md", 6],
+    ]);
+    expect(citationsText(cited)).toContain(`- from b.md ["${long("w", 500)}"…]: "a"`);
+    const walk = projectWalk(walkProvenance(catalog, start, 4, NOW), RESULT_BUDGET);
+    expect(walk.truncated).toBe(false);
+    expect(walk.nodes.map((n) => [n.path, n.status.length])).toEqual([
+      ["a.md", 6],
+      ["b.md", 2_001],
+      ["c.md", 6],
+    ]);
+    expect(walkText(walk)).toContain(`b.md [level 1, from a.md, "${long("w", 500)}"…, unverified`);
+  });
+
+  const only = (catalog: Catalog, path: string): Page => {
+    const found = catalog.pages.get(path);
+    if (found === undefined) throw new Error(path);
+    return found;
+  };
+
+  it("holds the page header within a quarter in the structured channel, where escaping doubles it again", () => {
+    // Ten sources whose id and resource are 200 backslashes: the header's text, each backslash escaped once, fits a
+    // quarter of the budget; its JSON, each escaped twice, would not, so the header names fewer of them.
+    const slashes = yaml(long("\\", 200));
+    const entries = Array.from(
+      { length: 10 },
+      () => `  - { id: ${slashes}, resource: ${slashes} }\n`,
+    );
+    const catalog = loadFiles({
+      "p.md": `---\ntype: Note\ntitle: P\nsources:\n${entries.join("")}---\n\nBody.\n`,
+    });
+    const out = projectPage(only(catalog, "p.md"), NOW, 0, RESULT_BUDGET);
+    expect(out.provenance?.sources).toHaveLength(10);
+    expect(out.citation.length).toBeLessThanOrEqual(RESULT_BUDGET / 4);
+    expect(JSON.stringify(out.citation).length).toBeLessThanOrEqual(RESULT_BUDGET / 4);
+    expect(Number(/; and (\d+) more/.exec(out.citation)?.[1] ?? "0")).toBeGreaterThan(0);
+  });
+
+  it("prints at most 200 characters of a long status in a page header", () => {
+    const catalog = loadFiles(
+      { "p.md": `---\ntype: Note\ntitle: P\nstatus: ${yaml(long("w"))}\n---\n\nBody.\n` },
+      true,
+    );
+    const out = projectPage(only(catalog, "p.md"), NOW, 0, RESULT_BUDGET);
+    expect(out.citation).toContain(`[Note, "${long("w", 200)}"…, unverified`);
+    expect(out.citation.length).toBeLessThan(500);
+    expect(out.provenance?.status.length).toBe(2_001);
+  });
+
+  it("cuts a link's long URL in its mention, so the mentions after it stay", () => {
+    const catalog = loadFiles({
+      "p.md": `---\ntype: Note\ntitle: P\n---\n\nSee [one](https://x.test/${long("u")}) and [two](q.md).\n`,
+      "q.md": "---\ntype: Note\ntitle: Q\n---\n\nQ.\n",
+    });
+    const out = projectCitations(citationsOf(catalog, only(catalog, "p.md")), RESULT_BUDGET);
+    expect(out.truncated).toBe(false);
+    expect(out.mentions.rows.map((m) => [m.kind, m.raw.length])).toEqual([
+      ["external", 2_001],
+      ["page", 4],
+    ]);
+  });
+
+  it("cuts a deriving source's long author and last change, so every derivation stays", () => {
+    const catalog = loadFiles({
+      "t.md": "---\ntype: Note\ntitle: T\n---\n\nT.\n",
+      "d1.md": `---\ntype: Note\ntitle: D1\nsources:\n  - { resource: t.md, author: ${yaml(long("a"))}, last_modified: ${yaml(long("m"))} }\n---\n\nD.\n`,
+      "d2.md": "---\ntype: Note\ntitle: D2\nsources:\n  - { resource: t.md }\n---\n\nD.\n",
+    });
+    const out = projectCitations(citationsOf(catalog, only(catalog, "t.md")), RESULT_BUDGET);
+    expect(out.truncated).toBe(false);
+    expect(
+      out.inboundDerivations.rows.map((r) => [r.from, r.author?.length, r.lastModified?.length]),
+    ).toEqual([
+      ["d1.md", 2_001, 2_001],
+      ["d2.md", undefined, undefined],
+    ]);
   });
 });

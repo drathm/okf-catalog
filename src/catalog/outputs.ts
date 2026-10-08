@@ -37,6 +37,7 @@ import {
   networkBundleLine,
   pageHeader,
   pageWindowLine,
+  printed,
   provenanceHeader,
   reservedHeader,
   rootIndexLine,
@@ -590,22 +591,25 @@ export function projectSearch(
       ...(undeclared === undefined ? {} : { undeclaredTypes: undeclared }),
       ...(options.prefixed === true ? { bundle: hit.bundle } : {}),
     };
+    // Each value the page wrote is cut at the field cap, as a row's values are, and the line prints at most 200 of
+    // each, as a page header does; nothing ranks on them (the verification of bite b's fix pass).
+    const cut = capFields(hit, ["title", "type", "status", "resource", "staleAfter"]);
     return {
       bundle: hit.bundle,
       path: hit.path,
       conceptId: conceptIdOf(hit.path),
-      title: hit.title,
-      type: hit.type,
-      status: hit.status,
+      title: cut.title,
+      type: cut.type,
+      status: cut.status,
       trust: hit.trust,
       recheck: {
-        raw: hit.staleAfter ?? null,
+        raw: cut.staleAfter ?? null,
         form: page?.staleAfter?.form ?? null,
         overdue: hit.overdue,
       },
       replacement: hit.replacement ?? null,
       sources: hit.sources,
-      resource: hit.resource ?? null,
+      resource: cut.resource ?? null,
       rung: hit.rung,
       termsMatched: hit.termsMatched ?? null,
       snippet: text,
@@ -827,11 +831,12 @@ const jsonRoomOf = (frame: PageOutput, budget: number): number =>
     .length;
 
 /**
- * A page as `get_page` returns it, the whole result within the budget in both channels (D82): the provenance
- * takes at most half, its latest 20 verifications then its sources cut in order with their totals, every value cut
- * at 2 000 characters, and at 200 when the provenance would not fit its half otherwise; the header names at most
- * ten of the sources the provenance kept, within a quarter in both channels; the body takes the rest, the longest
- * cut that fits both channels, and says where to continue.
+ * A page as `get_page` returns it, the whole result within the budget in both channels (D82): the provenance keeps
+ * its lists within half, its latest 20 verifications then its sources cut in order with their totals, every value
+ * cut at 2 000 characters, and at 200 when the provenance would not fit its half otherwise (typed fields near their
+ * own cap and values that escaping lengthens sixfold can still pass it, and the body then takes less); the header
+ * names at most ten of the sources the provenance kept, within a quarter in both channels; the body takes the rest,
+ * the longest cut that fits both channels, and says where to continue.
  */
 export function projectPage(
   page: Page,
@@ -842,7 +847,8 @@ export function projectPage(
 ): PageOutput {
   const half = Math.floor(budget / 2);
   let projected = projectProvenance(page, now, FIELD_CAP);
-  // Many values at the field cap at once: each is cut again, to what a header prints, so the half holds.
+  // Many values at the field cap at once: each is cut again, to what a header prints, so the half holds but for
+  // typed fields near their own cap and values that escaping lengthens sixfold, which the body then makes room for.
   if (listless(projected) > half) projected = projectProvenance(page, now, HEADER_FIELD_CAP);
   const provenance = fitProvenance(projected, half);
   const { located, ...lineOptions } = options;
@@ -1175,13 +1181,14 @@ function bundleParts(name: string, out: BundleLine, lock?: string): string[] {
   ];
   if (out.lastAttempt !== null)
     parts.push(`last attempt ${out.lastAttempt.outcome} at ${out.lastAttempt.at}`);
+  // A refused path is printed by the path kind, bare only when plain, so it can add no fact to the line (P13).
   if (out.lastRefusal !== null)
     parts.push(
-      `last refusal ${out.lastRefusal.commit === null ? "" : `${out.lastRefusal.commit.slice(0, 12)} `}${out.lastRefusal.rule}${out.lastRefusal.path ? ` (${out.lastRefusal.path})` : ""}`,
+      `last refusal ${out.lastRefusal.commit === null ? "" : `${out.lastRefusal.commit.slice(0, 12)} `}${out.lastRefusal.rule}${out.lastRefusal.path ? ` (${printed(out.lastRefusal.path, "path")})` : ""}`,
     );
   if (out.fatal !== null) {
     parts.push(
-      `FATAL ${safe(out.fatal.rule)}${out.fatal.path ? ` (${safe(out.fatal.path)})` : ""}: ${safe(out.fatal.detail)}`,
+      `FATAL ${safe(out.fatal.rule)}${out.fatal.path ? ` (${printed(out.fatal.path, "path")})` : ""}: ${safe(out.fatal.detail)}`,
     );
   }
   return parts;
@@ -1431,7 +1438,7 @@ export function projectCitations(
   };
   const all: Rows = {
     mentions: first(citations.mentions).map((m) => capFields(m, ["raw", "target"])),
-    inboundMentions: first(citations.inboundMentions).map((m) => capFields(m, ["from"])),
+    inboundMentions: first(citations.inboundMentions).map((m) => capFields(m, ["from", "status"])),
     claims: first(citations.claims).map(({ sources, ...claim }) => ({
       ...capFields(claim, ["footnote"]),
       sources: sourcesOut(sources),
@@ -1439,7 +1446,7 @@ export function projectCitations(
     bibliography: first(citations.bibliography).map(sourceFactsOut),
     unjoined: first(citations.unjoined).map((u) => capFields(u, ["footnote"])),
     inboundDerivations: first(citations.inboundDerivations).map(({ window, ...derivation }) => ({
-      ...capFields(derivation, ["from", "author", "lastModified"]),
+      ...capFields(derivation, ["from", "status", "author", "lastModified"]),
       ...windowOut(window),
     })),
   };
@@ -1569,7 +1576,7 @@ function edgeOut({ window, candidates, ...edge }: WalkEdge): EdgeOut {
 
 function nodeOut({ edges, recheck, usageWindow, ...node }: WalkNode): NodeOut {
   return {
-    ...capFields(node, ["path", "parent"]),
+    ...capFields(node, ["path", "parent", "status"]),
     ...(recheck === undefined ? {} : { recheck: { ...recheck, raw: capField(recheck.raw) } }),
     ...(usageWindow === undefined ? {} : { usageWindow: typedField("usageWindow", usageWindow) }),
     edges: edges.map(edgeOut),
