@@ -389,10 +389,13 @@ describe("createRuntime: a re-index that fails too (bite 4 build review)", () =>
     // A fixed sentence for the model, saying when it is tried again; the engine's words go to the log (C-I-A4).
     expect(runtime.status().refusing).not.toContain("the store broke");
     expect(runtime.status().refusing).toMatch(/until the server restarts/);
+    // The refusal is the index's, not the configuration's: the tools say so (bite c's verification).
+    expect(runtime.status().refusingIndex).toBe(true);
     await expect(runtime.lease(async () => 1)).rejects.toThrow(/re-aligned|realign/i);
     const recovered = await runtime.refresh();
     expect(recovered.outcome).toBe("swapped");
     expect(runtime.status().refusing).toBeUndefined();
+    expect(runtime.status().refusingIndex).toBeUndefined();
     expect(await runtime.lease(async () => 1)).toBe(1);
     await runtime.shutdown();
   });
@@ -1014,8 +1017,40 @@ describe("createRuntime: one bundle's index failure is its own (D39 per bundle)"
     await expect(runtime.ready()).rejects.toThrow(/re-aligned|realign/i);
     expect(runtime.status().refusing).toMatch(/until the server restarts/);
     expect(runtime.status().refusing).not.toMatch(/EACCES|\/cache\//);
+    expect(runtime.status().refusingIndex).toBe(true);
     await expect(runtime.lease(async () => 1)).rejects.toThrow(/re-aligned|realign/i);
     await runtime.shutdown();
+  });
+
+  // Bite c's verification: a network of one bundle refused for its index said "until its configuration is fixed",
+  // which no configuration fixes. The runtime marks a refusal that is the index's, so the tools can say what it is.
+  it("marks a one-bundle network's refusal as the index's when its first load cannot be indexed, and not when the network cannot be prepared", async () => {
+    const engine = countingEngine();
+    engine.failing.add("b");
+    const { runtime } = build(memorySource(readFixture("spec-example")), engine);
+    await expect(runtime.ready()).rejects.toThrow(/the index could not take/);
+    expect(runtime.status().refusing).toMatch(/the index could not take this bundle's pages/);
+    expect(runtime.status().refusingIndex).toBe(true);
+    await runtime.shutdown();
+    const unprepared = createRuntime({
+      bundles: [{ id: "b", source: memorySource(readFixture("spec-example")), load: options }],
+      prepare: async () => {
+        throw new Error("the cache folder is not usable; set XDG_CACHE_HOME to a folder you own");
+      },
+      clock: () => NOW,
+      log: quiet,
+    });
+    await expect(unprepared.ready()).rejects.toThrow(/cache folder/);
+    expect(unprepared.status().refusing).toMatch(/cache folder/);
+    expect(unprepared.status().refusingIndex).toBeUndefined();
+    // A source that cannot be read is the configuration's to fix, as version 0 said.
+    const missing = memorySource(readFixture("spec-example"));
+    missing.fail("the bundle folder ./kb does not exist or cannot be read");
+    const { runtime: unread } = build(missing, countingEngine());
+    await expect(unread.ready()).rejects.toThrow(/does not exist/);
+    expect(unread.status().refusingIndex).toBeUndefined();
+    await unread.shutdown();
+    await unprepared.shutdown();
   });
 });
 

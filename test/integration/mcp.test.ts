@@ -729,6 +729,51 @@ describe("bite 4 build review, round 2", () => {
     expect(text(r)).not.toContain("defect");
   });
 
+  // Bite c's verification: a network of one bundle refused for its index (D39, or a first load the index could not
+  // take) said "until its configuration is fixed", which no configuration fixes; it now says what it is.
+  it("says an index refusal is the index's, not the configuration's, in every tool", async () => {
+    const sentence =
+      "the index could not be re-aligned with the served pages; nothing is served until the server restarts, and the log has the detail";
+    const refusingFor = (index: boolean): Runtime => ({
+      async ready() {
+        throw new Error(sentence);
+      },
+      snapshot: () => ({ bundles: [] }),
+      async lease() {
+        throw new Error(sentence);
+      },
+      async refresh() {
+        return { outcome: "failed", error: sentence };
+      },
+      status: () => ({
+        lock: "exclusive",
+        loaded: true,
+        refusing: sentence,
+        ...(index ? { refusingIndex: true as const } : {}),
+        bundles: [{ id: "kb", loaded: true, fatal: false }],
+      }),
+      async shutdown() {},
+    });
+    const broken = await session(refusingFor(true));
+    const unset = await session(refusingFor(false));
+    for (const [name, args] of [
+      ["search", { question: "alpha" }],
+      ["get_page", { path: "a.md" }],
+      ["catalog", {}],
+      ["status", {}],
+      ["citations", { path: "a.md" }],
+      ["provenance", { path: "a.md" }],
+    ] as const) {
+      const r = await broken.call(name, args);
+      expect(r.isError, name).toBe(true);
+      expect(text(r), name).toBe(`the server is refusing every request: ${sentence}`);
+      // A refusal the runtime does not mark is the configuration's, as version 0 said.
+      expect(text(await unset.call(name, args)), name).toBe(
+        `the server is refusing every request until its configuration is fixed: ${sentence}`,
+      );
+    }
+  });
+
   it("keeps a refusal whose manifest key carries the marker to one line in every tool and in the status line", async () => {
     const files = readFixture("behaviours").map((f) => {
       if (f.path !== "manifest.json") return f;

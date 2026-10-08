@@ -151,13 +151,14 @@ interface Held {
   readonly synthetic: Map<string, Generation>;
 }
 
-/** An error with the detail a log may carry beside its one-line message. */
-type Described = Error & { detail?: string };
+/** An error with the detail a log may carry beside its one-line message, and whether it is the index's. */
+type Described = Error & { detail?: string; index?: true };
 
 /** An engine failure, told with a fixed sentence; the engine's words travel as the detail, for the log. */
 function engineFailure(error: unknown): Described {
   const described = new Error(ENGINE_FAILED) as Described;
   described.detail = (error as Error).message;
+  described.index = true;
   return described;
 }
 
@@ -209,6 +210,8 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
   let firstLoadFailed = false;
   /** Why the first load failed as a whole: the network could not be prepared, or its one bundle's load threw. */
   let refusal: string | undefined;
+  /** That failure was the index's: its one bundle's first load could not be indexed. */
+  let refusalIndex = false;
   /** The network could not be prepared (the cache folder, the lock, the store): no bundle was loaded. */
   let prepareFailed = false;
   let closing: Promise<void> | undefined;
@@ -243,6 +246,12 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
         .map((bundle) => `${bundle.id}: ${(bundle.failed as Described).message}`)
         .join("; ");
     return undefined;
+  }
+
+  /** Whether the network's refusal is the index's: its one bundle's first load could not be indexed, or it is broken. */
+  function refusingFromIndex(): boolean {
+    if (refusal !== undefined) return refusalIndex;
+    return states.length === 1 && (states[0] as Held).broken !== undefined;
   }
 
   const counts = (report: Report, index: IndexResult) => ({
@@ -626,6 +635,7 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
         else await landedOrDeadline(loads);
       } catch (error) {
         refusal = (error as Error).message;
+        refusalIndex = (error as Described).index === true;
         firstLoadFailed = true;
         const detail = (error as Described).detail;
         deps.log.error("serve.refusing", {
@@ -748,6 +758,7 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
           if (firstLoad === undefined) throw new Error("the runtime is shut down");
           await firstLoad;
           refusal = undefined;
+          refusalIndex = false;
           return outcomeOf(bundle);
         }
         await firstLoad;
@@ -819,7 +830,10 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
       }),
     };
     const why = refusingNow();
-    if (why !== undefined) result.refusing = why;
+    if (why !== undefined) {
+      result.refusing = why;
+      if (refusingFromIndex()) result.refusingIndex = true;
+    }
     if (resetOnOpen !== undefined) result.resetOnOpen = resetOnOpen;
     return result;
   }

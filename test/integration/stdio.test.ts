@@ -881,9 +881,10 @@ describe("okf-catalog serve over stdio: a network (D72, D73)", { timeout: 90_000
 
   // The fold of bite c's build reviews, C-I-A4: a network of one bundle refuses as a whole, as version 0 did (D74),
   // when its bundle's part of the index cannot be brought in line (D39) or its first load cannot be indexed; either
-  // way the model reads a fixed sentence, and the log has the folder and the engine's words.
+  // way the model reads a fixed sentence, and the log has the folder and the engine's words. The sentence says the
+  // index refuses, never that the configuration needs fixing, which would not fix it (bite c's verification).
   it("refuses a one-bundle network whose index cannot take or drop its pages, naming neither the cache path nor the engine's words", async () => {
-    const PREFIX = "the server is refusing every request until its configuration is fixed: ";
+    const PREFIX = "the server is refusing every request: ";
     for (const [fixture, sentence] of [
       // Refused by the loader (no manifest), its pages cannot leave the index: D39.
       [

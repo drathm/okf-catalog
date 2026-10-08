@@ -296,9 +296,15 @@ function resolveGraphPage(
   );
 }
 
-/** The one sentence every tool answers with while the server cannot serve: the fix, never a path the model has no business with. */
-const refusingSentence = (refusing: string): string =>
-  `the server is refusing every request until its configuration is fixed: ${refusingText(refusing)}`;
+/**
+ * The one sentence every tool answers with while the server cannot serve: the fix, never a path the model has no
+ * business with. A refusal that is the index's says what refuses, since no change of configuration would fix it
+ * (bite c's verification); any other asks for the configuration to be fixed, as version 0 did.
+ */
+const refusingSentence = (refusing: string, index: boolean): string =>
+  index
+    ? `the server is refusing every request: ${refusingText(refusing)}`
+    : `the server is refusing every request until its configuration is fixed: ${refusingText(refusing)}`;
 
 /**
  * The six tools. Every handler runs under a lease on the network, answers in both channels, and turns anything it
@@ -328,8 +334,12 @@ export function registerTools(
     ) =>
     async (args: A): Promise<ToolResult> => {
       const started = performance.now();
-      const refusing = runtime.status().refusing;
-      if (refusing !== undefined) return whileRefusing?.(args) ?? fail(refusingSentence(refusing));
+      const before = runtime.status();
+      if (before.refusing !== undefined)
+        return (
+          whileRefusing?.(args) ??
+          fail(refusingSentence(before.refusing, before.refusingIndex === true))
+        );
       try {
         const { logFields, ...result } = await runtime.lease<ToolResult>(async (network, engine) =>
           fn(args, see(network), engine),
@@ -350,9 +360,12 @@ export function registerTools(
           error: (error as Error).message,
         });
         // The call that started the first load is the one that sees it fail: answer with the fix, as later calls do.
-        const refusingNow = runtime.status().refusing;
-        if (refusingNow !== undefined)
-          return whileRefusing?.(args) ?? fail(refusingSentence(refusingNow));
+        const after = runtime.status();
+        if (after.refusing !== undefined)
+          return (
+            whileRefusing?.(args) ??
+            fail(refusingSentence(after.refusing, after.refusingIndex === true))
+          );
         return fail("the server hit a defect answering this call; its log has the detail");
       }
     };

@@ -113,6 +113,12 @@ export interface RuntimeStatus {
    * bundle failed or is broken, or every bundle's first load threw; `status` beyond one bundle still answers.
    */
   refusing?: string;
+  /**
+   * Set when that refusal is the index's, not the configuration's or what the network needs to start: its one
+   * bundle's part of the index could not be brought in line, or its first load could not be indexed (D39, D74). The
+   * tools then say what refuses rather than ask for the configuration to be fixed, which would not fix it.
+   */
+  refusingIndex?: true;
   /** Why the engine rebuilt its store at open, when it did (D48). */
   resetOnOpen?: string;
   /** The process holding the network's lock, when this one runs in the private fallback; null when not applicable. */
