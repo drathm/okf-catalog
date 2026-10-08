@@ -1611,6 +1611,65 @@ describe("a network of bundles (D74)", () => {
     }
   });
 
+  // D82 extended (the fold of bite c's build reviews, C-A-A5): at 150 bundles, every list an answer names is cut.
+  it("caps every list of bundles or candidates an answer names at 50, with the total, at 150 bundles", async () => {
+    const many = Array.from({ length: 150 }, (_, i) => `b${i + 1}`);
+    const loaded = loadGeneration(readFixture("behaviours"), {}, NOW, "b1");
+    const generations = many.map((id) => ({
+      ...loaded,
+      catalog: { ...loaded.catalog, bundle: id },
+    }));
+    const s = await session(fakeRuntime(generations), toolOptions("acme", many));
+    // index.md is in every bundle: the ambiguity lists 50 of the 150, then the total.
+    const ambiguous = text(await s.call("get_page", { path: "index.md" }));
+    expect(ambiguous).toMatch(
+      /^"index\.md" names more than one page: b1:index\.md \(ask for "index" with bundle "b1"\), /,
+    );
+    expect(ambiguous.match(/ with bundle "/g)).toHaveLength(50);
+    expect(ambiguous.endsWith(" … (150 pages)")).toBe(true);
+    // An unknown bundle lists 50 of the network's bundles, then the total.
+    const unknown = text(await s.call("get_page", { path: "index.md", bundle: "zz" }));
+    expect(unknown).toMatch(/^there is no bundle "zz"; the bundles are: b1, b2, /);
+    expect(unknown.endsWith(" … (150 bundles)")).toBe(true);
+    expect(unknown.split(", ")).toHaveLength(50);
+    // status with a bundle: that bundle's own shape, lists and all; without one, the rows in counts.
+    const one = await s.call("status", { bundle: "b7" });
+    expect(one.isError).not.toBe(true);
+    expect(one.structuredContent).toMatchObject({ bundle: "b7", company: "acme", source: "./b7" });
+    expect(text(one).startsWith("b7: ")).toBe(true);
+    const all = await s.call("status", {});
+    expect(JSON.stringify(all.structuredContent).length).toBeLessThanOrEqual(RESULT_BUDGET);
+    expect(text(all).length).toBeLessThanOrEqual(RESULT_BUDGET);
+    expect(all.structuredContent).toMatchObject({ bundlesTotal: 150, truncated: true });
+    const nowhere = await s.call("status", { bundle: "zz" });
+    expect(nowhere.isError).toBe(true);
+    expect(text(nowhere)).toMatch(/^there is no bundle "zz"; the bundles are: b1, /);
+    const blankBundle = await s.call("status", { bundle: " " });
+    expect(blankBundle.isError).toBe(true);
+    expect(text(blankBundle)).toMatch(/a bundle cannot be blank/);
+    const catalog = await s.call("catalog", {});
+    expect(JSON.stringify(catalog.structuredContent).length).toBeLessThanOrEqual(RESULT_BUDGET);
+    expect(text(catalog).length).toBeLessThanOrEqual(RESULT_BUDGET);
+    // Every bundle but one refused: the search header names 50 of the 149 it did not read, then the total.
+    const refusedOnes = many
+      .slice(1)
+      .map((id) => loadGeneration(readFixture("no-manifest"), {}, NOW, id));
+    const mostly = await session(
+      fakeRuntime([loadGeneration(readFixture("behaviours"), {}, NOW, "b1"), ...refusedOnes]),
+      toolOptions("acme", many),
+    );
+    const header = text(await mostly.call("search", { question: "alpha glossary" })).split("\n")[0];
+    expect(header).toMatch(/not searched: b2 \(manifest-missing\), b3 \(manifest-missing\), /);
+    expect(header?.match(/\(manifest-missing\)/g)).toHaveLength(50);
+    expect(header).toContain(" … (149 bundles)");
+    // One bundle of a network named in status keeps its own lists; a one-bundle network keeps version 0's shape.
+    const single = await session(fakeRuntime(stable), toolOptions("acme", ["b"]));
+    const same = await single.call("status", { bundle: "b" });
+    expect(same.isError).not.toBe(true);
+    expect((same.structuredContent as Record<string, unknown>).bundle).toBeUndefined();
+    expect((same.structuredContent as Record<string, unknown>).company).toBe("acme");
+  });
+
   // D39 per bundle (the fold of bite c's build reviews, C-I-A1, C-A-A1): a broken bundle is refused alone.
   const BROKEN =
     "the index could not be brought in line with this bundle's pages; it is tried again when the server restarts, and the log has the detail";

@@ -24,6 +24,7 @@ import {
   projectPage,
   projectReserved,
   projectSearch,
+  projectStatus,
   projectWalk,
   RESULT_BUDGET,
   SearchOutputSchema,
@@ -1640,5 +1641,148 @@ describe("the verification of bite b's fix pass", () => {
       ["d1.md", 2_001, 2_001],
       ["d2.md", undefined, undefined],
     ]);
+  });
+});
+
+// D82 extended to status and catalog (the fold of bite c's build reviews, C-A-A5): no answer grows with the bundle
+// count past the result budget.
+describe("the result budget beyond one bundle (D82; C-A-A5)", () => {
+  const ids = (n: number): string[] => Array.from({ length: n }, (_, i) => `b${i + 1}`);
+  const networkOf = (n: number, of: Generation = generation) => ({
+    bundles: ids(n).map((id) => ({ id, generation: of })),
+  });
+  const runtimeOf = (n: number): RuntimeStatus => ({
+    lock: "exclusive",
+    loaded: true,
+    bundles: ids(n).map((id) => ({ id, loaded: true, fatal: false })),
+  });
+  const optionsOf = (n: number) => ({
+    network: "acme",
+    bundles: ids(n).map((id) => ({
+      id,
+      source: `./knowledge/${id}`,
+      sourceKind: "local" as const,
+    })),
+    limitDefault: 8,
+    resultBudget: RESULT_BUDGET,
+  });
+
+  it("gives status beyond one bundle in counts only, its rows cut to the budget in both channels with the total", () => {
+    const out = projectStatus(networkOf(150), runtimeOf(150), optionsOf(150), NOW);
+    if (!("network" in out)) throw new Error("expected the network's shape");
+    expect(JSON.stringify(out).length).toBeLessThanOrEqual(RESULT_BUDGET);
+    const text = statusSummary(out);
+    expect(text.length).toBeLessThanOrEqual(RESULT_BUDGET);
+    expect(out.bundlesTotal).toBe(150);
+    expect(out.truncated).toBe(true);
+    expect(out.bundles.length).toBeGreaterThan(20);
+    expect(out.bundles.length).toBeLessThan(150);
+    expect(out.bundles.map((row) => row.id)).toEqual(ids(out.bundles.length));
+    // A row carries counts, never the lists a bundle's own status carries.
+    const [row] = out.bundles;
+    expect(row?.refusals).toBe(report.refusals.length);
+    expect(row?.degradations).toBe(report.degradations.length);
+    expect(row?.engine.encodedFolders).toBe(1);
+    // The network's line counts every bundle, and the text says how many rows it left out and how to read one.
+    const lines = text.split("\n");
+    expect(lines[0]).toMatch(/^network acme: 150 bundles, 150 served; lock exclusive/);
+    expect(out.summary).toBe(lines[0]);
+    expect(lines.at(-1)).toBe(
+      `and ${150 - out.bundles.length} more bundles; ask status with a bundle for one bundle's lists`,
+    );
+    expect(out.engine.documents).toBe(150 * generation.index.documents);
+    // A few bundles come whole.
+    const few = projectStatus(networkOf(3), runtimeOf(3), optionsOf(3), NOW);
+    if (!("network" in few)) throw new Error("expected the network's shape");
+    expect(few).toMatchObject({ bundlesTotal: 3, truncated: false });
+    expect(few.bundles).toHaveLength(3);
+    expect(statusSummary(few).split("\n")).toHaveLength(4);
+  });
+
+  it("gives one bundle's own status, lists and all, when status names it", () => {
+    const one = projectStatus(networkOf(150), runtimeOf(150), optionsOf(150), NOW, "b7");
+    if ("network" in one) throw new Error("expected one bundle's shape");
+    expect(one).toMatchObject({
+      bundle: "b7",
+      company: "acme",
+      source: "./knowledge/b7",
+      admitted: report.admitted,
+    });
+    expect(one.refusals.count).toBe(report.refusals.length);
+    expect(statusSummary(one).startsWith("b7: ")).toBe(true);
+    // A network of one bundle keeps version 0's shape whether or not its bundle is named.
+    const alone = statusOf(generation);
+    expect("bundle" in alone).toBe(false);
+  });
+
+  it("holds the network catalog's frame of bundle lines within the budget, saying how many more there are", () => {
+    for (const [count, budget] of [
+      [150, 10_000],
+      [1_000, RESULT_BUDGET],
+    ] as const) {
+      const { output, text } = projectNetworkCatalog(networkOf(count), "acme", budget);
+      expect(JSON.stringify(output).length, `${count}`).toBeLessThanOrEqual(budget);
+      expect(text.length, `${count}`).toBeLessThanOrEqual(budget);
+      expect(output.bundlesTotal).toBe(count);
+      expect(output.truncated).toBe(true);
+      expect(output.bundles.length).toBeLessThan(count);
+      const lines = text.split("\n");
+      expect(lines[0]).toBe(
+        `catalog of the network acme: ${count} bundles, ${count} served; ask catalog with a bundle for its folders`,
+      );
+      expect(lines).toContain(
+        `- and ${count - output.bundles.length} more bundles; ask catalog with a bundle for one`,
+      );
+      // The line that says so is server voice: it comes before the marker.
+      expect(lines.findIndex((line) => line.startsWith("- and "))).toBeLessThan(
+        lines.findIndex((line) => line.startsWith(MARKER)),
+      );
+    }
+    const few = projectNetworkCatalog(networkOf(2), "acme", RESULT_BUDGET);
+    expect(few.output.bundlesTotal).toBe(2);
+    expect(few.text).not.toMatch(/more bundles/);
+  });
+
+  // Bite b's leftovers, handed to this pass.
+  it("cuts a catalog entry's title at 2 000 characters", () => {
+    const titled = loadBundle(
+      "b",
+      [
+        {
+          path: "big/long.md",
+          bytes: Buffer.from(`---\ntype: Note\ntitle: ${"t".repeat(100_000)}\n---\n\nBody.\n`),
+        },
+      ],
+      {
+        admit: ["stable", "deprecated"],
+        dev: false,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    ).catalog;
+    const out = projectCatalog(titled, "big", 0, RESULT_BUDGET);
+    expect(out?.entries[0]?.title).toBe(`${"t".repeat(2_000)}…`);
+    expect(JSON.stringify(out).length).toBeLessThan(5_000);
+  });
+
+  it("cuts a refused path at 200 characters on the status line", () => {
+    const path = `${"p".repeat(10_000)}.md`;
+    const line = statusSummary(
+      statusOf(
+        {
+          ...generation,
+          report: {
+            ...generation.report,
+            fatal: { path, rule: "manifest-missing", detail: "no manifest.json" },
+          },
+        },
+        { lastRefusal: { rule: "symlink", path, detail: "a symbolic link" } },
+      ),
+    );
+    expect(line).toContain(`last refusal symlink ("${"p".repeat(200)}"…)`);
+    expect(line).toContain(`FATAL manifest-missing ("${"p".repeat(200)}"…)`);
+    expect(line.length).toBeLessThan(2_000);
   });
 });

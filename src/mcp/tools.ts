@@ -103,9 +103,30 @@ function valueList(values: readonly string[], noun: string): string {
 const unionOf = (catalogs: readonly Catalog[], of: (catalog: Catalog) => string[]): string[] =>
   [...new Set(catalogs.flatMap(of))].sort();
 
-/** A bundle-level refusal as the tools print it: the rule, the path when there is one, the detail. */
-const refusalText = (fatal: Refusal): string =>
-  `${safe(fatal.rule)}${fatal.path ? ` (${printed(fatal.path, "path")})` : ""}: ${safe(fatal.detail)}`;
+/** The most characters of a refusal's detail an answer prints. */
+const DETAIL_CAP = 500;
+
+/** A bundle-level refusal as the tools print it: the rule, the path when there is one, the detail, each cut. */
+function refusalText(fatal: Refusal): string {
+  const { kept, cut } = cutEscaped(safe(fatal.detail), DETAIL_CAP);
+  return `${safe(fatal.rule)}${fatal.path ? ` (${printed(fatal.path, "path", VALUE_CAP)})` : ""}: ${kept}${cut ? "…" : ""}`;
+}
+
+/**
+ * Entries of a list an answer names, at most 50, then the total, so no answer grows with the network
+ * (D82 extended; C-A-A5).
+ */
+function listed(entries: readonly string[], noun: string, separator = ", "): string {
+  const shown = entries.slice(0, LIST_CAP).join(separator);
+  return entries.length > LIST_CAP ? `${shown} … (${entries.length} ${noun})` : shown;
+}
+
+/** The network's bundles as an error names them: at most 50, then the total. */
+const bundleNames = (seen: Seen): string =>
+  listed(
+    seen.network.bundles.map((bundle) => bundle.id),
+    "bundles",
+  );
 
 /** The network as one call reads it (D72, D74): every bundle for the resolver, the served ones, the refused ones. */
 interface Seen {
@@ -147,9 +168,13 @@ function refused(seen: Seen): ToolResult | undefined {
     return fail(`the bundle was refused and nothing is served: ${refusalText(fatal)}`);
   }
   return fail(
-    `no bundle of the network is served: ${seen.refused
-      .map((bundle) => `${bundle.id}: ${refusalText(bundle.generation.report.fatal as Refusal)}`)
-      .join("; ")}`,
+    `no bundle of the network is served: ${listed(
+      seen.refused.map(
+        (bundle) => `${bundle.id}: ${refusalText(bundle.generation.report.fatal as Refusal)}`,
+      ),
+      "bundles",
+      "; ",
+    )}`,
   );
 }
 
@@ -163,9 +188,7 @@ function namedBundle(seen: Seen, bundle: string): ServedBundle | ToolResult {
 }
 
 const unknownBundle = (seen: Seen, bundle: string): ToolResult =>
-  fail(
-    `there is no bundle ${JSON.stringify(safe(bundle))}; the bundles are: ${seen.network.bundles.map((b) => b.id).join(", ")}`,
-  );
+  fail(`there is no bundle ${listedValue(safe(bundle))}; the bundles are: ${bundleNames(seen)}`);
 
 /** A named bundle that serves nothing: still loading (the first-load deadline, D75), or refused and why. */
 const refusedBundle = (bundle: string, fatal: Refusal): ToolResult =>
@@ -220,25 +243,27 @@ function resolveName(seen: Seen, value: string, bundle: string | undefined): Fou
   if (resolution.ok) return resolution.found;
   switch (resolution.reason) {
     case "ambiguous":
+      // At most 50 candidates, then the total; each path and name cut at 200 characters (C-A-A5).
       return fail(
-        `${JSON.stringify(safe(resolution.name))} names more than one page: ${resolution.candidates
-          .map((c) => {
+        `${listedValue(safe(resolution.name))} names more than one page: ${listed(
+          resolution.candidates.map((c) => {
             const where = seen.prefixed ? ` with bundle ${JSON.stringify(c.bundle)}` : "";
             const ask =
               c.ask === undefined
                 ? `no name reaches it alone${seen.prefixed ? ` in bundle ${c.bundle}` : ""}`
-                : `ask for ${JSON.stringify(safe(c.ask))}${where}`;
-            return `${located(c.path, lineBundle(seen, c.bundle).bundle)} (${ask})`;
-          })
-          .join(", ")}`,
+                : `ask for ${listedValue(safe(c.ask))}${where}`;
+            return `${located(c.path, lineBundle(seen, c.bundle).bundle, VALUE_CAP)} (${ask})`;
+          }),
+          "pages",
+        )}`,
       );
     case "not-found": {
       const read = resolution.bundle ?? bundle;
       const inBundle = seen.prefixed && read !== undefined ? ` in bundle ${read}` : "";
       return fail(
-        `no page at ${JSON.stringify(safe(resolution.name))}${inBundle}; the nearest served paths are: ${
+        `no page at ${listedValue(safe(resolution.name))}${inBundle}; the nearest served paths are: ${
           resolution.nearest
-            .map((near) => located(near.path, lineBundle(seen, near.bundle).bundle))
+            .map((near) => located(near.path, lineBundle(seen, near.bundle).bundle, VALUE_CAP))
             .join(", ") || "(none)"
         }`,
       );
@@ -286,6 +311,14 @@ export function registerTools(
   clock: () => Date,
   log?: Log,
 ): void {
+  /** `status` of the network, or of the bundle named: an unknown bundle is an error; a refused one is reported. */
+  const statusAnswer = (seen: Seen, bundle: string | undefined): ToolResult => {
+    if (bundle !== undefined && !seen.network.bundles.some((served) => served.id === bundle))
+      return unknownBundle(seen, bundle);
+    const output = projectStatus(seen.network, runtime.status(), options, clock(), bundle);
+    return ok(statusSummary(output), output);
+  };
+
   const guarded =
     <A>(
       tool: string,
@@ -637,7 +670,7 @@ export function registerTools(
       } else if (!seen.prefixed) target = seen.served[0] as ServedBundle;
       else
         return fail(
-          `a folder names a place in one bundle; pass the bundle too (the bundles are: ${seen.network.bundles.map((b) => b.id).join(", ")})`,
+          `a folder names a place in one bundle; pass the bundle too (the bundles are: ${bundleNames(seen)})`,
         );
       const catalog = target.generation.catalog;
       const folder = normaliseFolder(args.folder ?? "");
@@ -669,25 +702,27 @@ export function registerTools(
     {
       title: "Report the network's state",
       description: describeType(
-        "Reports what was loaded: for one bundle, counts of pages admitted, refused and degraded, the lists the report carries, the integrity mode, the manifest's commit and publish time, the root index's okf_version, the engine's counts and the lock; when the server serves more than one bundle, the network's lock and a row of those facts per bundle, with its source and why it is refused when it is. Nothing in it is page text.",
+        "Reports what was loaded: for one bundle, counts of pages admitted, refused and degraded, the lists the report carries, the integrity mode, the manifest's commit and publish time, the root index's okf_version, the engine's counts and the lock. When the server serves more than one bundle: without a bundle, the network's lock and a row per bundle in counts (how it stands, its source, why it is refused when it is), as many rows as the result holds, then how many more; with a bundle, that bundle's own report, lists and all. Nothing in it is page text.",
       ),
-      inputSchema: z.strictObject({}),
+      inputSchema: z.strictObject({
+        bundle: bundleId()
+          .optional()
+          .describe(
+            "The bundle whose own report to give, lists and all, when the server serves more than one; omit it for the network's rows. A blank one is refused.",
+          ),
+      }),
       outputSchema: StatusOutputSchema,
       annotations: { readOnlyHint: true },
     },
     guarded(
       "status",
-      (_args, seen) => {
-        const output = projectStatus(seen.network, runtime.status(), options, clock());
-        return ok(statusSummary(output), output);
-      },
+      (args, seen) => statusAnswer(seen, blank(args.bundle)),
       // Beyond one bundle, status answers while the network refuses: a row per bundle and the network's sentence
       // (C-I-C1); a network of one bundle refuses as version 0 did (D74).
-      () => {
+      (args) => {
         const network = runtime.snapshot();
         if (network.bundles.length < 2) return undefined;
-        const output = projectStatus(network, runtime.status(), options, clock());
-        return ok(statusSummary(output), output);
+        return statusAnswer(see(network), blank(args.bundle));
       },
     ),
   );

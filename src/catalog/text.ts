@@ -346,7 +346,7 @@ export function networkBundleLine(row: {
     const refusal = row.refusal;
     if (refusal !== null && RUNTIME_STATES.has(refusal.rule))
       return `- bundle ${row.bundle}: ${refusal.rule}`;
-    return `- bundle ${row.bundle}: refused${refusal === null ? "" : `, ${safe(refusal.rule)}${refusal.path ? ` (${printed(refusal.path, "path")})` : ""}`}`;
+    return `- bundle ${row.bundle}: refused${refusal === null ? "" : `, ${safe(refusal.rule)}${refusal.path ? ` (${printed(refusal.path, "path", HEADER_CAP)})` : ""}`}`;
   }
   return `- bundle ${row.bundle}: ${row.pages} page${row.pages === 1 ? "" : "s"}, root index (${row.index?.source ?? "generated"})`;
 }
@@ -369,6 +369,9 @@ export function reservedHeader(
   const path = folder === "" ? `${kind}.md` : `${folder}/${kind}.md`;
   return `${located(path, bundle)} [reserved ${kind}, ${source}]`;
 }
+
+/** The most bundles a line names before it gives their total (D82 extended; C-A-A5). */
+export const LISTED_BUNDLES = 50;
 
 /** A bundle a search did not read, and why: the rule of what it serves instead (D75; D39 per bundle). */
 export interface NotSearched {
@@ -412,9 +415,15 @@ export function searchHeader(
   if (dev === true) parts.push("development mode: drafts and unknown statuses admitted");
   else if (Array.isArray(dev) && dev.length > 0)
     parts.push(`development mode in ${dev.join(", ")}: drafts and unknown statuses admitted there`);
+  // At most 50 named, then the total, so the header never grows with the network (D82 extended; C-A-A5).
   if (notSearched.length > 0)
     parts.push(
-      `not searched: ${notSearched.map((entry) => `${entry.bundle} (${safe(entry.reason)})`).join(", ")}`,
+      `not searched: ${notSearched
+        .slice(0, LISTED_BUNDLES)
+        .map((entry) => `${entry.bundle} (${safe(entry.reason)})`)
+        .join(
+          ", ",
+        )}${notSearched.length > LISTED_BUNDLES ? ` … (${notSearched.length} bundles)` : ""}`,
     );
   parts.push("snippets are page text, quoted");
   return parts.join("; ");

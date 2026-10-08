@@ -28,6 +28,7 @@ import {
 import {
   citationsHeader,
   claimLine,
+  cutEscaped,
   DATA_SENTENCE,
   derivationLine,
   hitLine,
@@ -270,6 +271,8 @@ const RefusalSchema = z.strictObject({ rule: z.string(), path: z.string(), detai
 export const CatalogNetworkOutputSchema = z.strictObject({
   network: z.string(),
   summary: z.string(),
+  /** How many bundles the network holds; `bundles` may carry fewer, its frame held to half the result budget. */
+  bundlesTotal: z.number(),
   bundles: z.array(
     z.strictObject({
       bundle: z.string(),
@@ -297,7 +300,7 @@ export const CatalogToolOutputSchema = z.union([CatalogOutputSchema, CatalogNetw
 const list = <T extends z.ZodTypeAny>(item: T) =>
   z.strictObject({ count: z.number(), first: z.array(item) });
 
-/** The facts of one bundle's state that `status` carries in either shape. */
+/** The facts of one bundle's state that are not lists, which `status` carries in either shape. */
 const bundleStatusFields = {
   commit: z.string().nullable(),
   /** When what the bundle serves was loaded; null when it serves nothing of its own load (its first load failed or has not landed, or its index is broken). */
@@ -310,17 +313,7 @@ const bundleStatusFields = {
   hidden: z.number(),
   /** Served pages past their recheck date at the time of the call (intent §6). */
   overdue: z.number(),
-  refusals: list(z.strictObject({ path: z.string(), rule: z.string(), detail: z.string() })),
-  degradations: list(z.strictObject({ path: z.string(), code: z.string(), field: z.string() })),
-  unknownTypes: list(z.string()),
-  unknownStatuses: list(z.strictObject({ path: z.string(), value: z.string() })),
-  /** The admission list's words, other than the known statuses, that no page carries (D77). */
-  unmatchedAdmits: list(z.string()),
-  brokenLinks: list(z.strictObject({ from: z.string(), raw: z.string() })),
-  linksToUnserved: list(z.strictObject({ from: z.string(), raw: z.string(), target: z.string() })),
-  foldersWithoutIndex: list(z.string()),
-  missingOnDisk: list(z.string()),
-  /** The bundle-level refusal, when the bundle is refused. */
+  /** The bundle-level refusal, when the bundle is refused; its path and detail cut at 2 000 characters. */
   fatal: RefusalSchema.nullable(),
   /** The fetched commit of the published branch and when it was fetched; null for a local source. */
   published: z.strictObject({ commit: z.string(), fetchedAt: z.string() }).nullable(),
@@ -348,6 +341,34 @@ const bundleStatusFields = {
   /** The root index's `okf_version`, when it declares one (D74). */
   okfVersion: z.string().nullable(),
 };
+/** The report's lists in one bundle's status: each its count and its first 50 entries. */
+const bundleStatusLists = {
+  refusals: list(z.strictObject({ path: z.string(), rule: z.string(), detail: z.string() })),
+  degradations: list(z.strictObject({ path: z.string(), code: z.string(), field: z.string() })),
+  unknownTypes: list(z.string()),
+  unknownStatuses: list(z.strictObject({ path: z.string(), value: z.string() })),
+  /** The admission list's words, other than the known statuses, that no page carries (D77). */
+  unmatchedAdmits: list(z.string()),
+  brokenLinks: list(z.strictObject({ from: z.string(), raw: z.string() })),
+  linksToUnserved: list(z.strictObject({ from: z.string(), raw: z.string(), target: z.string() })),
+  foldersWithoutIndex: list(z.string()),
+  missingOnDisk: list(z.string()),
+};
+/**
+ * The same lists as counts alone, in a row of the network's status: `status` with the bundle gives its lists, so
+ * that a row's size never grows with what a bundle reports (D82 extended; C-A-A5).
+ */
+const bundleStatusCounts = {
+  refusals: z.number(),
+  degradations: z.number(),
+  unknownTypes: z.number(),
+  unknownStatuses: z.number(),
+  unmatchedAdmits: z.number(),
+  brokenLinks: z.number(),
+  linksToUnserved: z.number(),
+  foldersWithoutIndex: z.number(),
+  missingOnDisk: z.number(),
+};
 const engineCounts = {
   documents: z.number(),
   notIndexed: z.number(),
@@ -363,11 +384,17 @@ const lockFields = {
   refusing: z.string().nullable(),
 };
 
-/** `status` of a network of one bundle: version 0's shape, its company the network's name, plus `publishedAt` and `okfVersion` (D74). */
+/**
+ * `status` of a network of one bundle: version 0's shape, its company the network's name, plus `publishedAt` and
+ * `okfVersion` (D74); and `status` with a bundle beyond one bundle, the same shape for that bundle, naming it.
+ */
 export const BundleStatusOutputSchema = z.strictObject({
+  /** The bundle `status` was asked for, when the network holds more than one. */
+  bundle: z.string().optional(),
   company: z.string(),
   source: z.string(),
   ...bundleStatusFields,
+  ...bundleStatusLists,
   engine: z.strictObject({ ...engineCounts, resetOnOpen: z.string().nullable() }),
   ...lockFields,
 });
@@ -376,21 +403,36 @@ export type BundleStatusOutput = z.infer<typeof BundleStatusOutputSchema>;
 /** How a bundle stands: served, refused by the loader, or one of the runtime's own states (D75; D39 per bundle). */
 const ServingStateSchema = z.enum(["serving", "refused", "load-failed", "index-broken", "loading"]);
 
-/** `status` beyond one bundle (D74): the network's lock and refusal, and a row per bundle. */
+/**
+ * `status` beyond one bundle (D74): the network's lock and refusal, and a row per bundle in counts, the rows cut in
+ * the configuration's order to the result budget, in both channels, with the total (D82 extended; C-A-A5).
+ */
 export const NetworkStatusOutputSchema = z.strictObject({
   network: z.string(),
+  /** The network's line: its bundles counted by how they stand, its lock, and its refusal. */
+  summary: z.string(),
   bundles: z.array(
     z.strictObject({
       id: z.string(),
       /** How the bundle stands: serving, refused, load-failed, index-broken or loading. */
       state: ServingStateSchema,
       sourceKind: z.enum(["local", "git"]),
-      /** The source as written in the configuration, never a cache path. */
+      /** The source as written in the configuration, never a cache path; cut at 2 000 characters. */
       source: z.string(),
       ...bundleStatusFields,
-      engine: z.strictObject(engineCounts),
+      ...bundleStatusCounts,
+      engine: z.strictObject({
+        documents: z.number(),
+        notIndexed: z.number(),
+        collisions: z.number(),
+        encodedFolders: z.number(),
+      }),
     }),
   ),
+  /** How many bundles the network holds; `bundles` may carry fewer. */
+  bundlesTotal: z.number(),
+  /** Rows were left out to hold the result budget. */
+  truncated: z.boolean(),
   /** The network's store: every bundle's documents, and why it was rebuilt at open when it was (D48). */
   engine: z.strictObject({ documents: z.number(), resetOnOpen: z.string().nullable() }),
   ...lockFields,
@@ -934,7 +976,8 @@ export function projectCatalog(
     const description = page?.description ?? null;
     return {
       path,
-      title: page?.title ?? path,
+      // A title is of any length the page wrote: cut as a row's values are (bite b's verification).
+      title: capField(page?.title ?? path),
       description:
         description !== null && description.length > ENTRY_DESCRIPTION_CAP
           ? `${description.slice(0, ENTRY_DESCRIPTION_CAP)}…`
@@ -988,15 +1031,20 @@ const capped = <T>(items: readonly T[]): { count: number; first: T[] } => ({
   first: items.slice(0, STATUS_LIST_CAP),
 });
 
-/** What the status projection reads of the runtime: the network's lock and refusal, and the bundle's attempts and poller. */
-/** The facts of one bundle's state, in either shape of `status` (D74). */
+/** One bundle's facts in its own status: the scalars, the report's lists, and its part of the engine. */
+type BundleFacts = Omit<
+  BundleStatusOutput,
+  "bundle" | "company" | "source" | "engine" | "lock" | "lockOwner" | "refusing"
+> & {
+  engine: Omit<BundleStatusOutput["engine"], "resetOnOpen">;
+};
+
+/** The facts of one bundle's state, in either shape of `status` (D74); every value it holds cut at 2 000 characters. */
 function bundleFacts(
   generation: Generation,
   runtime: BundleRuntimeStatus | undefined,
   now: Date,
-): Omit<BundleStatusOutput, "company" | "source" | "engine" | "lock" | "lockOwner" | "refusing"> & {
-  engine: Omit<BundleStatusOutput["engine"], "resetOnOpen">;
-} {
+): BundleFacts {
   const r = generation.report;
   let overdue = 0;
   for (const page of generation.catalog.pages.values()) {
@@ -1029,7 +1077,7 @@ function bundleFacts(
     fatal:
       r.fatal === undefined
         ? null
-        : { rule: r.fatal.rule, path: r.fatal.path, detail: r.fatal.detail },
+        : { rule: r.fatal.rule, path: capField(r.fatal.path), detail: capField(r.fatal.detail) },
     engine: {
       documents: generation.index.documents,
       notIndexed: generation.index.notIndexed.length,
@@ -1060,9 +1108,9 @@ function bundleFacts(
         ? null
         : {
             commit: runtime.lastRefusal.commit ?? null,
-            rule: safe(runtime.lastRefusal.rule),
-            path: safe(runtime.lastRefusal.path),
-            detail: safe(runtime.lastRefusal.detail),
+            rule: capField(safe(runtime.lastRefusal.rule)),
+            path: capField(safe(runtime.lastRefusal.path)),
+            detail: capField(safe(runtime.lastRefusal.detail)),
           },
     publishedAt: r.publishedAt ?? null,
     okfVersion: generation.catalog.okfVersion ?? null,
@@ -1089,13 +1137,15 @@ const optionOf = (options: ToolOptions, id: string): BundleOption =>
 
 /**
  * `status` of a network of one bundle: version 0's shape, so the runbook and its scripts keep working, its company
- * the network's name, plus the manifest's `publishedAt` and the root index's `okfVersion` (D74).
+ * the network's name, plus the manifest's `publishedAt` and the root index's `okfVersion` (D74). `named` is the same
+ * shape for one bundle of a larger network, asked for by name: it says which bundle it is.
  */
 export function projectBundleStatus(
   served: ServedBundle,
   runtime: RuntimeStatus,
   options: ToolOptions,
   now: Date,
+  named = false,
 ): BundleStatusOutput {
   const facts = bundleFacts(
     served.generation,
@@ -1103,8 +1153,9 @@ export function projectBundleStatus(
     now,
   );
   return BundleStatusOutputSchema.parse({
+    ...(named ? { bundle: served.id } : {}),
     company: options.network,
-    source: optionOf(options, served.id).source,
+    source: capField(optionOf(options, served.id).source),
     ...facts,
     engine: {
       ...facts.engine,
@@ -1114,47 +1165,114 @@ export function projectBundleStatus(
   });
 }
 
-/** `status` beyond one bundle (D74): the network, its lock and refusal, and a row per bundle in the configuration's order. */
+type NetworkRow = NetworkStatusOutput["bundles"][number];
+
+/** A bundle's row in the network's status: its own facts, each list given as its count (C-A-A5). */
+function networkRow(
+  served: ServedBundle,
+  runtime: RuntimeStatus,
+  options: ToolOptions,
+  now: Date,
+): NetworkRow {
+  const option = optionOf(options, served.id);
+  const facts = bundleFacts(
+    served.generation,
+    runtime.bundles.find((bundle) => bundle.id === served.id),
+    now,
+  );
+  return {
+    id: served.id,
+    state: servingStateOf(served.generation),
+    sourceKind: option.sourceKind,
+    source: capField(option.source),
+    ...facts,
+    refusals: facts.refusals.count,
+    degradations: facts.degradations.count,
+    unknownTypes: facts.unknownTypes.count,
+    unknownStatuses: facts.unknownStatuses.count,
+    unmatchedAdmits: facts.unmatchedAdmits.count,
+    brokenLinks: facts.brokenLinks.count,
+    linksToUnserved: facts.linksToUnserved.count,
+    foldersWithoutIndex: facts.foldersWithoutIndex.count,
+    missingOnDisk: facts.missingOnDisk.count,
+    engine: { ...facts.engine, encodedFolders: facts.engine.encodedFolders.count },
+  };
+}
+
+/**
+ * `status` beyond one bundle (D74): the network, its lock and refusal, and a row per bundle in the configuration's
+ * order, in counts; the rows cut, from the end, to the result budget in both channels, with the total (D82 extended;
+ * C-A-A5). `status` with a bundle gives that bundle's lists.
+ */
 export function projectNetworkStatus(
   network: Network,
   runtime: RuntimeStatus,
   options: ToolOptions,
   now: Date,
 ): NetworkStatusOutput {
-  const bundles = network.bundles.map((served) => {
-    const option = optionOf(options, served.id);
-    return {
-      id: served.id,
-      state: servingStateOf(served.generation),
-      sourceKind: option.sourceKind,
-      source: option.source,
-      ...bundleFacts(
-        served.generation,
-        runtime.bundles.find((bundle) => bundle.id === served.id),
-        now,
-      ),
-    };
-  });
-  return NetworkStatusOutputSchema.parse({
+  const rows = network.bundles.map((served) => networkRow(served, runtime, options, now));
+  const lock = lockFacts(runtime);
+  const resetOnOpen = runtime.resetOnOpen === undefined ? null : safe(runtime.resetOnOpen);
+  // The bundles served, then how many stand each other way, in the order the rows first show it.
+  const standings = new Map<ServingState, number>();
+  for (const row of rows)
+    if (row.state !== "serving") standings.set(row.state, (standings.get(row.state) ?? 0) + 1);
+  const served = rows.filter((row) => row.state === "serving").length;
+  const summary = [
+    `network ${options.network}: ${n(rows.length, "bundle")}, ${served} served${[...standings].map(([state, count]) => `, ${count} ${state}`).join("")}`,
+    lockPart(lock),
+    ...(resetOnOpen === null ? [] : [`engine store rebuilt at open: ${resetOnOpen}`]),
+    ...(lock.refusing === null ? [] : [`refusing: ${safe(lock.refusing)}`]),
+  ].join("; ");
+  const build = (count: number): NetworkStatusOutput => ({
     network: options.network,
-    bundles,
-    engine: {
-      documents: bundles.reduce((sum, row) => sum + row.engine.documents, 0),
-      resetOnOpen: runtime.resetOnOpen === undefined ? null : safe(runtime.resetOnOpen),
-    },
-    ...lockFacts(runtime),
+    summary,
+    bundles: rows.slice(0, count),
+    bundlesTotal: rows.length,
+    truncated: count < rows.length,
+    engine: { documents: rows.reduce((sum, row) => sum + row.engine.documents, 0), resetOnOpen },
+    ...lock,
   });
+  const fits = (count: number): boolean => {
+    const output = build(count);
+    return (
+      JSON.stringify(output).length <= options.resultBudget &&
+      statusSummary(output).length <= options.resultBudget
+    );
+  };
+  let kept = rows.length;
+  if (!fits(kept)) {
+    let low = 0;
+    let high = rows.length - 1;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (fits(mid)) low = mid;
+      else high = mid - 1;
+    }
+    kept = low;
+  }
+  return NetworkStatusOutputSchema.parse(build(kept));
 }
 
-/** `status` in the network's shape: today's for one bundle, a row per bundle beyond (D74). */
+/**
+ * `status` in the network's shape: today's for one bundle, a row per bundle beyond (D74); with `bundle`, that
+ * bundle's own shape, which names it beyond one bundle. The bundle must be one of the network's.
+ */
 export function projectStatus(
   network: Network,
   runtime: RuntimeStatus,
   options: ToolOptions,
   now: Date,
+  bundle?: string,
 ): StatusOutput {
+  const many = network.bundles.length > 1;
+  if (bundle !== undefined) {
+    const named = network.bundles.find((served) => served.id === bundle);
+    if (named === undefined) throw new Error(`no bundle ${JSON.stringify(bundle)} in this network`);
+    return projectBundleStatus(named, runtime, options, now, many);
+  }
   const [only] = network.bundles;
-  return only !== undefined && network.bundles.length === 1
+  return only !== undefined && !many
     ? projectBundleStatus(only, runtime, options, now)
     : projectNetworkStatus(network, runtime, options, now);
 }
@@ -1163,12 +1281,44 @@ export function projectStatus(
 const n = (count: number, one: string, many = `${one}s`): string =>
   `${count} ${count === 1 ? one : many}`;
 
-type BundleLine = Omit<
+/** A list as a status line counts it: a count alone (a network's row) or its count and first entries. */
+type Countable = number | { count: number };
+const count = (value: Countable): number => (typeof value === "number" ? value : value.count);
+
+/** What a status line reads of a bundle, in either shape. */
+type BundleLine = Pick<
   BundleStatusOutput,
-  "company" | "source" | "lock" | "lockOwner" | "refusing" | "engine"
+  | "admitted"
+  | "excludedByStatus"
+  | "overdue"
+  | "integrity"
+  | "loadedAt"
+  | "published"
+  | "poller"
+  | "lastAttempt"
+  | "lastRefusal"
+  | "fatal"
 > & {
-  engine: Omit<BundleStatusOutput["engine"], "resetOnOpen"> & { resetOnOpen?: string | null };
+  [K in keyof typeof bundleStatusCounts]: Countable;
+} & {
+  engine: {
+    documents: number;
+    notIndexed: number;
+    collisions: number;
+    resetOnOpen?: string | null;
+  };
 };
+
+/** Characters of a refusal's path a status line prints, its escapes counted, as a page header prints a path. */
+const STATUS_PATH_CAP = 200;
+/** Characters of a refusal's detail a status line prints. */
+const STATUS_DETAIL_CAP = 500;
+
+/** A refusal's detail as a status line prints it: made safe and cut. */
+function detailText(detail: string): string {
+  const { kept, cut } = cutEscaped(safe(detail), STATUS_DETAIL_CAP);
+  return `${kept}${cut ? "…" : ""}`;
+}
 
 /** The poller of a bundle on a status line, when it has one. */
 const pollerParts = (out: Pick<BundleLine, "poller">): string[] =>
@@ -1183,10 +1333,11 @@ function attemptParts(out: Pick<BundleLine, "lastAttempt" | "lastRefusal">): str
   const parts: string[] = [];
   if (out.lastAttempt !== null)
     parts.push(`last attempt ${out.lastAttempt.outcome} at ${out.lastAttempt.at}`);
-  // A refused path is printed by the path kind, bare only when plain, so it can add no fact to the line (P13).
+  // A refused path is printed by the path kind, bare only when plain and cut at 200 characters, so it can add no
+  // fact to the line (P13) and no length (bite b's verification).
   if (out.lastRefusal !== null)
     parts.push(
-      `last refusal ${out.lastRefusal.commit === null ? "" : `${out.lastRefusal.commit.slice(0, 12)} `}${out.lastRefusal.rule}${out.lastRefusal.path ? ` (${printed(out.lastRefusal.path, "path")})` : ""}`,
+      `last refusal ${out.lastRefusal.commit === null ? "" : `${out.lastRefusal.commit.slice(0, 12)} `}${out.lastRefusal.rule}${out.lastRefusal.path ? ` (${printed(out.lastRefusal.path, "path", STATUS_PATH_CAP)})` : ""}`,
     );
   return parts;
 }
@@ -1194,7 +1345,7 @@ function attemptParts(out: Pick<BundleLine, "lastAttempt" | "lastRefusal">): str
 /** The facts of one bundle on a status line, in version 0's order; `lock` goes where the line names the lock. */
 function bundleParts(name: string, out: BundleLine, lock?: string): string[] {
   const parts = [
-    `${name}: ${out.admitted} pages admitted, ${out.excludedByStatus} excluded by status, ${n(out.overdue, "overdue page")}, ${n(out.refusals.count, "refusal")}, ${n(out.degradations.count, "degradation")}`,
+    `${name}: ${out.admitted} pages admitted, ${out.excludedByStatus} excluded by status, ${n(out.overdue, "overdue page")}, ${n(count(out.refusals), "refusal")}, ${n(count(out.degradations), "degradation")}`,
     `integrity ${out.integrity}`,
     `${out.engine.documents} documents indexed, ${out.engine.notIndexed} not indexed, ${n(out.engine.collisions, "collision")}`,
     ...(lock === undefined ? [] : [lock]),
@@ -1206,12 +1357,12 @@ function bundleParts(name: string, out: BundleLine, lock?: string): string[] {
     ...(out.engine.resetOnOpen === undefined || out.engine.resetOnOpen === null
       ? []
       : [`engine store rebuilt at open: ${out.engine.resetOnOpen}`]),
-    `${n(out.unknownTypes.count, "unknown type")}, ${n(out.unknownStatuses.count, "unknown status", "unknown statuses")}, ${n(out.brokenLinks.count, "broken link")}, ${n(out.linksToUnserved.count, "link to an unserved page", "links to an unserved page")}, ${n(out.foldersWithoutIndex.count, "folder without an index", "folders without an index")}, ${n(out.missingOnDisk.count, "manifest entry missing on disk", "manifest entries missing on disk")}, ${n(out.unmatchedAdmits.count, "admitted status that matches no page", "admitted statuses that match no page")}`,
+    `${n(count(out.unknownTypes), "unknown type")}, ${n(count(out.unknownStatuses), "unknown status", "unknown statuses")}, ${n(count(out.brokenLinks), "broken link")}, ${n(count(out.linksToUnserved), "link to an unserved page", "links to an unserved page")}, ${n(count(out.foldersWithoutIndex), "folder without an index", "folders without an index")}, ${n(count(out.missingOnDisk), "manifest entry missing on disk", "manifest entries missing on disk")}, ${n(count(out.unmatchedAdmits), "admitted status that matches no page", "admitted statuses that match no page")}`,
     ...attemptParts(out),
   ];
   if (out.fatal !== null) {
     parts.push(
-      `FATAL ${safe(out.fatal.rule)}${out.fatal.path ? ` (${printed(out.fatal.path, "path")})` : ""}: ${safe(out.fatal.detail)}`,
+      `FATAL ${safe(out.fatal.rule)}${out.fatal.path ? ` (${printed(out.fatal.path, "path", STATUS_PATH_CAP)})` : ""}: ${detailText(out.fatal.detail)}`,
     );
   }
   return parts;
@@ -1228,7 +1379,7 @@ const standingParts = (
     state: ServingState;
   },
 ): string[] => [
-  `${row.id}: ${row.state}: ${safe(row.fatal?.detail ?? "")}`,
+  `${row.id}: ${row.state}: ${detailText(row.fatal?.detail ?? "")}`,
   ...pollerParts(row),
   ...attemptParts(row),
 ];
@@ -1243,34 +1394,28 @@ const lockPart = (out: Pick<BundleStatusOutput, "lock" | "lockOwner">): string =
 
 /**
  * The `status` text block: for one bundle, version 0's one line (the counts, the engine, the lock, the last attempt,
- * the report's lists as counts); beyond one bundle, the network's line, then a line per bundle starting with its id.
+ * the report's lists as counts), led by the bundle's id when status named one of a larger network; beyond one
+ * bundle, the network's line, then a line per row starting with its id, then how many rows were left out.
  */
 export function statusSummary(out: StatusOutput): string {
   if ("network" in out) {
-    // The bundles served, then how many stand each other way, in the order the rows first show it.
-    const standings = new Map<ServingState, number>();
-    for (const row of out.bundles)
-      if (row.state !== "serving") standings.set(row.state, (standings.get(row.state) ?? 0) + 1);
-    const served = out.bundles.filter((row) => row.state === "serving").length;
-    const head = [
-      `network ${out.network}: ${n(out.bundles.length, "bundle")}, ${served} served${[...standings].map(([state, count]) => `, ${count} ${state}`).join("")}`,
-      lockPart(out),
-      ...(out.engine.resetOnOpen === null
-        ? []
-        : [`engine store rebuilt at open: ${out.engine.resetOnOpen}`]),
-      ...(out.refusing === null ? [] : [`refusing: ${safe(out.refusing)}`]),
-    ].join("; ");
+    const left = out.bundlesTotal - out.bundles.length;
     return [
-      head,
+      out.summary,
       ...out.bundles.map((row) =>
         (row.state === "serving" || row.state === "refused"
           ? bundleParts(row.id, row)
           : standingParts(row)
         ).join("; "),
       ),
+      ...(left > 0
+        ? [
+            `and ${n(left, "more bundle", "more bundles")}; ask status with a bundle for one bundle's lists`,
+          ]
+        : []),
     ].join("\n");
   }
-  const parts = bundleParts(out.company, out, lockPart(out));
+  const parts = bundleParts(out.bundle ?? out.company, out, lockPart(out));
   if (out.refusing !== null) parts.push(`refusing: ${safe(out.refusing)}`);
   return parts.join("; ");
 }
@@ -1304,8 +1449,9 @@ function fitIndex(
 /**
  * `catalog` with no bundle beyond one bundle (D74): the bundles in the configuration's order, each served one with
  * its page count and its root index, each refused one with its refusal; server-voice lines first, then the marker,
- * then each root index's text, quoted on one line, every index cut to an equal share of what the frame leaves, in
- * both channels, and the result says it was cut.
+ * then each root index's text, quoted on one line. The frame of bundle lines takes at most half the budget, in both
+ * channels: past it, the bundles left out are counted and the result says so (D82 extended; C-A-A5); the root
+ * indexes of the bundles shown share what the frame leaves equally, each cut to its share, and the result says so.
  */
 export function projectNetworkCatalog(
   network: Network,
@@ -1320,18 +1466,25 @@ export function projectNetworkCatalog(
       served: fatal === undefined,
       pages: served.generation.catalog.pages.size,
       refusal:
-        fatal === undefined ? null : { rule: fatal.rule, path: fatal.path, detail: fatal.detail },
+        fatal === undefined
+          ? null
+          : { rule: fatal.rule, path: capField(fatal.path), detail: capField(fatal.detail) },
       body: fatal === undefined ? (root?.index?.body ?? "") : undefined,
       source: root?.indexSource ?? "generated",
     };
   });
   const servedCount = rows.filter((row) => row.served).length;
   const summary = `catalog of the network ${name}: ${n(rows.length, "bundle")}, ${servedCount} served; ask catalog with a bundle for its folders`;
-  const build = (indexes: Map<string, { text: string; truncated: boolean }>) => {
+  const build = (
+    shown: typeof rows,
+    indexes: Map<string, { text: string; truncated: boolean }>,
+  ) => {
+    const left = rows.length - shown.length;
     const output: CatalogNetworkOutput = {
       network: name,
       summary,
-      bundles: rows.map((row) => {
+      bundlesTotal: rows.length,
+      bundles: shown.map((row) => {
         const index = indexes.get(row.bundle);
         return {
           bundle: row.bundle,
@@ -1345,11 +1498,14 @@ export function projectNetworkCatalog(
         };
       }),
       notice: NOTICE,
-      truncated: [...indexes.values()].some((index) => index.truncated),
+      truncated: left > 0 || [...indexes.values()].some((index) => index.truncated),
     };
     const lines = [
       summary,
       ...output.bundles.map((row) => networkBundleLine(row)),
+      ...(left > 0
+        ? [`- and ${n(left, "more bundle", "more bundles")}; ask catalog with a bundle for one`]
+        : []),
       NOTICE,
       ...output.bundles.flatMap((row) =>
         row.index === null ? [] : [rootIndexLine(row.bundle, row.index.text, row.index.truncated)],
@@ -1357,23 +1513,40 @@ export function projectNetworkCatalog(
     ];
     return { output, text: lines.join("\n") };
   };
-  const empty = new Map(
-    rows
-      .filter((row) => row.body !== undefined)
-      .map((row) => [row.bundle, { text: "", truncated: (row.body ?? "").length > 0 }]),
-  );
-  const frame = build(empty);
-  const room = Math.max(
-    0,
-    budget - Math.max(JSON.stringify(frame.output).length, frame.text.length),
-  );
-  const share = Math.floor(room / Math.max(1, empty.size));
+  /** The frame of the first `count` bundles: their lines with every index empty, measured in both channels. */
+  const frameOf = (count: number) => {
+    const shown = rows.slice(0, count);
+    const empty = new Map(
+      shown
+        .filter((row) => row.body !== undefined)
+        .map((row) => [row.bundle, { text: "", truncated: (row.body ?? "").length > 0 }]),
+    );
+    const frame = build(shown, empty);
+    return {
+      shown,
+      empty,
+      size: Math.max(JSON.stringify(frame.output).length, frame.text.length),
+    };
+  };
+  let frame = frameOf(rows.length);
+  if (frame.size > budget / 2) {
+    let low = 0;
+    let high = rows.length - 1;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (frameOf(mid).size <= budget / 2) low = mid;
+      else high = mid - 1;
+    }
+    frame = frameOf(low);
+  }
+  const room = Math.max(0, budget - frame.size);
+  const share = Math.floor(room / Math.max(1, frame.empty.size));
   const indexes = new Map(
-    rows
+    frame.shown
       .filter((row) => row.body !== undefined)
       .map((row) => [row.bundle, fitIndex(row.bundle, row.body ?? "", share)]),
   );
-  const { output, text } = build(indexes);
+  const { output, text } = build(frame.shown, indexes);
   return { output: CatalogNetworkOutputSchema.parse(output), text };
 }
 
