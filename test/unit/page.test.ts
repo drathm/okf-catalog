@@ -499,6 +499,11 @@ describe("parsePage: the contract fields and the page window (R2, R3)", () => {
       ["runtime: [bigquery, dbt]", undefined],
       // A parameter whose name is blank has no name (build review A-B7).
       ['parameters:\n  - { name: "  ", type: integer }', { parameters: [] }],
+      // A mapping with none of the keys the specification gives it is reported too (build review I-A3).
+      ["attester: { path: attesters/check.py }", undefined],
+      ["attester: {}", undefined],
+      ["executor: { resources: run.md }", undefined],
+      ["executor: {}", undefined],
     ];
     for (const [yaml, contract] of cases) {
       const r = inline("x.md", `---\ntype: T\ntitle: T\ndescription: D\n${yaml}\n---\n`);

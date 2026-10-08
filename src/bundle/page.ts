@@ -562,6 +562,13 @@ function readContract(
         else ignored("executor.receipt", executor.receipt, "a list");
       }
       if (Object.keys(kept).length > 0) contract.executor = kept;
+      // A mapping with neither key the text gives it is ignored, and says so (build review I-A3).
+      if (!present(executor.resource) && !present(executor.receipt))
+        degrade(
+          "field-ignored",
+          "executor",
+          "executor has neither a resource nor a receipt; ignored",
+        );
     }
   }
 
@@ -572,7 +579,7 @@ function readContract(
       if (typeof attester.resource === "string")
         contract.attester = { resource: attester.resource };
       else ignored("attester.resource", attester.resource, "text");
-    }
+    } else degrade("field-ignored", "attester", "attester has no resource; ignored");
   }
 
   return Object.keys(contract).length > 0 ? contract : undefined;
