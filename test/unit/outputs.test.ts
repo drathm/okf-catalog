@@ -1785,4 +1785,27 @@ describe("the result budget beyond one bundle (D82; C-A-A5)", () => {
     expect(line).toContain(`FATAL manifest-missing ("${"p".repeat(200)}"…)`);
     expect(line.length).toBeLessThan(2_000);
   });
+
+  // The root index's okf_version is page text of any length: a row cuts it as its other values, so one bundle's
+  // root index cannot push every row out of the network's status.
+  it("cuts a bundle's okf_version at 2 000 characters in every shape of status", () => {
+    const version = `0.${"9".repeat(100_000)}`;
+    const long: Generation = { ...generation, catalog: { ...catalog, okfVersion: version } };
+    const cut = `${version.slice(0, 2_000)}…`;
+    const three = {
+      bundles: [
+        { id: "b1", generation: long },
+        { id: "b2", generation },
+        { id: "b3", generation },
+      ],
+    };
+    const out = projectStatus(three, runtimeOf(3), optionsOf(3), NOW);
+    if (!("network" in out)) throw new Error("expected the network's shape");
+    expect(out).toMatchObject({ bundlesTotal: 3, truncated: false });
+    expect(out.bundles.map((row) => row.okfVersion)).toEqual([cut, "0.2", "0.2"]);
+    const named = projectStatus(three, runtimeOf(3), optionsOf(3), NOW, "b1");
+    if ("network" in named) throw new Error("expected one bundle's shape");
+    expect(named.okfVersion).toBe(cut);
+    expect(statusOf(long).okfVersion).toBe(cut);
+  });
 });

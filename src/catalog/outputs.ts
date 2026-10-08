@@ -1039,7 +1039,10 @@ type BundleFacts = Omit<
   engine: Omit<BundleStatusOutput["engine"], "resetOnOpen">;
 };
 
-/** The facts of one bundle's state, in either shape of `status` (D74); every value it holds cut at 2 000 characters. */
+/**
+ * The facts of one bundle's state, in either shape of `status` (D74): every value outside the report's lists cut at
+ * 2 000 characters; the lists keep their first 50 entries, as version 0's status did.
+ */
 function bundleFacts(
   generation: Generation,
   runtime: BundleRuntimeStatus | undefined,
@@ -1113,7 +1116,9 @@ function bundleFacts(
             detail: capField(safe(runtime.lastRefusal.detail)),
           },
     publishedAt: r.publishedAt ?? null,
-    okfVersion: generation.catalog.okfVersion ?? null,
+    // The root index's own text, of any length: cut as the row's other values are.
+    okfVersion:
+      generation.catalog.okfVersion === undefined ? null : capField(generation.catalog.okfVersion),
   };
 }
 
