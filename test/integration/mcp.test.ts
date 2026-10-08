@@ -844,7 +844,8 @@ describe("get_page and the concept id (R7)", () => {
     );
     // The path's description promises a name of its own only where there is one (the fix pass's verification).
     const getPage = (await c.client.listTools()).tools.find((t) => t.name === "get_page");
-    const path = (getPage?.inputSchema.properties as Record<string, { description?: string }>).path;
+    if (getPage === undefined) throw new Error("get_page is not listed");
+    const path = (getPage.inputSchema.properties as Record<string, { description?: string }>).path;
     expect(path?.description).toMatch(
       /names each page, with a name that means it alone where there is one\.$/,
     );
