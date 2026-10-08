@@ -693,11 +693,12 @@ const jsonRoomOf = (frame: PageOutput, budget: number): number =>
     .length;
 
 /**
- * A page as `get_page` returns it, the whole result within the budget in both channels (D82): the provenance
- * takes at most half, its latest 20 verifications then its sources cut in order with their totals, every value cut
- * at 2 000 characters, and at 200 when the provenance would not fit its half otherwise; the header names at most
- * ten of the sources the provenance kept, within a quarter in both channels; the body takes the rest, the longest
- * cut that fits both channels, and says where to continue.
+ * A page as `get_page` returns it, the whole result within the budget in both channels (D82): the provenance keeps
+ * its lists within half, its latest 20 verifications then its sources cut in order with their totals, every value
+ * cut at 2 000 characters, and at 200 when the provenance would not fit its half otherwise (typed fields near their
+ * own cap and values that escaping lengthens sixfold can still pass it, and the body then takes less); the header
+ * names at most ten of the sources the provenance kept, within a quarter in both channels; the body takes the rest,
+ * the longest cut that fits both channels, and says where to continue.
  */
 export function projectPage(
   page: Page,
@@ -708,7 +709,8 @@ export function projectPage(
 ): PageOutput {
   const half = Math.floor(budget / 2);
   let projected = projectProvenance(page, now, FIELD_CAP);
-  // Many values at the field cap at once: each is cut again, to what a header prints, so the half holds.
+  // Many values at the field cap at once: each is cut again, to what a header prints, so the half holds but for
+  // typed fields near their own cap and values that escaping lengthens sixfold, which the body then makes room for.
   if (listless(projected) > half) projected = projectProvenance(page, now, HEADER_FIELD_CAP);
   const provenance = fitProvenance(projected, half);
   const citation = headerWithin(
