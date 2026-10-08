@@ -97,9 +97,10 @@ describe("citationsOf", () => {
     ]);
     expect(cited.claims).toEqual([]);
     expect(cited.inboundDerivations).toEqual([
-      { from: "uses/policy-resource.md", field: "resource", kind: "concept" },
+      { from: "uses/policy-resource.md", status: "stable", field: "resource", kind: "concept" },
       {
         from: "uses/policy-user.md",
+        status: "stable",
         field: "sources[0].resource",
         kind: "concept",
         author: "team:ops",
@@ -110,7 +111,13 @@ describe("citationsOf", () => {
     ]);
     // An ambiguous source that names this concept is an inbound derivation and says so.
     expect(citationsOf(catalog, pageOf(catalog, "foo.md.md")).inboundDerivations).toEqual([
-      { from: "uses/ambiguous.md", field: "sources[0].resource", kind: "ambiguous", usageCount: 2 },
+      {
+        from: "uses/ambiguous.md",
+        status: "stable",
+        field: "sources[0].resource",
+        kind: "ambiguous",
+        usageCount: 2,
+      },
     ]);
   });
 
@@ -151,8 +158,8 @@ describe("citationsOf", () => {
     ]);
     // An inbound body link and an inbound source both name the pointing page; an index entry is no mention.
     expect(cited.inboundMentions).toEqual([
-      { from: "other.md", text: "the page" },
-      { from: "page.md", text: "self", heading: "Links" },
+      { from: "other.md", status: "stable", text: "the page" },
+      { from: "page.md", status: "stable", text: "self", heading: "Links" },
     ]);
     expect(cited.inboundDerivations.map((d) => d.from)).toEqual(["sourcing.md"]);
   });
@@ -386,6 +393,50 @@ describe("walkProvenance", () => {
     expect(walk.nodes[0]?.sourcesTotal).toBe(60);
     expect(walk.nodes[0]?.edges).toHaveLength(50);
     expect(walk.nodes).toHaveLength(51);
+  });
+
+  it("carries each entered page's status and each inbound row's, so a draft or a deprecated page says so (bite b's build review B-A-E5)", () => {
+    // The adversarial reviewer's bundle, in development mode, where a draft is served and labelled.
+    const files = {
+      "a.md": note(
+        sources("{ resource: drafts/plan.md }", "{ resource: old.md }"),
+        "See [the plan](drafts/plan.md).\n",
+      ),
+      "drafts/plan.md": note(
+        `status: draft\n${sources("{ resource: https://x.test/p }")}`,
+        "Cites [a](../a.md).\n",
+      ),
+      "old.md": note(
+        `status: deprecated\n${sources("{ resource: a.md }")}`,
+        "Replaced by [a](a.md).\n",
+      ),
+    };
+    const dev = loadBundle(
+      "b",
+      Object.entries(files).map(([path, text]) => ({ path, bytes: Buffer.from(text) })),
+      {
+        admit: ["stable", "deprecated"],
+        dev: true,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    ).catalog;
+    const walk = walkProvenance(dev, pageOf(dev, "a.md"), 4, NOW);
+    expect(walk.nodes.map((n) => [n.path, n.status])).toEqual([
+      ["a.md", "stable"],
+      ["drafts/plan.md", "draft"],
+      ["old.md", "deprecated"],
+    ]);
+    const cited = citationsOf(dev, pageOf(dev, "a.md"));
+    expect(cited.inboundMentions.map((m) => [m.from, m.status])).toEqual([
+      ["drafts/plan.md", "draft"],
+      ["old.md", "deprecated"],
+    ]);
+    expect(cited.inboundDerivations.map((d) => [d.from, d.status])).toEqual([
+      ["old.md", "deprecated"],
+    ]);
   });
 
   it("follows the specification's own example: four edges, two concepts entered once each", () => {

@@ -556,7 +556,11 @@ describe("the result budget (D82)", () => {
         target: `m${i}.md`,
         text: longText(`mention ${i}`, 100),
       })),
-      inboundMentions: sixty((i) => ({ from: `in${i}.md`, text: longText(`inbound ${i}`, 100) })),
+      inboundMentions: sixty((i) => ({
+        from: `in${i}.md`,
+        status: "stable",
+        text: longText(`inbound ${i}`, 100),
+      })),
       claims: sixty((i) => ({
         footnote: `f${i}`,
         block: longText(`claim ${i}`, 500),
@@ -571,6 +575,7 @@ describe("the result budget (D82)", () => {
       unjoined: sixty((i) => ({ footnote: `u${i}`, block: `Unjoined ${i}.` })),
       inboundDerivations: sixty((i) => ({
         from: `d${i}.md`,
+        status: "stable",
         field: "sources[0].resource",
         kind: "concept" as const,
       })),
@@ -671,6 +676,7 @@ describe("the result budget (D82)", () => {
       path: `n${String(i).padStart(3, "0")}.md`,
       level: i === 0 ? 0 : 1,
       ...(i === 0 ? {} : { parent: "n000.md" }),
+      status: "stable",
       trust: "unverified",
       sourcesTotal: 50,
       truncated: false,
@@ -870,6 +876,7 @@ describe("the result budget (D82)", () => {
             {
               path: "a.md",
               level: 0,
+              status: "stable",
               trust: "unverified",
               sourcesTotal: 1,
               truncated: false,
@@ -1040,6 +1047,7 @@ describe("row caps and list shares (bite b's build reviews B-I-A3, B-A-A2, B-I-E
       })),
       inboundMentions: rows(50, (i) => ({
         from: `in${i}.md`,
+        status: "stable",
         text: `inbound ${i} ${long("y", 480)}`,
         heading: long("g", 480),
       })),
@@ -1054,6 +1062,7 @@ describe("row caps and list shares (bite b's build reviews B-I-A3, B-A-A2, B-I-E
       unjoined: [],
       inboundDerivations: rows(5, (i) => ({
         from: `d${i}.md`,
+        status: "stable",
         field: "sources[0].resource",
         kind: "concept" as const,
       })),

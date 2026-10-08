@@ -26,7 +26,7 @@ import {
 } from "../catalog/outputs.js";
 import { type Found, resolvePageName } from "../catalog/resolve.js";
 import type { Generation, Runtime, ToolOptions } from "../catalog/runtime.js";
-import { cutEscaped, DATA_SENTENCE, safe } from "../catalog/text.js";
+import { cutEscaped, DATA_SENTENCE, printed, safe } from "../catalog/text.js";
 import type { Log } from "../log.js";
 import type { Engine } from "../search/engine.js";
 import { search } from "../search/search.js";
@@ -94,7 +94,7 @@ function refused(generation: Generation): ToolResult | undefined {
   const fatal = generation.report.fatal;
   if (fatal === undefined) return undefined;
   return fail(
-    `the bundle was refused and nothing is served: ${safe(fatal.rule)}${fatal.path ? ` (${safe(fatal.path)})` : ""}: ${safe(fatal.detail)}`,
+    `the bundle was refused and nothing is served: ${safe(fatal.rule)}${fatal.path ? ` (${printed(fatal.path, "path")})` : ""}: ${safe(fatal.detail)}`,
   );
 }
 
@@ -133,13 +133,13 @@ function resolveName(generation: Generation, value: string): Found | ToolResult 
         `${JSON.stringify(safe(resolution.name))} names more than one page: ${resolution.candidates
           .map(
             (c) =>
-              `${safe(c.path)} (${c.ask === undefined ? "no name reaches it alone" : `ask for ${JSON.stringify(safe(c.ask))}`})`,
+              `${printed(c.path, "path")} (${c.ask === undefined ? "no name reaches it alone" : `ask for ${JSON.stringify(safe(c.ask))}`})`,
           )
           .join(", ")}`,
       );
     case "not-found":
       return fail(
-        `no page at ${JSON.stringify(safe(resolution.name))}; the nearest served paths are: ${resolution.nearest.map(safe).join(", ") || "(none)"}`,
+        `no page at ${JSON.stringify(safe(resolution.name))}; the nearest served paths are: ${resolution.nearest.map((path) => printed(path, "path")).join(", ") || "(none)"}`,
       );
     case "unknown-bundle":
     case "refused-bundle":
@@ -487,7 +487,7 @@ export function registerTools(
         output.truncated && output.nextOffset !== undefined
           ? `\n[truncated at the result budget; continue with offset ${output.nextOffset}]`
           : "";
-      const head = `catalog of ${folder === "" ? "the bundle root" : safe(folder)} (${output.source} index, ${output.entries.length} pages)`;
+      const head = `catalog of ${folder === "" ? "the bundle root" : printed(folder, "path")} (${output.source} index, ${output.entries.length} pages)`;
       return ok(`${head}\n${output.notice}\n${output.text}${tail}`, output);
     }),
   );

@@ -74,10 +74,12 @@ export function recheckPhrase(
   cap: number = Number.POSITIVE_INFINITY,
 ): string {
   if (recheck === undefined) return "no recheck date";
-  // A date that does not parse is any text the company wrote; one that parses is plain and stays bare.
+  // A date that does not parse is any text the company wrote, quoted however plain, so it can close no
+  // parenthesis and add no fact (bite b's build reviews B-I-A4, B-A-A5); one that parses stays bare when plain.
+  if (recheck.form === "unparseable")
+    return `recheck date unparseable (${quotedCut(recheck.raw, cap)})`;
   const raw = plainOrQuoted(recheck.raw, cap);
   if (recheck.overdue) return `overdue since ${raw}`;
-  if (recheck.form === "unparseable") return `recheck date unparseable (${raw})`;
   return `recheck ${raw}`;
 }
 
@@ -86,7 +88,7 @@ function deprecationSuffix(
   replacement: string | undefined,
   cap: number = Number.POSITIVE_INFINITY,
 ): string {
-  if (replacement !== undefined) return ` replaced by ${capped(replacement, cap)}`;
+  if (replacement !== undefined) return ` replaced by ${printed(replacement, "path", cap)}`;
   if (status === "deprecated") return " deprecated, no replacement";
   return "";
 }
@@ -153,9 +155,31 @@ const fact = (word: string, vouched: boolean, cap = Number.POSITIVE_INFINITY): s
 const plainOrQuoted = (text: string, cap = Number.POSITIVE_INFINITY): string =>
   fact(text, true, cap);
 
-/** A path in a server line: as it is within the cap, else quoted and cut, as a long value is. */
-const capped = (path: string, cap: number): string =>
-  path.length <= cap ? safe(path) : quotedCut(path, cap);
+/**
+ * The kinds of page-written value a server line prints bare when the value is plain for its kind: a path (letters,
+ * digits, `_ - . /` and single spaces inside), a word (letters, digits, `_ -`), a title (anything but a bracket, a
+ * quotation mark, a backslash or a control character). P13 generalised (bite b's build review B-A-A8; the title
+ * kind, bite a's verification).
+ */
+export type ValueKind = "path" | "word" | "title";
+
+const PLAIN: Record<ValueKind, (value: string) => boolean> = {
+  path: (value) => /^[\p{L}\p{N}_./-]+(?: [\p{L}\p{N}_./-]+)*$/u.test(value),
+  word: (value) => /^[\p{L}\p{N}_-]+$/u.test(value),
+  title: (value) => value.length > 0 && !/[[\]"\\]/.test(value) && escapeControls(value) === value,
+};
+
+/**
+ * A page-written value in a server line: bare when it is plain for its kind and within `cap` characters, otherwise
+ * quoted as `quoted` quotes and cut at `cap`, its escapes counted, so it reads as one value and can add no fact.
+ */
+export function printed(
+  value: string,
+  kind: ValueKind,
+  cap: number = Number.POSITIVE_INFINITY,
+): string {
+  return PLAIN[kind](value) && value.length <= cap ? safe(value) : quotedCut(value, cap);
+}
 
 /** What a line needs to know about the bundle beyond the page: the types the company did not declare. */
 export interface LineOptions {
@@ -199,7 +223,7 @@ export function hitLine(
     ...(hit.resource === undefined ? [] : [`resource: ${plainOrQuoted(hit.resource)}`]),
   ].join(", ");
   const snippetPart = snippet === undefined || snippet.length === 0 ? "" : ` ${quoted(snippet)}`;
-  return `${safe(hit.path)} — ${safe(hit.title)} [${facts}]${snippetPart}${deprecationSuffix(hit.status, hit.replacement)}`;
+  return `${printed(hit.path, "path")} — ${printed(hit.title, "title")} [${facts}]${snippetPart}${deprecationSuffix(hit.status, hit.replacement)}`;
 }
 
 const instant = (v: Verification): number =>
@@ -278,7 +302,7 @@ export function pageHeader(page: Page, now: Date, options: HeaderOptions = {}): 
       ? []
       : [`resource: ${plainOrQuoted(page.resource, HEADER_CAP)}`]),
   ].join(", ");
-  return `${capped(page.path, HEADER_CAP)} [${facts}]${deprecationSuffix(page.status, page.replacement, HEADER_CAP)}`;
+  return `${printed(page.path, "path", HEADER_CAP)} [${facts}]${deprecationSuffix(page.status, page.replacement, HEADER_CAP)}`;
 }
 
 /** The header of a reserved file served through `get_page`. */
@@ -288,7 +312,7 @@ export function reservedHeader(
   folder: string,
 ): string {
   const path = folder === "" ? `${kind}.md` : `${folder}/${kind}.md`;
-  return `${safe(path)} [reserved ${kind}, ${source}]`;
+  return `${printed(path, "path")} [reserved ${kind}, ${source}]`;
 }
 
 /** The first line of a search result: counts, the terms as they were used, and what was left out. */
@@ -336,6 +360,9 @@ const ROW_CAP = 500;
 
 /** A page-written value in a row: quoted, escaped and cut at the row cap. */
 const rowQuoted = (text: string): string => quotedCut(text, ROW_CAP);
+
+/** A path in a row: bare when plain for a path and within the row cap, else quoted (B-A-A8). */
+const rowPath = (path: string): string => printed(path, "path", ROW_CAP);
 
 const under = (heading: string | undefined): string =>
   heading === undefined ? "" : ` under ${rowQuoted(heading)}`;
@@ -402,16 +429,17 @@ export function mentionLine(mention: {
   text: string;
   heading?: string | undefined;
 }): string {
-  const where = mention.target === undefined ? rowQuoted(mention.raw) : safe(mention.target);
+  const where = mention.target === undefined ? rowQuoted(mention.raw) : rowPath(mention.target);
   return `- ${mention.kind} ${where}: ${rowQuoted(mention.text)}${under(mention.heading)}`;
 }
 
 export function inboundMentionLine(mention: {
   from: string;
+  status: string;
   text: string;
   heading?: string | undefined;
 }): string {
-  return `- from ${safe(mention.from)}: ${rowQuoted(mention.text)}${under(mention.heading)}`;
+  return `- from ${rowPath(mention.from)} [${statusFact(mention.status, ROW_CAP)}]: ${rowQuoted(mention.text)}${under(mention.heading)}`;
 }
 
 export function claimLine(claim: {
@@ -449,11 +477,11 @@ export function unjoinedLine(footnote: {
 }
 
 export function derivationLine(
-  derivation: { from: string; field: string; kind: string } & SourceFields,
+  derivation: { from: string; status: string; field: string; kind: string } & SourceFields,
 ): string {
   const how =
     derivation.kind === "ambiguous" ? "ambiguous, naming this page and another" : "names this page";
-  return `- from ${safe(derivation.from)}, ${safe(derivation.field)} ${how}${sourceSignals(derivation)}`;
+  return `- from ${rowPath(derivation.from)} [${statusFact(derivation.status, ROW_CAP)}], ${safe(derivation.field)} ${how}${sourceSignals(derivation)}`;
 }
 
 /** A list's heading after the marker: its name and total, and how many rows the result shows when that is fewer. */
@@ -478,7 +506,7 @@ export function citationsHeader(summary: {
 }): string {
   const t = summary.totals;
   const parts = [
-    `citations of ${safe(summary.path)}: ${[
+    `citations of ${printed(summary.path, "path")}: ${[
       counted(t.mentions, "mention"),
       counted(t.inboundMentions, "inbound mention"),
       counted(t.claims, "claim"),
@@ -507,6 +535,7 @@ export function walkNodeLine(
     path: string;
     level: number;
     parent?: string | undefined;
+    status: string;
     trust: string;
     recheck?: Recheck | undefined;
     usageWindow?: { from: string; to: string } | { omitted: string } | undefined;
@@ -516,14 +545,16 @@ export function walkNodeLine(
   listCap: number,
 ): string {
   const facts = [
-    node.parent === undefined ? "start" : `level ${node.level}, from ${safe(node.parent)}`,
+    node.parent === undefined ? "start" : `level ${node.level}, from ${rowPath(node.parent)}`,
+    // A draft entered in development mode, or a deprecated page, says so (bite b's build review B-A-E5).
+    statusFact(node.status, ROW_CAP),
     node.trust,
     recheckPhrase(node.recheck, ROW_CAP),
     `${sourceCount(node.sourcesTotal)}${node.sourcesTotal > listCap ? `, the first ${listCap} listed` : ""}`,
     ...(node.usageWindow === undefined ? [] : [pageWindowPhrase(node.usageWindow)]),
     ...(node.truncated ? ["the depth stops this branch"] : []),
   ];
-  return `${safe(node.path)} [${facts.join(", ")}]`;
+  return `${rowPath(node.path)} [${facts.join(", ")}]`;
 }
 
 const WALK_PHRASES: Record<string, string> = {
@@ -547,12 +578,12 @@ export function walkEdgeLine(
     walk?: string | undefined;
   } & SourceFields,
 ): string {
-  const target = edge.target === undefined ? "" : safe(edge.target);
+  const target = edge.target === undefined ? "" : rowPath(edge.target);
   const names: Record<string, string> = {
     url: "a URL, not fetched",
     scope: "a scope",
     unresolved: "nothing in the bundle",
-    ambiguous: `ambiguous: ${(edge.candidates ?? []).map(safe).join(" or ")}`,
+    ambiguous: `ambiguous: ${(edge.candidates ?? []).map(rowPath).join(" or ")}`,
     concept: `the page ${target}`,
     reserved: `the reserved file ${target}`,
     attachment: `the attachment ${target}, not opened`,
@@ -581,7 +612,7 @@ export function provenanceHeader(summary: {
   truncated: boolean;
 }): string {
   const parts = [
-    `provenance of ${safe(summary.path)} to depth ${summary.depth}: ${counted(summary.nodesTotal, "page")} in the walk, ${counted(summary.nodesTotal - 1, "concept")} entered`,
+    `provenance of ${printed(summary.path, "path")} to depth ${summary.depth}: ${counted(summary.nodesTotal, "page")} in the walk, ${counted(summary.nodesTotal - 1, "concept")} entered`,
   ];
   if (summary.branchesStopped) parts.push("some branches stop at the depth");
   if (summary.capped) parts.push("capped: the walk entered its 200 concepts and entered no more");

@@ -1,5 +1,5 @@
 import type { Report } from "../bundle/model.js";
-import { escapeControls } from "../catalog/text.js";
+import { escapeControls, printed } from "../catalog/text.js";
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`;
 
@@ -31,7 +31,9 @@ export function renderReport(report: Report): string {
     );
   }
   if (report.unknownTypes.length > 0)
-    lines.push(`Undeclared types: ${report.unknownTypes.join(", ")}`);
+    lines.push(
+      `Undeclared types: ${report.unknownTypes.map((t) => printed(t, "word")).join(", ")}`,
+    );
   if (report.unknownStatuses.length > 0) {
     lines.push(
       `Unknown statuses: ${report.unknownStatuses.map((s) => `${s.path} (${s.value})`).join(", ")}`,

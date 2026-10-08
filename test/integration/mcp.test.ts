@@ -199,7 +199,8 @@ describe("search", () => {
     // A recheck date that does not parse is never overdue, so fresh keeps the page.
     const eta = await s.call("search", { question: "eta", freshness: "fresh" });
     expect(text(eta)).toContain("terms/eta.md");
-    expect(text(eta)).toContain("recheck date unparseable (soon)");
+    // Quoted however plain, since it is the company's own text (bite b's build review B-I-A4).
+    expect(text(eta)).toContain('recheck date unparseable ("soon")');
     for (const args of [
       { question: "x".repeat(201) },
       { question: "alpha", limit: 0 },
@@ -865,6 +866,34 @@ describe("get_page and the concept id (R7)", () => {
     expect(text(miss)).toMatch(
       /^no page at "guides\/b"; the nearest served paths are: guides\/a\.md/,
     );
+  });
+});
+
+describe("paths in the errors of the three name-taking tools (bite b's build review B-A-A8)", () => {
+  it("prints a path plain for its kind bare and any other quoted, in the ambiguity and not-found errors", async () => {
+    const page = (title: string) =>
+      Buffer.from(`---\ntype: Guide\ntitle: ${title}\nstatus: stable\n---\n\nThe body.\n`);
+    const generation = loadGeneration(
+      [
+        { path: "x; y.md", bytes: page("Odd") },
+        { path: "x; y.md.md", bytes: page("Odd twice") },
+        { path: "plain.md", bytes: page("Plain") },
+      ],
+      { integrity: "none" },
+      NOW,
+    );
+    const s = await session(fakeRuntime(generation));
+    for (const tool of ["get_page", "citations", "provenance"]) {
+      const both = await s.call(tool, { path: "x; y.md" });
+      expect(both.isError, tool).toBe(true);
+      expect(text(both), tool).toBe(
+        '"x; y.md" names more than one page: "x; y.md" (ask for "x; y"), "x; y.md.md" (ask for "x; y.md.md")',
+      );
+      const miss = await s.call(tool, { path: "x; z.md" });
+      expect(text(miss), tool).toBe(
+        'no page at "x; z.md"; the nearest served paths are: "x; y.md", "x; y.md.md", index.md',
+      );
+    }
   });
 });
 

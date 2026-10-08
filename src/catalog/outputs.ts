@@ -341,7 +341,13 @@ export const CitationsOutputSchema = z.strictObject({
     }),
   ),
   inboundMentions: cappedList(
-    z.strictObject({ from: z.string(), text: z.string(), heading: z.string().optional() }),
+    z.strictObject({
+      from: z.string(),
+      /** The pointing page's status (bite b's build review B-A-E5). */
+      status: Status,
+      text: z.string(),
+      heading: z.string().optional(),
+    }),
   ),
   claims: cappedList(
     z.strictObject({
@@ -360,6 +366,8 @@ export const CitationsOutputSchema = z.strictObject({
   inboundDerivations: cappedList(
     z.strictObject({
       from: z.string(),
+      /** The deriving page's status (B-A-E5). */
+      status: Status,
       field: z.string(),
       kind: z.enum(["concept", "ambiguous"]),
       author: z.string().optional(),
@@ -409,6 +417,8 @@ export const ProvenanceOutputSchema = z.strictObject({
       path: z.string(),
       level: z.number(),
       parent: z.string().optional(),
+      /** The page's status: a draft in development mode, or a deprecated page, says so (B-A-E5). */
+      status: Status,
       trust: Trust,
       recheck: z.strictObject({ raw: z.string(), form: Form, overdue: z.boolean() }).optional(),
       /** The page's shared window, once: its edges whose source inherits it name it (D62). */

@@ -38,6 +38,8 @@ export interface Mention {
 
 export interface InboundMention {
   from: PagePath;
+  /** The pointing page's status, so a draft served in development mode or a deprecated page says so. */
+  status: string;
   text: string;
   heading?: string;
 }
@@ -82,6 +84,8 @@ export interface Unjoined {
  */
 export interface Derivation {
   from: PagePath;
+  /** The deriving page's status, as an inbound mention carries it. */
+  status: string;
   field: string;
   kind: "concept" | "ambiguous";
   author?: string;
@@ -150,8 +154,11 @@ export function citationsOf(catalog: Catalog, page: Page): Citations {
     if (link.target !== undefined) mention.target = link.target;
     return withHeading(mention, link.heading);
   });
+  // An inbound row names its page's status (bite b's build review B-A-E5); the page is admitted, so it is there.
+  const statusOf = (path: PagePath): string => catalog.pages.get(path)?.status ?? "stable";
   const inboundMentions = (catalog.graph.inboundMentions.get(page.path) ?? []).map(
-    ({ from, link }): InboundMention => withHeading({ from, text: link.text }, link.heading),
+    ({ from, link }): InboundMention =>
+      withHeading({ from, status: statusOf(from), text: link.text }, link.heading),
   );
   const byId = new Map<string, number[]>();
   page.sources.forEach((source, i) => {
@@ -213,6 +220,7 @@ export function citationsOf(catalog: Catalog, page: Page): Citations {
     ({ from, edge }): Derivation => {
       const derivation: Derivation = {
         from,
+        status: statusOf(from),
         field: edge.field,
         kind: edge.kind === "ambiguous" ? "ambiguous" : "concept",
       };
@@ -268,6 +276,8 @@ export interface WalkNode {
   level: number;
   /** The page whose edge entered this one; absent for the start page. */
   parent?: PagePath;
+  /** The page's status: a draft entered in development mode, or a deprecated page, says so (B-A-E5). */
+  status: string;
   trust: Trust;
   recheck?: { raw: string; form: StaleAfter["form"]; overdue: boolean };
   /** The page's shared window, once: its edges whose source inherits it name it. */
@@ -343,6 +353,7 @@ export function walkProvenance(catalog: Catalog, start: Page, depth: number, now
     const node: WalkNode = {
       path: page.path,
       level,
+      status: page.status,
       trust: page.trust,
       sourcesTotal: page.sources.length,
       truncated: false,
