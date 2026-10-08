@@ -336,9 +336,21 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
               `sources[${i}].usage_count is ${kindOf(count)}, not a number; ignored`,
             );
           if (typeof entry.last_modified === "string") source.lastModified = entry.last_modified;
+          // An own window that is not a from-to mapping is reported, and the source then takes no window at all: the
+          // page's would frame a count its producer framed otherwise (§5.1, D62).
           const w = entry.usage_window;
           if (isRecord(w) && typeof w.from === "string" && typeof w.to === "string")
             source.usageWindow = { from: w.from, to: w.to };
+          else if (w !== undefined && w !== null) {
+            source.usageWindowIgnored = true;
+            degrade(
+              "source-malformed",
+              "sources",
+              isRecord(w)
+                ? `sources[${i}].usage_window lacks a from or a to written as a date; ignored, and the source does not take the page's window`
+                : `sources[${i}].usage_window is ${kindOf(w)}, not a mapping of from and to; ignored, and the source does not take the page's window`,
+            );
+          }
           sources.push(source);
         } else {
           degrade("source-malformed", "sources", `sources[${i}] has no resource; ignored`);

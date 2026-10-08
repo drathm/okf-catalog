@@ -27,7 +27,7 @@ export interface Provenance {
   latestVerification?: { by: string; at?: string };
   staleAfter?: { raw: string; form: StaleAfter["form"]; overdue: boolean };
   /** Each source as written, with the window that frames its count, computed here and never stored (D62). */
-  sources: Array<Source & { effectiveWindow?: EffectiveWindow }>;
+  sources: Array<Omit<Source, "usageWindowIgnored"> & { effectiveWindow?: EffectiveWindow }>;
   /** The page's shared window, kept apart from the frontmatter so it survives that object's omission. */
   usageWindow?: UsageWindow;
   /** The contract fields (§10.2), typed, for a page of any type. */
@@ -52,13 +52,15 @@ const asWritten = (v: { by: string; at?: { raw: string } }): { by: string; at?: 
 /**
  * The one inheritance rule for a source's usage window (§5.1, D62): the entry's own window when it carries one,
  * else `{ inherited: true }` when the page has a shared `usage_window`, whose dates the reader takes from the page;
- * none when neither exists. Computed when a page is projected; the stored sources are never given a copy.
+ * none when neither exists, and none for an entry whose own window was malformed, which overrode the page's.
+ * Computed when a page is projected; the stored sources are never given a copy.
  */
 export function effectiveWindow(
   source: Source,
   pageWindow: UsageWindow | undefined,
 ): EffectiveWindow | undefined {
   if (source.usageWindow !== undefined) return { ...source.usageWindow, inherited: false };
+  if (source.usageWindowIgnored === true) return undefined;
   if (pageWindow !== undefined) return { inherited: true };
   return undefined;
 }
@@ -73,10 +75,11 @@ export function provenanceOf(page: Page, now: Date): Provenance {
     trust: page.trust,
     verified: page.verified.map(asWritten),
     sources: page.sources.map((s) => {
+      const { usageWindowIgnored: _ignored, ...entry } = s;
       const window = effectiveWindow(s, page.usageWindow);
       return window === undefined
-        ? structuredClone(s)
-        : { ...structuredClone(s), effectiveWindow: window };
+        ? structuredClone(entry)
+        : { ...structuredClone(entry), effectiveWindow: window };
     }),
     frontmatter: structuredClone(page.frontmatter),
   };

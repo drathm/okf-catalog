@@ -524,6 +524,43 @@ describe("parsePage: the contract fields and the page window (R2, R3)", () => {
     }
     expect(page("terms/alpha.md").usageWindow).toEqual({ from: "2000-01-01", to: "2000-01-31" });
   });
+
+  it("reports a source's own usage_window that is not a from-to mapping, and the source takes no window (build review I-A1, A-A5)", () => {
+    const withSourceWindow = (value: string) =>
+      inline(
+        "x.md",
+        `---\ntype: T\ntitle: T\ndescription: D\nusage_window: { from: 2026-06-01, to: 2026-06-30 }\nsources:\n  - resource: https://x.test/own\n    usage_count: 7\n    usage_window: ${value}\n  - resource: https://x.test/none\n    usage_count: 3\n---\n`,
+      );
+    for (const value of ["{ from: 2025-01-01 }", "2025", "[a, b]", "{ from: 1, to: 2 }"]) {
+      const r = withSourceWindow(value);
+      if (!r.ok) throw new Error(`${value}: refused ${r.refusal.rule}`);
+      // The source wrote a window of its own: its count is not framed by the page's, which it did not ask for.
+      expect(r.page.sources, value).toEqual([
+        { resource: "https://x.test/own", usageCount: 7, usageWindowIgnored: true },
+        { resource: "https://x.test/none", usageCount: 3 },
+      ]);
+      expect(r.page.degradations, value).toEqual([
+        expect.objectContaining({
+          code: "source-malformed",
+          field: "sources",
+          detail: expect.stringContaining("sources[0].usage_window"),
+        }),
+      ]);
+    }
+    // A well-formed own window is kept; a key with no value is no window, and inherits as before.
+    const own = withSourceWindow("{ from: 2025-01-01, to: 2025-12-31 }");
+    if (!own.ok) throw new Error(own.refusal.rule);
+    expect(own.page.sources[0]).toEqual({
+      resource: "https://x.test/own",
+      usageCount: 7,
+      usageWindow: { from: "2025-01-01", to: "2025-12-31" },
+    });
+    expect(own.page.degradations).toEqual([]);
+    const none = withSourceWindow("null");
+    if (!none.ok) throw new Error(none.refusal.rule);
+    expect(none.page.sources[0]).toEqual({ resource: "https://x.test/own", usageCount: 7 });
+    expect(none.page.degradations).toEqual([]);
+  });
 });
 
 // R4, R5, R6: a usage count that is not a number, and the two OKF 0.1 fallbacks (§13.1; D63, D79).

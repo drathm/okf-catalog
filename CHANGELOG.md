@@ -31,7 +31,7 @@ The work of 0.2.0: the readiness fixes cut from issues 2 and 3, the readiness le
 
 ### Fixed
 
-- A source's `usage_count` that is not a number (a string, a list, a mapping) was dropped without a word; it is now reported `source-malformed`, as a non-finite number already was, and the source is kept.
+- A source's `usage_count` that is not a number (a string, a list, a mapping) was dropped without a word; it is now reported `source-malformed`, as a non-finite number already was, and the source is kept. A source's own `usage_window` that is not a mapping of `from` and `to` was dropped the same way; it is now reported `source-malformed`, and that source takes no window, never the page's, since its producer framed its count otherwise.
 
 ## [0.1.3] - 2026-10-07
 
