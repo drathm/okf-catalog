@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { DEFAULT_CAPS, type LoadOptions } from "../../src/bundle/model.js";
-import type { Generation } from "../../src/catalog/runtime.js";
+import type { Network } from "../../src/catalog/runtime.js";
 import { renderDocument } from "../../src/engine/qmd-render.js";
 import type { Engine, IndexResult } from "../../src/search/engine.js";
 import { search } from "../../src/search/search.js";
@@ -36,8 +36,10 @@ const PAGE = (title: string, body: string) =>
 /** An engine over the rendered documents it is given: prefix match on every term. */
 function engine(): Engine {
   let texts = new Map<string, string[]>();
+  let indexed = "";
   return {
-    async index(docs): Promise<IndexResult> {
+    async index(bundle, docs): Promise<IndexResult> {
+      indexed = bundle;
       texts = new Map(
         docs.map((d) => [
           d.path,
@@ -69,9 +71,13 @@ function engine(): Engine {
           if (n === 0) all = false;
           bm25 += n;
         }
-        if (all && terms.length > 0) hits.push({ path, bm25, score: bm25 / (1 + bm25) });
+        if (all && terms.length > 0)
+          hits.push({ bundle: indexed, path, bm25, score: bm25 / (1 + bm25) });
       }
       return hits.sort((a, b) => b.bm25 - a.bm25 || (a.path < b.path ? -1 : 1)).slice(0, limit);
+    },
+    async drop(bundle): Promise<IndexResult> {
+      return this.index(bundle, []);
     },
     async status() {
       return { documents: texts.size };
@@ -229,27 +235,28 @@ describe("the publish loop", { timeout: 120_000 }, () => {
       caps: DEFAULT_CAPS,
     };
     const runtime = createRuntime({
-      company: "loop",
-      source,
+      bundles: [{ id: "loop", source, load }],
       prepare: async () => ({ engine: engine(), lock: "exclusive" as const }),
-      load,
       clock: () => NOW,
       log: quiet,
     });
     const poller = createPoller({
       runtime,
+      bundle: "loop",
       source: () => source,
       intervalMs: 60_000,
       log: quiet,
       clock: () => NOW,
     });
     runtime.start();
-    const first = await runtime.ready();
+    const only = (network: Network) =>
+      (network.bundles[0] as Network["bundles"][number]).generation;
+    const first = only(await runtime.ready());
     expect(first.published?.commit).toBe(tip1);
     expect(first.report.integrity).toBe("checked");
     expect([...first.catalog.pages.keys()].sort()).toEqual(["alpha.md", "beta.md"]);
-    const found = await runtime.lease((g: Generation, e: Engine) =>
-      search(g.catalog, e, { question: "alpha", includeStale: false, limit: 5 }, NOW),
+    const found = await runtime.lease((n: Network, e: Engine) =>
+      search(only(n).catalog, e, { question: "alpha", includeStale: false, limit: 5 }, NOW),
     );
     expect(found.hits.map((h) => h.path)).toEqual(["alpha.md"]);
 
@@ -278,13 +285,13 @@ describe("the publish loop", { timeout: 120_000 }, () => {
     expect(git(origin, "rev-list", "--count", "published")).toBe("2");
     expect(git(origin, "rev-parse", "published~1")).toBe(tip1);
     expect(await poller.tick()).toBe("refreshed");
-    // ready() is the first load's generation; the one served now is what a lease reads.
-    const second = await runtime.lease(async (g: Generation) => g);
+    // The generation served now is what a lease reads.
+    const second = await runtime.lease(async (n: Network) => only(n));
     expect(second.published?.commit).toBe(tip2);
     expect(second.catalog.pages.get("alpha.md")?.body).toContain("alpha two");
     expect(second.catalog.pages.has("beta.md")).toBe(false);
-    const gone = await runtime.lease((g: Generation, e: Engine) =>
-      search(g.catalog, e, { question: "beta", includeStale: false, limit: 5 }, NOW),
+    const gone = await runtime.lease((n: Network, e: Engine) =>
+      search(only(n).catalog, e, { question: "beta", includeStale: false, limit: 5 }, NOW),
     );
     expect(gone.hits).toEqual([]);
     expect(await poller.tick()).toBe("unchanged");

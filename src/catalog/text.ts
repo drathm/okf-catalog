@@ -182,10 +182,27 @@ export function printed(
   return PLAIN[kind](value) && value.length <= cap ? safe(value) : quotedCut(value, cap);
 }
 
-/** What a line needs to know about the bundle beyond the page: the types the company did not declare. */
+/** What a line needs to know about the bundle beyond the page: the types the company did not declare, and its id. */
 export interface LineOptions {
   /** Types outside the company's declared list (the report's `unknownTypes`); empty when it declares none. */
   undeclaredTypes?: ReadonlySet<string>;
+  /**
+   * The bundle the line's page is in, printed as `<bundle>:` before its path; set only beyond one bundle, so a
+   * one-bundle network keeps today's lines (D74).
+   */
+  bundle?: string;
+}
+
+/**
+ * A page's path as a server line names it: printed by its kind, after `<bundle>:` when a bundle is given (beyond
+ * one bundle, D74). A bundle id is one plain lower-case path segment (D76), so it is printed bare.
+ */
+export function located(
+  path: string,
+  bundle: string | undefined,
+  cap: number = Number.POSITIVE_INFINITY,
+): string {
+  return `${bundle === undefined ? "" : `${bundle}:`}${printed(path, "path", cap)}`;
 }
 
 const KNOWN_STATUSES: ReadonlySet<string> = new Set(["draft", "stable", "deprecated"]);
@@ -228,7 +245,7 @@ export function hitLine(
     ...(hit.resource === undefined ? [] : [`resource: ${plainOrQuoted(hit.resource, HEADER_CAP)}`]),
   ].join(", ");
   const snippetPart = snippet === undefined || snippet.length === 0 ? "" : ` ${quoted(snippet)}`;
-  return `${printed(hit.path, "path")} — ${printed(hit.title, "title", HEADER_CAP)} [${facts}]${snippetPart}${deprecationSuffix(hit.status, hit.replacement, HEADER_CAP)}`;
+  return `${located(hit.path, options.bundle)} — ${printed(hit.title, "title", HEADER_CAP)} [${facts}]${snippetPart}${deprecationSuffix(hit.status, hit.replacement, HEADER_CAP)}`;
 }
 
 const instant = (v: Verification): number =>
@@ -307,21 +324,72 @@ export function pageHeader(page: Page, now: Date, options: HeaderOptions = {}): 
       ? []
       : [`resource: ${plainOrQuoted(page.resource, HEADER_CAP)}`]),
   ].join(", ");
-  return `${printed(page.path, "path", HEADER_CAP)} [${facts}]${deprecationSuffix(page.status, page.replacement, HEADER_CAP)}`;
+  return `${located(page.path, options.bundle, HEADER_CAP)} [${facts}]${deprecationSuffix(page.status, page.replacement, HEADER_CAP)}`;
 }
 
-/** The header of a reserved file served through `get_page`. */
+/** The runtime's own states, which a bundle line names as they are rather than as a loader's refusal (D75). */
+const RUNTIME_STATES: ReadonlySet<string> = new Set(["load-failed", "index-broken", "loading"]);
+
+/**
+ * A bundle as the network's catalog lists it, before the marker (D74): served, with its page count and where its
+ * root index came from; refused, with the rule and the path; or in one of the runtime's own states (its first load
+ * failed, its index is broken, it is still loading), named as such.
+ */
+export function networkBundleLine(row: {
+  bundle: string;
+  served: boolean;
+  pages: number;
+  refusal: { rule: string; path: string } | null;
+  index: { source: string } | null;
+}): string {
+  if (!row.served || row.refusal !== null) {
+    const refusal = row.refusal;
+    if (refusal !== null && RUNTIME_STATES.has(refusal.rule))
+      return `- bundle ${row.bundle}: ${refusal.rule}`;
+    return `- bundle ${row.bundle}: refused${refusal === null ? "" : `, ${safe(refusal.rule)}${refusal.path ? ` (${printed(refusal.path, "path", HEADER_CAP)})` : ""}`}`;
+  }
+  return `- bundle ${row.bundle}: ${row.pages} page${row.pages === 1 ? "" : "s"}, root index (${row.index?.source ?? "generated"})`;
+}
+
+/**
+ * A bundle's root index in the network's catalog, after the marker: the index text quoted and escaped on one line,
+ * so it reads as data and cannot start a line of its own, with an ellipsis after the quote when it was cut (D74).
+ */
+export function rootIndexLine(bundle: string, text: string, truncated: boolean): string {
+  return `- root index of ${bundle}: ${quoted(text)}${truncated ? "…" : ""}`;
+}
+
+/** The header of a reserved file served through `get_page`; its bundle first beyond one bundle (D74). */
 export function reservedHeader(
   kind: "index" | "log",
   source: "file" | "generated",
   folder: string,
+  bundle?: string,
 ): string {
   const path = folder === "" ? `${kind}.md` : `${folder}/${kind}.md`;
-  return `${printed(path, "path")} [reserved ${kind}, ${source}]`;
+  return `${located(path, bundle)} [reserved ${kind}, ${source}]`;
 }
 
-/** The first line of a search result: counts, the terms as they were used, and what was left out. */
-export function searchHeader(response: SearchResponse, dev: boolean): string {
+/** The most bundles a line names before it gives their total (D82 extended; C-A-A5). */
+export const LISTED_BUNDLES = 50;
+
+/** A bundle a search did not read, and why: the rule of what it serves instead (D75; D39 per bundle). */
+export interface NotSearched {
+  bundle: string;
+  reason: string;
+}
+
+/**
+ * The first line of a search result: counts, the terms as they were used, and what was left out. `dev` is true for
+ * a one-bundle network in development mode, or the bundles in development mode beyond one bundle; `notSearched`
+ * names each bundle a search beyond one bundle did not read, with why (refused by the loader, its first load failed,
+ * its index broken, or still loading), so every search says it (D74, D75).
+ */
+export function searchHeader(
+  response: SearchResponse,
+  dev: boolean | readonly string[],
+  notSearched: readonly NotSearched[] = [],
+): string {
   const relaxed = response.hits.filter((h) => h.rung === "relaxed").length;
   const parts = [
     response.hits.length === 0
@@ -344,7 +412,19 @@ export function searchHeader(response: SearchResponse, dev: boolean): string {
   removal(out.trust, "below the trust tier");
   if (out.stale > 0) parts.push(`${out.stale} stale page${out.stale === 1 ? "" : "s"} left out`);
   if (response.filtersExhausted) parts.push("the result pool is full and more matches may exist");
-  if (dev) parts.push("development mode: drafts and unknown statuses admitted");
+  if (dev === true) parts.push("development mode: drafts and unknown statuses admitted");
+  else if (Array.isArray(dev) && dev.length > 0)
+    parts.push(`development mode in ${dev.join(", ")}: drafts and unknown statuses admitted there`);
+  // At most 50 named, then the total, so the header never grows with the network (D82 extended; C-A-A5).
+  if (notSearched.length > 0)
+    parts.push(
+      `not searched: ${notSearched
+        .slice(0, LISTED_BUNDLES)
+        .map((entry) => `${entry.bundle} (${safe(entry.reason)})`)
+        .join(
+          ", ",
+        )}${notSearched.length > LISTED_BUNDLES ? ` … (${notSearched.length} bundles)` : ""}`,
+    );
   parts.push("snippets are page text, quoted");
   return parts.join("; ");
 }
@@ -499,6 +579,8 @@ export function listHeading(name: string, total: number, shown: number): string 
 /** The first line of `citations`: the page, by its kind, and the size of each list; no other page text. */
 export function citationsHeader(summary: {
   path: string;
+  /** The page's bundle, printed before its path beyond one bundle (D74). */
+  bundle?: string | undefined;
   partial: boolean;
   truncated: boolean;
   totals: {
@@ -513,7 +595,7 @@ export function citationsHeader(summary: {
 }): string {
   const t = summary.totals;
   const parts = [
-    `citations of ${printed(summary.path, "path")}: ${[
+    `citations of ${located(summary.path, summary.bundle)}: ${[
       counted(t.mentions, "mention"),
       counted(t.inboundMentions, "inbound mention"),
       counted(t.claims, "claim"),
@@ -612,6 +694,8 @@ export function walkEdgeLine(
 /** The first line of `provenance`: the start page, by its kind, the depth, the walk's size and every cut; no other page text. */
 export function provenanceHeader(summary: {
   path: string;
+  /** The start page's bundle, printed before its path beyond one bundle (D74). */
+  bundle?: string | undefined;
   depth: number;
   nodesTotal: number;
   returned: number;
@@ -621,7 +705,7 @@ export function provenanceHeader(summary: {
   truncated: boolean;
 }): string {
   const parts = [
-    `provenance of ${printed(summary.path, "path")} to depth ${summary.depth}: ${counted(summary.nodesTotal, "page")} in the walk, ${counted(summary.nodesTotal - 1, "concept")} entered`,
+    `provenance of ${located(summary.path, summary.bundle)} to depth ${summary.depth}: ${counted(summary.nodesTotal, "page")} in the walk, ${counted(summary.nodesTotal - 1, "concept")} entered`,
   ];
   if (summary.branchesStopped) parts.push("some branches stop at the depth");
   if (summary.capped) parts.push("capped: the walk entered its 200 concepts and entered no more");

@@ -27,6 +27,9 @@ export interface SearchRequest {
 }
 
 export interface SearchHit {
+  /** The bundle the page is in (D74). */
+  bundle: string;
+  /** The page's path inside its bundle. */
   path: PagePath;
   title: string;
   description?: string;
@@ -103,10 +106,22 @@ const TRUST_RANK: Record<Trust, number> = {
 const TIER_ORDER: readonly Trust[] = ["unverified", "machine-confirmed", "human-reviewed"];
 
 interface Candidate {
+  bundle: string;
   page: Page;
   score: number;
   matched: number;
 }
+
+/** The catalogs a search reads, by bundle id (D72); one catalog is a network of its one bundle. */
+export type Catalogs = Catalog | ReadonlyMap<string, Catalog>;
+
+const catalogsOf = (catalogs: Catalogs): ReadonlyMap<string, Catalog> =>
+  catalogs instanceof Map
+    ? catalogs
+    : new Map([[(catalogs as Catalog).bundle, catalogs as Catalog]]);
+
+/** A page of the network: its bundle and its path, the bundle's id having no slash (D76). */
+const keyOf = (bundle: string, path: PagePath): string => `${bundle}/${path}`;
 
 function topicPrefix(topic: string | undefined): string | undefined {
   if (topic === undefined) return undefined;
@@ -114,10 +129,12 @@ function topicPrefix(topic: string | undefined): string | undefined {
   return trimmed.length === 0 ? undefined : `${trimmed}/`;
 }
 
+/** Score, then trust within the tie window, then path, then bundle id (D74): never the engine's own order. */
 function order(a: Candidate, b: Candidate): number {
   if (Math.abs(b.score - a.score) > TIE) return b.score - a.score;
   const trust = TRUST_RANK[a.page.trust] - TRUST_RANK[b.page.trust];
-  return trust !== 0 ? trust : byCodeUnit(a.page.path, b.page.path);
+  if (trust !== 0) return trust;
+  return byCodeUnit(a.page.path, b.page.path) || byCodeUnit(a.bundle, b.bundle);
 }
 
 interface CompletedPool {
@@ -162,31 +179,35 @@ async function lexComplete(
 }
 
 /**
- * Searches the catalog through the engine. The first rung sends every content term, plus the topic's path
- * segments and the type value, as one query, widening the pool while the filters leave it short and the engine
- * returned a full pool. When still short, the relaxed rung sends one query per content term and fuses by
- * summed BM25, ranked by terms matched. Every engine query completes the tie group at its cut, so the answer
- * does not depend on the engine's order among equal scores. Hits carry provenance and their rung; the response
- * says what was filtered and why.
+ * Searches the network's catalogs through the engine, one index for every bundle (D73): a hit is a page of the
+ * bundle the engine names, read from that bundle's own catalog, and a filter reads that page; a topic matches the
+ * path inside the bundle. The first rung sends every content term, plus the topic's path segments and the type
+ * value, as one query, widening the pool while the filters leave it short and the engine returned a full pool.
+ * When still short, the relaxed rung sends one query per content term and fuses by summed BM25, ranked by terms
+ * matched. Every engine query completes the tie group at its cut, so the answer does not depend on the engine's
+ * order among equal scores. Hits carry their bundle, provenance and their rung; the response says what was
+ * filtered and why.
  */
 export async function search(
-  catalog: Catalog,
+  catalogs: Catalogs,
   engine: Engine,
   request: SearchRequest,
   now: Date,
 ): Promise<SearchResponse> {
+  const network = catalogsOf(catalogs);
   const { terms, dropped } = normaliseQuestion(request.question);
   const limit = Number.isFinite(request.limit)
     ? Math.min(LIMIT_CAP, Math.max(1, Math.floor(request.limit)))
     : 1;
+  // Keyed by bundle and path: one path in two bundles is two pages.
   const removed = {
-    type: new Set<PagePath>(),
-    topic: new Set<PagePath>(),
-    tag: new Set<PagePath>(),
-    status: new Set<PagePath>(),
-    trust: new Set<PagePath>(),
-    stale: new Set<PagePath>(),
-    unknown: new Set<PagePath>(),
+    type: new Set<string>(),
+    topic: new Set<string>(),
+    tag: new Set<string>(),
+    status: new Set<string>(),
+    trust: new Set<string>(),
+    stale: new Set<string>(),
+    unknown: new Set<string>(),
   };
   const filteredOut = () => ({
     type: removed.type.size,
@@ -237,41 +258,43 @@ export async function search(
     ...(prefix === undefined ? [] : tokenize(prefix.replace(/\//g, " "))),
     ...(wantedType === undefined ? [] : tokenize(wantedType)),
   ];
-  const considered = new Set<PagePath>();
+  const considered = new Set<string>();
 
   /** Applies the filters to one engine hit; returns the page when it survives. */
   const admit = (hit: EngineHit): Page | undefined => {
-    considered.add(hit.path);
-    const page = catalog.pages.get(hit.path);
+    const key = keyOf(hit.bundle, hit.path);
+    considered.add(key);
+    // A bundle the search was not given (refused, or not served) holds no page for it.
+    const page = network.get(hit.bundle)?.pages.get(hit.path);
     if (page === undefined) {
-      removed.unknown.add(hit.path);
+      removed.unknown.add(key);
       return undefined;
     }
     if (wantedType !== undefined && page.type.toLowerCase() !== wantedType) {
-      removed.type.add(hit.path);
+      removed.type.add(key);
       return undefined;
     }
     if (prefix !== undefined && !page.path.startsWith(prefix)) {
-      removed.topic.add(hit.path);
+      removed.topic.add(key);
       return undefined;
     }
     if (wantedTags.length > 0) {
       const stored = new Set(page.tags.map((tag) => tag.toLowerCase()));
       if (!wantedTags.every((tag) => stored.has(tag))) {
-        removed.tag.add(hit.path);
+        removed.tag.add(key);
         return undefined;
       }
     }
     if (wantedStatus !== undefined && page.status.toLowerCase() !== wantedStatus) {
-      removed.status.add(hit.path);
+      removed.status.add(key);
       return undefined;
     }
     if (TIER_ORDER.indexOf(page.trust) < trustFloor) {
-      removed.trust.add(hit.path);
+      removed.trust.add(key);
       return undefined;
     }
     if (!request.includeStale && isOverdue(page.staleAfter, now)) {
-      removed.stale.add(hit.path);
+      removed.stale.add(key);
       return undefined;
     }
     return page;
@@ -294,7 +317,8 @@ export async function search(
     first = [];
     for (const hit of engineHits) {
       const page = admit(hit);
-      if (page !== undefined) first.push({ page, score: hit.bm25, matched: terms.length });
+      if (page !== undefined)
+        first.push({ bundle: hit.bundle, page, score: hit.bm25, matched: terms.length });
     }
     if (first.length >= limit || exhausted || pool >= POOL_CAP) break;
     pool = Math.min(pool * POOL_FACTOR, POOL_CAP);
@@ -302,7 +326,7 @@ export async function search(
   first.sort(order);
   const hits: SearchHit[] = first
     .slice(0, limit)
-    .map((c) => shape(c.page, c.score, "all-terms", now));
+    .map((c) => shape(c.bundle, c.page, c.score, "all-terms", now));
 
   // Relaxed rung: one query per content term, fused by summed BM25, ranked by terms matched then by the sum.
   // The type and topic tokens stay out of these queries: BM25 adds up across terms, so a token present in every
@@ -314,8 +338,8 @@ export async function search(
   const floored: string[] = [];
   if (request.relax !== false && hits.length < limit && terms.length > 1) {
     const relaxedPool = Math.max(1, Math.min(request.relaxedPool ?? limit * POOL_FACTOR, POOL_CAP));
-    const taken = new Set(hits.map((h) => h.path));
-    const fused = new Map<PagePath, Candidate>();
+    const taken = new Set(hits.map((h) => keyOf(h.bundle, h.path)));
+    const fused = new Map<string, Candidate>();
     for (const term of terms) {
       const rows = (await lexComplete(engine, [term], relaxedPool, cost)).hits;
       if (rows.length > 0 && (rows[0] as EngineHit).bm25 < FREQUENCY_FLOOR) {
@@ -323,13 +347,14 @@ export async function search(
         continue;
       }
       for (const hit of rows) {
-        if (taken.has(hit.path)) continue;
+        const key = keyOf(hit.bundle, hit.path);
+        if (taken.has(key)) continue;
         const page = admit(hit);
         if (page === undefined) continue;
-        const entry = fused.get(hit.path) ?? { page, score: 0, matched: 0 };
+        const entry = fused.get(key) ?? { bundle: hit.bundle, page, score: 0, matched: 0 };
         entry.score += hit.bm25;
         entry.matched += 1;
-        fused.set(hit.path, entry);
+        fused.set(key, entry);
       }
     }
     const best = Math.max(0, ...[...fused.values()].map((e) => e.score));
@@ -338,7 +363,7 @@ export async function search(
       .sort((a, b) => b.matched - a.matched || order(a, b));
     for (const e of relaxed) {
       if (hits.length >= limit) break;
-      hits.push({ ...shape(e.page, e.score, "relaxed", now), termsMatched: e.matched });
+      hits.push({ ...shape(e.bundle, e.page, e.score, "relaxed", now), termsMatched: e.matched });
     }
   }
 
@@ -359,8 +384,9 @@ export async function search(
   };
 }
 
-function shape(page: Page, score: number, rung: Rung, now: Date): SearchHit {
+function shape(bundle: string, page: Page, score: number, rung: Rung, now: Date): SearchHit {
   const hit: SearchHit = {
+    bundle,
     path: page.path,
     title: page.title,
     type: page.type,

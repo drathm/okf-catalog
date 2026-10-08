@@ -1,4 +1,4 @@
-import { accessSync, constants, rmSync } from "node:fs";
+import { accessSync, constants, lstatSync, mkdirSync, renameSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
@@ -6,8 +6,12 @@ import { Writable } from "node:stream";
 import { parseArgs } from "node:util";
 import { RESULT_BUDGET } from "../catalog/outputs.js";
 import type { Runtime, ToolOptions } from "../catalog/runtime.js";
-import { discoverConfigPath, readCompanyConfig } from "../config/company-config.js";
-import { cacheOverlapsBundle, cacheRoot, companyDir, ensureCache } from "../fs/cache-dir.js";
+import {
+  type BundleConfig,
+  discoverConfigPath,
+  readNetworkConfig,
+} from "../config/network-config.js";
+import { bundleWorkDir, cacheRoot, ensureCache, networkDir } from "../fs/cache-dir.js";
 import {
   acquireLock,
   type Lock,
@@ -16,10 +20,11 @@ import {
   readLockOwner,
   sweepPrivate,
 } from "../fs/company-lock.js";
-import { createLog, type Level, type Log } from "../log.js";
+import { createLog, type Fields, type Level, type Log } from "../log.js";
 import { createServerFactory } from "../mcp/server.js";
 import { serveOverStdio } from "../mcp/stdio.js";
 import { createPoller, type Poller } from "../serve/poller.js";
+import { repositorySources } from "../serve/repositories.js";
 import { createRuntime, type PrepareResult } from "../serve/runtime.js";
 import { createGitSource, type GitSource } from "../source/git.js";
 import { createGitRunner, type GitRunner, redactCredentials } from "../source/git-runner.js";
@@ -29,11 +34,13 @@ import { clockFrom } from "./check.js";
 
 export const SERVE_USAGE = `usage: okf-catalog serve [options]
 
-Serves the company's bundle to an MCP client over stdio. stdout carries the protocol and nothing else; the log
-is JSON lines on stderr. The bundle is loaded when the first client completes its handshake.
+Serves a network of bundles (one, or several) to an MCP client over stdio. stdout carries the protocol and
+nothing else; the log is JSON lines on stderr. The bundles are loaded when the first client completes its
+handshake.
 
 options:
-  --config <path>       the company configuration (else OKF_CATALOG_CONFIG, else ./okf-catalog.yaml)
+  --config <path>       the network's configuration, network: and bundles:, or company: and source: for one
+                        bundle (else OKF_CATALOG_CONFIG, else ./okf-catalog.yaml)
   --log-level <level>   error, warn, info (default) or debug
 
 exit codes: 0 the client closed the connection; 2 usage error or unsupported host
@@ -91,7 +98,17 @@ async function gitBinary(cacheRoot: string): Promise<string> {
 }
 
 async function requireGitVersion(runner: GitRunner, cwd: string): Promise<void> {
-  const result = await runner.run(["--version"], { cwd, timeoutMs: 30_000 });
+  let result: Awaited<ReturnType<GitRunner["run"]>>;
+  try {
+    result = await runner.run(["--version"], { cwd, timeoutMs: 30_000 });
+  } catch (error) {
+    // git's own words may name its path or the cache folder: the model reads the fix, the log the detail.
+    const described = new Error(
+      "git could not be run to read its version; install git 2.30 or later to serve a repository source (the log has the detail)",
+    ) as Error & { detail?: string };
+    described.detail = (error as Error).message;
+    throw described;
+  }
   const match = /git version (\d+)\.(\d+)/.exec(result.stdout.toString("utf8"));
   const [major, minor] = match === null ? [0, 0] : [Number(match[1]), Number(match[2])];
   if (major > MIN_GIT[0] || (major === MIN_GIT[0] && minor >= MIN_GIT[1])) return;
@@ -127,14 +144,65 @@ function redirectConsole(log: Log): void {
   }
 }
 
+/** The log a bundle's own parts write to: every record names the bundle. */
+function forBundle(log: Log, bundle: string): Log {
+  const tag = (fields: Fields = {}): Fields => ({ bundle, ...fields });
+  return {
+    error: (event, fields) => log.error(event, tag(fields)),
+    warn: (event, fields) => log.warn(event, tag(fields)),
+    info: (event, fields) => log.info(event, tag(fields)),
+    debug: (event, fields) => log.debug(event, tag(fields)),
+  };
+}
+
+/**
+ * The clone a version 0 server kept at the root of the network's folder (D73): moved into the one repository
+ * bundle's folder when the network has exactly one and that bundle has no clone yet, which keeps its served tree
+ * on disk for the offline fallback; removed otherwise, being derived. Only a real folder is moved; a link is
+ * removed. Run under the exclusive lock only, never in the private fallback.
+ */
+function moveVersion0Clone(dir: string, repositories: readonly BundleConfig[], log: Log): void {
+  const old = join(dir, "source");
+  const stat = lstatSync(old, { throwIfNoEntry: false });
+  if (stat === undefined) return;
+  const [only] = repositories;
+  try {
+    if (stat.isDirectory() && only !== undefined && repositories.length === 1) {
+      const own = bundleWorkDir(dir, only.id);
+      const target = join(own, "source");
+      // Anything at the target, a link included, is the bundle's own: the old clone is then only removed.
+      if (lstatSync(target, { throwIfNoEntry: false }) === undefined) {
+        mkdirSync(own, { recursive: true, mode: 0o700 });
+        renameSync(old, target);
+        log.info("cache.version0", {
+          bundle: only.id,
+          detail: "the version 0 clone was moved into the bundle's folder",
+        });
+        return;
+      }
+    }
+    rmSync(old, { recursive: true, force: true });
+  } catch (error) {
+    const described = new Error(
+      "the version 0 clone in the cache folder could not be moved or removed; the log has the detail",
+    ) as Error & { detail?: string };
+    described.detail = `${old}: ${(error as Error).message}`;
+    throw described;
+  }
+  log.info("cache.version0", {
+    detail: "the version 0 clone was removed: no one repository bundle could take it",
+  });
+}
+
 function refusingRuntime(problem: string, log: Log): Runtime {
   log.error("serve.refusing", { problem });
   const reject = (): Promise<never> => Promise.reject(new Error(problem));
   return {
     ready: reject,
+    snapshot: () => ({ bundles: [] }),
     lease: reject,
     refresh: reject,
-    status: () => ({ lock: "exclusive", loaded: false, refusing: problem }),
+    status: () => ({ lock: "exclusive", loaded: false, refusing: problem, bundles: [] }),
     shutdown: async () => undefined,
   };
 }
@@ -196,15 +264,15 @@ export async function runServe(argv: string[]): Promise<number> {
   );
   let runtime: Runtime;
   let options: ToolOptions = {
-    company: "unknown",
-    source: "unknown",
-    dev: false,
+    network: "unknown",
+    bundles: [],
     limitDefault: 8,
     resultBudget: RESULT_BUDGET,
   };
   let lockHandle: Extract<Lock, { kind: "exclusive" }> | undefined;
   let privateWork: string | undefined;
-  let poller: Poller | undefined;
+  /** One poller per repository bundle, each at its own interval (D75). */
+  const pollers = new Map<string, Poller>();
   let closing: Promise<void> | undefined;
   /** Ends any git in flight and refuses new ones; set once a repository source's runner exists (bite 5 review M2). */
   let abortTransport: () => void = () => undefined;
@@ -214,57 +282,101 @@ export async function runServe(argv: string[]): Promise<number> {
   } else {
     // A test-only setting (like OKF_CATALOG_NOW): `file` repositories, for the suite's local bare repositories.
     const fileRepositories = process.env.OKF_CATALOG_GIT_PROTOCOLS === "file";
-    const read = readCompanyConfig(found.path, home, { allowFileRepositories: fileRepositories });
+    const root = cacheRoot({ env: process.env, platform: process.platform, home });
+    const read = readNetworkConfig(found.path, home, {
+      allowFileRepositories: fileRepositories,
+      cacheRoot: root.root,
+    });
     if (!read.ok) {
       runtime = refusingRuntime(
         `the configuration at ${found.path} is not usable: ${read.problems.join("; ")}`,
         log,
       );
     } else {
-      const config = read.config;
-      const configured = config.source;
-      const root = cacheRoot({ env: process.env, platform: process.platform, home });
-      const dir = companyDir(root.root, config.company);
-      const described =
-        configured.kind === "local"
-          ? configured.configured
-          : redactCredentials(configured.repository);
-      // A repository source is built inside prepare(), once the lock has decided the work folder (D47).
-      let gitSource: GitSource | undefined;
+      const network = read.config;
+      const dir = networkDir(root.root, network.network);
+      const repositories = network.bundles.filter((bundle) => bundle.source.kind === "git");
+      /** A bundle's source as the model may see it: the folder as written, or the repository without credentials. */
+      const describedOf = (bundle: BundleConfig): string =>
+        bundle.source.kind === "local"
+          ? bundle.source.configured
+          : redactCredentials(bundle.source.repository);
+      // Repository sources are built once git is prepared, inside prepare(), once the lock has decided the work
+      // folder (D47); until then a repository bundle loads through a source whose load tries the preparation again.
       let gitRunner: GitRunner | undefined;
-      const placeholder: Source = {
-        kind: "git",
-        load: async () => {
-          throw new Error("the repository source is not prepared");
+      /** The folder this process works in: the network's under the exclusive lock, a private one otherwise. */
+      let work: string | undefined;
+      const repos = repositorySources({
+        ids: repositories.map((bundle) => bundle.id),
+        describe: (id) =>
+          describedOf(repositories.find((bundle) => bundle.id === id) as BundleConfig),
+        prepare: async () => {
+          if (work === undefined) throw new Error("the work folder is not decided yet");
+          const binary = await gitBinary(root.root);
+          gitRunner?.abort();
+          const runner = createGitRunner({
+            binary,
+            allowProtocols: `https:ssh${process.env.OKF_CATALOG_GIT_PROTOCOLS === "file" ? ":file" : ""}`,
+            cacheRoot: root.root,
+            env: process.env,
+          });
+          gitRunner = runner;
+          await requireGitVersion(runner, work);
+          const built = new Map<string, GitSource>();
+          for (const bundle of repositories) {
+            if (bundle.source.kind !== "git") continue;
+            // Each bundle's clone, fetch state and extracted trees in a folder named by its id (issue 3, D73).
+            const own = bundleWorkDir(work, bundle.id);
+            mkdirSync(own, { recursive: true, mode: 0o700 });
+            built.set(
+              bundle.id,
+              createGitSource({
+                repository: bundle.source.repository,
+                branch: bundle.source.branch,
+                bundlePath: bundle.source.bundlePath,
+                workDir: join(own, "source"),
+                caps: bundle.caps,
+                runner,
+                clock,
+                log: forBundle(log, bundle.id),
+              }),
+            );
+          }
+          return built;
         },
-        describe: () => described,
-      };
-      const source: Source =
-        configured.kind === "local"
+      });
+      const sourceOf = (bundle: BundleConfig): Source =>
+        bundle.source.kind === "local"
           ? createLocalSource(
-              { path: configured.path, configured: configured.configured },
-              config.caps,
+              { path: bundle.source.path, configured: bundle.source.configured },
+              bundle.caps,
             )
-          : placeholder;
+          : repos.sourceOf(bundle.id);
       options = {
-        company: config.company,
-        source: described,
-        dev: config.serve.dev,
-        limitDefault: config.serve.limitDefault,
+        network: network.network,
+        bundles: network.bundles.map((bundle) => ({
+          id: bundle.id,
+          source: describedOf(bundle),
+          sourceKind: bundle.source.kind,
+        })),
+        limitDefault: network.limitDefault,
         resultBudget: RESULT_BUDGET,
       };
       let lockKind: "exclusive" | "private" = "exclusive";
       const serving = createRuntime({
-        company: config.company,
-        source,
+        bundles: network.bundles.map((bundle) => ({
+          id: bundle.id,
+          source: sourceOf(bundle),
+          load: {
+            admit: bundle.serve.admit,
+            dev: bundle.serve.dev,
+            integrity: bundle.integrity,
+            specText: bundle.specText,
+            caps: bundle.caps,
+            ...(bundle.types === undefined ? {} : { types: bundle.types }),
+          },
+        })),
         prepare: async () => {
-          if (configured.kind === "local" && cacheOverlapsBundle(dir, configured.path)) {
-            const described = new Error(
-              "the cache folder lies inside the bundle folder, or the bundle inside the cache folder; set XDG_CACHE_HOME to a folder outside the bundle",
-            ) as Error & { detail?: string };
-            described.detail = `cache ${dir}; bundle ${configured.path}`;
-            throw described;
-          }
           const ensured = ensureCache(dir, root.root, {
             uid: process.getuid?.() ?? 0,
             platform: process.platform,
@@ -281,102 +393,89 @@ export async function runServe(argv: string[]): Promise<number> {
           } catch (error) {
             // A lock database that cannot be opened: the fix is named, SQLite's words and the path go to the log.
             const described = new Error(
-              "the company lock database in the cache folder is unusable; remove it and start again (the log names it)",
+              "the network's lock database in the cache folder is unusable; remove it and start again (the log names it)",
             ) as Error & { detail?: string };
             described.detail = `${join(dir, "lock.sqlite")}: ${(error as Error).message}`;
             throw described;
           }
-          let work = dir;
-          if (lock.kind === "exclusive") lockHandle = lock;
-          else {
-            work = makePrivateDir(dir, process.pid);
-            privateWork = work;
+          let folder = dir;
+          if (lock.kind === "exclusive") {
+            lockHandle = lock;
+            // Under the exclusive lock only, never in the private fallback (D73): a version 0 clone moves into its
+            // bundle's folder; the engine clears the version 0 link and generations at the root when it opens.
+            moveVersion0Clone(dir, repositories, log);
+          } else {
+            folder = makePrivateDir(dir, process.pid);
+            privateWork = folder;
             lockKind = "private";
           }
-          let result: PrepareResult;
+          work = folder;
           // Imported here, after stdout is reserved, so nothing the engine's modules do at load can reach the channel.
           const { QmdEngine } = await import("../engine/qmd.js");
-          const engine = await QmdEngine.open({ company: config.company, dir: work });
+          const engine = await QmdEngine.open({
+            bundles: network.bundles.map((bundle) => bundle.id),
+            dir: folder,
+          });
           if (engine.resetOnOpen !== undefined)
             log.warn("engine.reset", { detail: engine.resetOnOpen });
-          result = {
+          const result: PrepareResult = {
             engine,
             lock: lockKind,
             ...(engine.resetOnOpen === undefined ? {} : { resetOnOpen: engine.resetOnOpen }),
           };
-          if (configured.kind === "git") {
+          if (repositories.length > 0) {
             try {
-              await prepareGit();
+              await repos.ensure();
             } catch (error) {
-              await engine.close().catch(() => undefined);
-              throw error;
+              // Git that cannot be prepared is the network's refusal only when every bundle needs it (C-I-A3); beside
+              // a local bundle, it is each repository bundle's own load-failed, tried again at its next load.
+              if (repositories.length === network.bundles.length) {
+                await engine.close().catch(() => undefined);
+                throw error;
+              }
             }
           }
           return result;
-          async function prepareGit(): Promise<void> {
-            if (configured.kind !== "git") return;
-            const binary = await gitBinary(root.root);
-            gitRunner?.abort();
-            const runner = createGitRunner({
-              binary,
-              allowProtocols: `https:ssh${process.env.OKF_CATALOG_GIT_PROTOCOLS === "file" ? ":file" : ""}`,
-              cacheRoot: root.root,
-              env: process.env,
-            });
-            gitRunner = runner;
-            await requireGitVersion(runner, work);
-            gitSource = createGitSource({
-              repository: configured.repository,
-              branch: configured.branch,
-              bundlePath: configured.bundlePath,
-              workDir: join(work, "source"),
-              caps: config.caps,
-              runner,
-              clock,
-              log,
-            });
-            result = { ...result, source: gitSource };
-          }
-        },
-        load: {
-          admit: config.serve.admit,
-          dev: config.serve.dev,
-          integrity: config.integrity,
-          specText: config.specText,
-          caps: config.caps,
-          ...(config.types === undefined ? {} : { types: config.types }),
         },
         clock,
         log,
         extra: () => ({
           lockOwner: lockKind === "private" ? (readLockOwner(dir) ?? null) : null,
-          poller:
-            poller?.state() ??
-            (configured.kind === "git" ? { intervalMs: config.serve.pullIntervalMs } : null),
+          pollers: Object.fromEntries(
+            repositories.map((bundle) => [
+              bundle.id,
+              pollers.get(bundle.id)?.state() ?? { intervalMs: bundle.serve.pullIntervalMs },
+            ]),
+          ),
         }),
       });
-      // The poller starts once the first load has run, whatever its outcome, and ticks at once when the load
-      // answered from the tree on disk; it never starts before the handshake, since start() runs on it.
-      let pollerStarted = false;
-      const startPoller = (): void => {
-        if (pollerStarted || configured.kind !== "git") return;
-        pollerStarted = true;
-        // The poller exists once the first load settles, whatever its outcome, with the source resolved lazily,
+      // The pollers start once the first load has run, whatever its outcome, each ticking at once when its
+      // bundle's load answered from the tree on disk; they never start before the handshake, since start() runs
+      // on it.
+      let pollersStarted = false;
+      const startPollers = (): void => {
+        if (pollersStarted || repositories.length === 0) return;
+        pollersStarted = true;
+        // Each poller exists once the first load settles, whatever its outcome, with its source resolved lazily,
         // so a failed prepare() (git missing, the cache unusable) is retried by its ticks (bite 5 review M4).
         void serving
           .ready()
           .catch(() => undefined)
           .then(() => {
             if (closing !== undefined) return;
-            poller = createPoller({
-              runtime: serving,
-              source: () => gitSource,
-              intervalMs: config.serve.pullIntervalMs,
-              log,
-              clock,
-              immediate: gitSource?.startedFromDisk() ?? false,
-            });
-            poller.start();
+            for (const bundle of repositories) {
+              const poller = createPoller({
+                runtime: serving,
+                bundle: bundle.id,
+                source: () => repos.real(bundle.id),
+                intervalMs: bundle.serve.pullIntervalMs,
+                log,
+                clock,
+                immediate: repos.real(bundle.id)?.startedFromDisk() ?? false,
+              });
+              pollers.set(bundle.id, poller);
+              poller.start();
+            }
           });
       };
       abortTransport = () => gitRunner?.abort();
@@ -384,17 +483,19 @@ export async function runServe(argv: string[]): Promise<number> {
         ...serving,
         start: () => {
           serving.start();
-          startPoller();
+          startPollers();
         },
       };
       log.info("serve.start", {
-        company: config.company,
-        source: described,
-        dev: config.serve.dev,
+        network: network.network,
+        form: network.form,
+        bundles: network.bundles.map((bundle) => bundle.id),
         node: process.versions.node,
         configRule: found.rule,
         ...(root.note === undefined ? {} : { note: root.note }),
       });
+      // The alias, and a company name a network: file refuses, each once at start (D-G; C-I-E3).
+      for (const note of network.notes) log.warn("serve.alias", { detail: note });
     }
   }
 
@@ -424,7 +525,7 @@ export async function runServe(argv: string[]): Promise<number> {
     closing = (async () => {
       log.info("serve.shutdown", { reason });
       try {
-        await poller?.stop();
+        for (const poller of pollers.values()) await poller.stop();
         abortTransport();
         await runtime.shutdown();
       } catch (error) {

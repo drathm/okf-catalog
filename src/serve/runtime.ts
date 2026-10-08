@@ -1,13 +1,20 @@
 import { loadBundle } from "../bundle/load.js";
-import type { LoadOptions, Report } from "../bundle/model.js";
+import type { LoadOptions, RefusalRule, Report } from "../bundle/model.js";
 import type { Catalog } from "../catalog/model.js";
-import type {
-  Generation,
-  LastRefusal,
-  PublishedInfo,
-  RefreshOutcome,
-  Runtime,
-  RuntimeStatus,
+import {
+  type BundleRuntimeStatus,
+  type Generation,
+  INDEX_BROKEN,
+  type LastRefusal,
+  LOAD_FAILED,
+  LOADING,
+  type LockOwnerStatus,
+  type Network,
+  type PollerStatus,
+  type PublishedInfo,
+  type RefreshOutcome,
+  type Runtime,
+  type RuntimeStatus,
 } from "../catalog/runtime.js";
 import { type DerivedDocument, deriveDocument } from "../derive/derived-document.js";
 import type { Log } from "../log.js";
@@ -19,21 +26,43 @@ export interface PrepareResult {
   lock: "exclusive" | "private";
   /** Why the engine rebuilt its store, when it did. */
   resetOnOpen?: string;
-  /** A source that could only be built once the work folder was known (the repository source). */
-  source?: Source;
+  /** Sources that could only be built once the work folder was known (repository sources), by bundle id. */
+  sources?: ReadonlyMap<string, Source>;
+}
+
+/** One bundle of the network: its id, its source and how it loads (D76). */
+export interface BundleDeps {
+  id: string;
+  /** The bundle's source; a repository source may be a placeholder until `prepare()` hands back the real one. */
+  source: Source;
+  load: LoadOptions;
 }
 
 export interface RuntimeDeps {
-  company: string;
-  source: Source;
+  /** The network's bundles, in the configuration's order; at least one. */
+  bundles: readonly BundleDeps[];
   /** Runs at the start of the first load, once it succeeds: the cache folder, the lock and the engine. Never for a probe. A failure is retried by `refresh()`. */
   prepare: () => Promise<PrepareResult>;
-  load: LoadOptions;
   clock: () => Date;
   log: Log;
-  /** Status fields the command owns: the lock's holder and the poller. */
-  extra?: () => Pick<RuntimeStatus, "lockOwner" | "poller">;
+  /** Status fields the command owns: the lock's holder, and each repository bundle's poller by bundle id. */
+  extra?: () => {
+    lockOwner?: LockOwnerStatus | null;
+    pollers?: Readonly<Record<string, PollerStatus | null>>;
+  };
+  /** The first-load deadline in milliseconds; `FIRST_LOAD_DEADLINE_MS` unless a test shortens it. */
+  firstLoadDeadlineMs?: number;
 }
+
+/**
+ * How long a tool call waits for the first load of a network of more than one bundle (D75): once every bundle's
+ * first load has landed, or this long after the loads began, the network answers from the bundles that have
+ * landed, and a bundle still loading is reported as `loading` (not searched, refused by name, shown in `status`)
+ * until its load lands and publishes it. Twenty seconds holds a cold clone of a small repository and a load of a few
+ * thousand pages; a clone that hangs (git's own timeout is 300 s) no longer holds back every other bundle's first
+ * answer. A network of one bundle waits for its one load, as version 0 did: it has nothing else to answer from.
+ */
+export const FIRST_LOAD_DEADLINE_MS = 20_000;
 
 export interface ServingRuntime extends Runtime {
   start(): void;
@@ -50,6 +79,32 @@ const EMPTY_INDEX: IndexResult = {
   collisions: [],
   encodedFolders: [],
 };
+
+/**
+ * The sentence a bundle whose part of the index is broken is refused with, beyond one bundle (D39, per bundle): when
+ * it is tried again, which for a local bundle, having no poller, is a restart; the engine's words, which may name the
+ * cache folder, go to the log as the record's detail.
+ */
+export function brokenSentence(kind: Source["kind"]): string {
+  return kind === "git"
+    ? "the index could not be brought in line with this bundle's pages; it is tried again at the bundle's next poll, and the log has the detail"
+    : "the index could not be brought in line with this bundle's pages; it is tried again when the server restarts, and the log has the detail";
+}
+
+/** A network of one bundle refuses as a whole for the same failure, as version 0 did (D39, D74). */
+export function brokenRefusal(kind: Source["kind"]): string {
+  return kind === "git"
+    ? "the index could not be re-aligned with the served pages; nothing is served until the bundle's next poll succeeds, and the log has the detail"
+    : "the index could not be re-aligned with the served pages; nothing is served until the server restarts, and the log has the detail";
+}
+
+/** An engine failure as the model is told it: the engine's own words, which may name the cache folder, go to the log. */
+export const ENGINE_FAILED = "the index could not take this bundle's pages; the log has the detail";
+/** Why a bundle serves nothing yet: its first load has not landed. */
+export const STILL_LOADING = "the bundle's first load has not finished; it is served when it lands";
+/** Why a bundle was never loaded: the network itself could not be prepared. */
+export const NOT_PREPARED =
+  "the network could not be prepared, so the bundle was not loaded; the network's refusal says why";
 
 const yieldToLoop = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
@@ -73,41 +128,131 @@ type Prepared =
       fresh?: boolean;
     };
 
+/** One bundle's state inside the runtime. */
+interface Held {
+  readonly id: string;
+  readonly load: LoadOptions;
+  readonly integrity: "checked" | "skipped";
+  source: Source;
+  /** What the bundle serves, or the refusal published for it; undefined until its first load lands. */
+  current: Generation | undefined;
+  /** Its first load, while it runs and after: a refresh of the bundle waits for it until it has landed. */
+  loading: Promise<void> | undefined;
+  /** Whether its first load has landed, whatever its outcome. */
+  landed: boolean;
+  /** Why its first load threw, until the bundle loads: the network refuses when every bundle's first load threw (D75). */
+  failed: Described | undefined;
+  /** Its part of the index could not be brought in line with what it serves (D39, per bundle): the sentence it is refused with. */
+  broken: string | undefined;
+  refreshing: Promise<RefreshOutcome> | undefined;
+  lastAttempt: BundleRuntimeStatus["lastAttempt"];
+  lastRefusal: LastRefusal | undefined;
+  /** The refusals published for it without a load of its own (broken, loading, not loaded), by rule and sentence. */
+  readonly synthetic: Map<string, Generation>;
+}
+
+/** An error with the detail a log may carry beside its one-line message, and whether it is the index's. */
+type Described = Error & { detail?: string; index?: true };
+
+/** An engine failure, told with a fixed sentence; the engine's words travel as the detail, for the log. */
+function engineFailure(error: unknown): Described {
+  const described = new Error(ENGINE_FAILED) as Described;
+  described.detail = (error as Error).message;
+  described.index = true;
+  return described;
+}
+
+/** A served generation's pages, as the engine indexes them. */
+const pagesOf = (generation: Generation | undefined): DerivedDocument[] =>
+  generation === undefined ? [] : [...generation.catalog.pages.values()].map(deriveDocument);
+
 /**
- * The serving runtime (decisions D28, D38, D39). The first load begins on `start()` or the first `ready()`,
- * never before, so a probing connection costs nothing. Loading yields to the event loop between its phases (walk,
- * load, derive, index), so the handshake is answered between them; each phase itself runs without yielding
- * (measured on 736 pages: the load about 1.1 s, the engine's update about 0.7 s). Tool calls hold a lease
- * on the generation they read; a refresh prepares the next generation while leases run, then blocks new leases,
- * waits for the running ones, indexes, swaps catalog and index together, and releases. A refused reload keeps
- * the previous generation; a reload that throws keeps it too and re-aligns the index with it. A refused first
- * load is published as a generation whose report carries the refusal, so `status` can show it.
+ * The serving runtime of a network (decisions D28, D38, D39, D72, D75). The first load begins on `start()` or the
+ * first `ready()`, never before, so a probing connection costs nothing; it prepares the network once (the cache
+ * folder, the lock and the engine), then loads every bundle on its own and publishes each as its load lands. Loading
+ * yields to the event loop between its phases (walk, load, derive, index), so the handshake is answered between
+ * them; each phase itself runs without yielding (measured on 736 pages: the load about 1.1 s, the engine's update
+ * about 0.7 s). A bundle the loader refuses is published as a generation whose report carries the refusal, so
+ * `status` can show it, and its pages leave the index (D75); a bundle whose first load throws (its source, or its
+ * index) is published as refused the same way (`load-failed`), so the network serves the others; when every
+ * bundle's first load threw the network refuses, naming each, as a one-bundle server always has. A bundle whose part
+ * of the index cannot be brought in line with what it serves (a drop that fails, or a failed refresh whose
+ * re-alignment fails too) is refused alone as `index-broken` until a later write of it succeeds (D39, per bundle); a
+ * network of one bundle refuses as a whole meanwhile, as version 0 did. Tool calls hold a lease on the network they
+ * read; a refresh of one bundle prepares its next generation while leases run, then blocks new leases, waits for the
+ * running ones, indexes that bundle alone, swaps its catalog and its part of the index together, and releases.
+ * Refreshes are single-flight per bundle, and every engine call that writes runs under the gate, one at a time,
+ * whichever bundle it is for. A refused reload keeps the bundle's previous generation; a reload that throws keeps it
+ * too and re-aligns that bundle's part of the index with it.
  */
 export function createRuntime(deps: RuntimeDeps): ServingRuntime {
+  if (deps.bundles.length === 0) throw new Error("a network needs at least one bundle");
+  const states: Held[] = deps.bundles.map((bundle) => ({
+    id: bundle.id,
+    load: bundle.load,
+    integrity: bundle.load.integrity === "require-manifest" ? "checked" : "skipped",
+    source: bundle.source,
+    current: undefined,
+    loading: undefined,
+    landed: false,
+    failed: undefined,
+    broken: undefined,
+    refreshing: undefined,
+    lastAttempt: undefined,
+    lastRefusal: undefined,
+    synthetic: new Map(),
+  }));
   let engine: Engine | undefined;
   let lock: "exclusive" | "private" = "exclusive";
   let resetOnOpen: string | undefined;
-  let source: Source = deps.source;
   let prepared: Promise<PrepareResult> | undefined;
-  let current: Generation | undefined;
-  let firstLoad: Promise<Generation> | undefined;
+  let firstLoad: Promise<void> | undefined;
   let firstLoadFailed = false;
-  let refreshing: Promise<RefreshOutcome> | undefined;
+  /** Why the first load failed as a whole: the network could not be prepared, or its one bundle's load threw. */
+  let refusal: string | undefined;
+  /** That failure was the index's: its one bundle's first load could not be indexed. */
+  let refusalIndex = false;
+  /** The network could not be prepared (the cache folder, the lock, the store): no bundle was loaded. */
+  let prepareFailed = false;
   let closing: Promise<void> | undefined;
   let closed = false;
-  let refusing: string | undefined;
-  let lastAttempt: RuntimeStatus["lastAttempt"];
-  let lastRefusal: LastRefusal | undefined;
   /** Leases requested but not yet reading (waiting for the first load or the gate): shutdown waits for them. */
   let requested = 0;
-  /** Leases reading the current generation: a swap waits for them. */
+  /** Leases reading the current network: a swap waits for them. */
   let active = 0;
   let drainWaiters: Array<() => void> = [];
   let requestWaiters: Array<() => void> = [];
   let gate: Promise<void> | undefined;
   let openGate: (() => void) | undefined;
+  /** The engine's writes, one after the other, whichever bundle they are for (D28, D75). */
+  let writes: Promise<unknown> = Promise.resolve();
 
-  const integrity = deps.load.integrity === "require-manifest" ? "checked" : "skipped";
+  /** Every bundle's first load threw, beyond one bundle: the network refuses, naming each bundle's reason (D75). */
+  const everyFirstLoadFailed = (): boolean =>
+    states.length > 1 && states.every((bundle) => bundle.failed !== undefined);
+
+  /**
+   * Why the network refuses as a whole, or undefined: it could not be prepared, or its one bundle's load threw
+   * (`refusal`); its one bundle's index is broken (version 0's D39, D74); or every bundle's first load threw.
+   */
+  function refusingNow(): string | undefined {
+    if (refusal !== undefined) return refusal;
+    if (states.length === 1) {
+      const only = states[0] as Held;
+      return only.broken === undefined ? undefined : brokenRefusal(only.source.kind);
+    }
+    if (everyFirstLoadFailed())
+      return states
+        .map((bundle) => `${bundle.id}: ${(bundle.failed as Described).message}`)
+        .join("; ");
+    return undefined;
+  }
+
+  /** Whether the network's refusal is the index's: its one bundle's first load could not be indexed, or it is broken. */
+  function refusingFromIndex(): boolean {
+    if (refusal !== undefined) return refusalIndex;
+    return states.length === 1 && (states[0] as Held).broken !== undefined;
+  }
 
   const counts = (report: Report, index: IndexResult) => ({
     documents: index.documents,
@@ -120,9 +265,9 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
   });
 
   /** Each admitted word no page carries, from a load just served (D77): a typo in serve.admit admits nothing. */
-  const warnUnmatched = (report: Report): void => {
+  const warnUnmatched = (bundle: Held, report: Report): void => {
     for (const word of report.unmatchedAdmits)
-      deps.log.warn("serve.admit", { word, detail: "matches no page" });
+      deps.log.warn("serve.admit", { bundle: bundle.id, word, detail: "matches no page" });
   };
 
   /** `prepare()` once, kept once it succeeds; a failure is forgotten so the next attempt runs it again. */
@@ -133,7 +278,10 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
           engine = result.engine;
           lock = result.lock;
           if (result.resetOnOpen !== undefined) resetOnOpen = result.resetOnOpen;
-          if (result.source !== undefined) source = result.source;
+          for (const bundle of states) {
+            const source = result.sources?.get(bundle.id);
+            if (source !== undefined) bundle.source = source;
+          }
           return result;
         },
         (error: unknown) => {
@@ -145,42 +293,43 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
     return prepared;
   }
 
-  /** Walk, load and derive, yielding between the phases; the engine is not touched here. */
-  async function prepareDocs(): Promise<Prepared> {
-    const loaded = await source.load();
-    const prepared = await prepareFrom(loaded);
-    if (prepared.kind === "fatal") noteRefusal(prepared, loaded);
-    return prepared;
+  /** Walk, load and derive one bundle, yielding between the phases; the engine is not touched here. */
+  async function prepareDocs(bundle: Held): Promise<Prepared> {
+    const loaded = await bundle.source.load();
+    const next = await prepareFrom(bundle, loaded);
+    if (next.kind === "fatal") noteRefusal(bundle, next, loaded);
+    return next;
   }
 
   /** A refusal is kept for `status`; a tree reused from disk that the loader refuses is discarded, so the next load extracts it again. */
-  function noteRefusal(prepared: Prepared & { kind: "fatal" }, loaded: Loaded): void {
-    const fatal = prepared.report.fatal;
+  function noteRefusal(bundle: Held, next: Prepared & { kind: "fatal" }, loaded: Loaded): void {
+    const fatal = next.report.fatal;
     if (fatal !== undefined) {
-      lastRefusal = {
+      bundle.lastRefusal = {
         rule: fatal.rule,
         path: fatal.path,
         detail: fatal.detail,
-        ...(prepared.published === undefined ? {} : { commit: prepared.published.commit }),
+        ...(next.published === undefined ? {} : { commit: next.published.commit }),
       };
     }
     if (loaded.fresh === false && loaded.published !== undefined)
-      source.discard?.(loaded.published.commit);
+      bundle.source.discard?.(loaded.published.commit);
   }
 
-  async function prepareFrom(loaded: Loaded): Promise<Prepared> {
+  async function prepareFrom(bundle: Held, loaded: Loaded): Promise<Prepared> {
     const walked = loaded.walk;
     const published = loaded.published;
     await yieldToLoop();
     const options: LoadOptions = {
-      ...deps.load,
+      ...bundle.load,
       walkRefusals: walked.refusals,
       hiddenPaths: walked.hidden,
       hiddenFolders: walked.hiddenFolders,
     };
     if (walked.fatal !== undefined) options.walkFatal = walked.fatal;
     const now = deps.clock();
-    const { catalog, report } = loadBundle(deps.company, walked.files, options, now);
+    // Each bundle is its own map: two bundles are never one loadBundle call (issue 3).
+    const { catalog, report } = loadBundle(bundle.id, walked.files, options, now);
     await yieldToLoop();
     const withPublished = {
       ...(published === undefined ? {} : { published }),
@@ -210,103 +359,287 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
     open?.();
   }
 
-  /** Under the gate: no new lease starts, running ones finish, then the index is rebuilt and the generation swapped. */
-  async function commit(prepared: Prepared & { kind: "docs" }): Promise<Generation> {
-    const live = engine;
-    if (live === undefined) throw new Error("the engine is not open");
-    closeGate();
-    try {
-      await whenDrained();
+  /**
+   * An engine write under the gate: no new lease starts, running ones finish, then `fn` runs; writes queue one
+   * after the other, whichever bundle they are for, so no two engine calls ever overlap (D28, D75).
+   */
+  function underGate<T>(fn: (live: Engine) => Promise<T>): Promise<T> {
+    const run = writes.then(async () => {
+      const live = engine;
+      if (live === undefined) throw new Error("the engine is not open");
+      closeGate();
+      try {
+        await whenDrained();
+        return await fn(live);
+      } finally {
+        releaseGate();
+      }
+    });
+    writes = run.catch(() => undefined);
+    return run;
+  }
+
+  /** The bundle's part of the index is in line with what it serves again: it is no longer broken. */
+  function mended(bundle: Held): void {
+    if (bundle.broken === undefined) return;
+    bundle.broken = undefined;
+    deps.log.info("index.mended", { bundle: bundle.id });
+  }
+
+  /** The bundle's part of the index could not be brought in line: refused alone until a later write succeeds (D39). */
+  function brokenBy(bundle: Held, error: unknown): void {
+    bundle.broken = brokenSentence(bundle.source.kind);
+    deps.log.error("index.broken", { bundle: bundle.id, detail: (error as Error).message });
+  }
+
+  /** Indexes one bundle's next generation and swaps it in; a failure re-aligns that bundle's part of the index (D39). */
+  function commit(bundle: Held, next: Prepared & { kind: "docs" }): Promise<Generation> {
+    return underGate(async (live) => {
       let index: IndexResult;
       try {
-        index = await live.index(prepared.docs);
+        index = await live.index(bundle.id, next.docs);
       } catch (error) {
-        // The engine may now hold the new tree while the old catalog stays served: put them back together. If
-        // that fails too, nothing may be served until a refresh succeeds (D39).
-        if (current !== undefined) {
+        // The engine may now hold part of the new tree while the bundle serves its old catalog: put them back
+        // together. If that fails too, this bundle alone is refused until a later write of it succeeds (D39).
+        if (bundle.current !== undefined) {
           try {
-            await live.index([...current.catalog.pages.values()].map(deriveDocument));
+            await live.index(bundle.id, pagesOf(bundle.current));
+            mended(bundle);
           } catch (again) {
-            refusing = `the index could not be re-aligned with the served pages after a failed refresh (${(again as Error).message}); nothing is served until a refresh succeeds`;
+            brokenBy(bundle, again);
           }
         }
-        throw error;
+        throw engineFailure(error);
       }
       const generation: Generation = {
-        catalog: prepared.catalog,
-        report: prepared.report,
+        catalog: next.catalog,
+        report: next.report,
         index,
-        loadedAt: prepared.now,
-        dev: deps.load.dev,
-        integrity,
-        ...(prepared.published === undefined ? {} : { published: prepared.published }),
+        loadedAt: next.now,
+        dev: bundle.load.dev,
+        integrity: bundle.integrity,
+        ...(next.published === undefined ? {} : { published: next.published }),
       };
-      current = generation;
+      bundle.current = generation;
+      bundle.failed = undefined;
+      mended(bundle);
       // A tree reused from disk (the first-load fallback) does not answer the refusal that made it necessary.
-      if (prepared.fresh !== false) lastRefusal = undefined;
-      if (generation.published !== undefined) source.served?.(generation.published.commit);
+      if (next.fresh !== false) bundle.lastRefusal = undefined;
+      if (generation.published !== undefined) bundle.source.served?.(generation.published.commit);
       return generation;
-    } finally {
-      releaseGate();
+    });
+  }
+
+  /** Puts a broken bundle's part of the index back in line with what it serves, its pages or none; never throws. */
+  async function realign(bundle: Held): Promise<void> {
+    try {
+      await underGate((live) => live.index(bundle.id, pagesOf(bundle.current)));
+      mended(bundle);
+    } catch (error) {
+      brokenBy(bundle, error);
     }
   }
 
-  const fatalGeneration = (next: Prepared & { kind: "fatal" }): Generation => ({
+  const fatalGeneration = (bundle: Held, next: Prepared & { kind: "fatal" }): Generation => ({
     catalog: next.catalog,
     report: next.report,
     index: EMPTY_INDEX,
     loadedAt: next.now,
-    dev: deps.load.dev,
-    integrity,
+    dev: bundle.load.dev,
+    integrity: bundle.integrity,
     ...(next.published === undefined ? {} : { published: next.published }),
   });
 
-  /** The first load: prepare, load, publish. A loader refusal falls back to the tree the source last served (D43). */
-  async function firstLoadBody(): Promise<Generation> {
-    await prepare();
-    const next = await prepareDocs();
+  /**
+   * Publishes a refused generation for a bundle that has nothing else to serve, and takes its pages out of the
+   * index, where an earlier run may have left them (D75): an empty generation behind its link, a scoped update. When
+   * that fails, the bundle is index-broken (D39, per bundle).
+   */
+  async function publishRefused(bundle: Held, generation: Generation): Promise<void> {
+    bundle.current = generation;
+    try {
+      await underGate((live) => live.drop(bundle.id));
+      mended(bundle);
+    } catch (error) {
+      brokenBy(bundle, error);
+    }
+  }
+
+  /** A generation that serves nothing and says why, without a load of its own; built once per rule and sentence. */
+  function synthetic(bundle: Held, rule: RefusalRule, detail: string): Generation {
+    const key = `${rule}\n${detail}`;
+    const known = bundle.synthetic.get(key);
+    if (known !== undefined) return known;
+    const now = deps.clock();
+    const { catalog, report } = loadBundle(
+      bundle.id,
+      [],
+      { ...bundle.load, walkFatal: { path: "", rule, detail } },
+      now,
+    );
+    const generation: Generation = {
+      catalog,
+      report,
+      index: EMPTY_INDEX,
+      loadedAt: now,
+      dev: bundle.load.dev,
+      integrity: bundle.integrity,
+    };
+    bundle.synthetic.set(key, generation);
+    return generation;
+  }
+
+  /**
+   * What a tool call reads of a bundle: the refusal of a broken bundle; else what it serves, or the refusal published
+   * for it; else why it serves nothing yet (its one load threw, the network was not prepared, or it is still loading).
+   */
+  function viewOf(bundle: Held): Generation {
+    if (bundle.broken !== undefined) return synthetic(bundle, INDEX_BROKEN, bundle.broken);
+    if (bundle.current !== undefined) return bundle.current;
+    if (bundle.failed !== undefined) return synthetic(bundle, LOAD_FAILED, bundle.failed.message);
+    if (prepareFailed) return synthetic(bundle, LOAD_FAILED, NOT_PREPARED);
+    return synthetic(bundle, LOADING, STILL_LOADING);
+  }
+
+  /** One bundle's first load: load, publish; a loader refusal falls back to the tree the source last served (D43). */
+  async function loadFirst(bundle: Held): Promise<void> {
+    const next = await prepareDocs(bundle);
     if (next.kind === "fatal") {
-      lastAttempt = { at: deps.clock(), outcome: "fatal" };
+      bundle.lastAttempt = { at: deps.clock(), outcome: "fatal" };
       deps.log.error("load.fatal", {
+        bundle: bundle.id,
         rule: next.report.fatal?.rule,
         path: next.report.fatal?.path,
         detail: next.report.fatal?.detail,
       });
-      const servedOnDisk = source.loadServed === undefined ? undefined : await source.loadServed();
+      const servedOnDisk =
+        bundle.source.loadServed === undefined ? undefined : await bundle.source.loadServed();
       if (servedOnDisk !== undefined) {
-        const served = await prepareFrom(servedOnDisk);
+        const served = await prepareFrom(bundle, servedOnDisk);
         if (served.kind === "docs") {
-          const generation = await commit(served);
+          const generation = await commit(bundle, served);
           deps.log.warn("load.served-previous", {
+            bundle: bundle.id,
             commit: generation.published?.commit,
             refused: next.published?.commit,
           });
-          warnUnmatched(generation.report);
-          return generation;
+          warnUnmatched(bundle, generation.report);
+          return;
         }
       }
-      current = fatalGeneration(next);
-      return current;
+      await publishRefused(bundle, fatalGeneration(bundle, next));
+      return;
     }
-    const generation = await commit(next);
-    lastAttempt = { at: deps.clock(), outcome: "swapped" };
-    deps.log.info("load.done", counts(generation.report, generation.index));
-    warnUnmatched(generation.report);
-    return generation;
+    const generation = await commit(bundle, next);
+    bundle.lastAttempt = { at: deps.clock(), outcome: "swapped" };
+    deps.log.info("load.done", {
+      bundle: bundle.id,
+      ...counts(generation.report, generation.index),
+    });
+    warnUnmatched(bundle, generation.report);
+  }
+
+  /**
+   * One bundle's first load, published as it lands. Beyond one bundle, a load that throws (its source, or its index)
+   * is published as refused (`load-failed`), its sentence the failure's own, so the network serves the others and
+   * `status` names the reason (D75); a network of one bundle refuses as a whole instead, as version 0 did.
+   */
+  async function firstLoadOf(bundle: Held): Promise<void> {
+    try {
+      await loadFirst(bundle);
+    } catch (error) {
+      const described = error as Described;
+      bundle.lastAttempt = { at: deps.clock(), outcome: "failed" };
+      bundle.failed = described;
+      deps.log.error("load.failed", {
+        bundle: bundle.id,
+        error: described.message,
+        ...(typeof described.detail === "string" ? { detail: described.detail } : {}),
+      });
+      if (states.length === 1) throw error;
+      const now = deps.clock();
+      const { catalog, report } = loadBundle(
+        bundle.id,
+        [],
+        { ...bundle.load, walkFatal: { path: "", rule: LOAD_FAILED, detail: described.message } },
+        now,
+      );
+      await publishRefused(
+        bundle,
+        fatalGeneration(bundle, { kind: "fatal", catalog, report, now }),
+      );
+      if (everyFirstLoadFailed()) {
+        // Nothing loaded: the network refuses, naming each bundle's reason, as a one-bundle server does.
+        const details = states
+          .filter((held) => typeof held.failed?.detail === "string")
+          .map((held) => `${held.id}: ${held.failed?.detail}`);
+        deps.log.error("serve.refusing", {
+          problem: refusingNow(),
+          ...(details.length > 0 ? { detail: details.join("; ") } : {}),
+        });
+      }
+    } finally {
+      bundle.landed = true;
+    }
+  }
+
+  /**
+   * Beyond one bundle, the first load answers once every bundle's load has landed or the deadline has passed,
+   * whichever comes first; a load still running goes on, and publishes its bundle when it lands (D75).
+   */
+  async function landedOrDeadline(loads: readonly Promise<void>[]): Promise<void> {
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<"deadline">((resolve) => {
+      timer = setTimeout(
+        () => resolve("deadline"),
+        deps.firstLoadDeadlineMs ?? FIRST_LOAD_DEADLINE_MS,
+      );
+      timer.unref();
+    });
+    try {
+      const first = await Promise.race([
+        Promise.all(loads).then(() => "landed" as const),
+        deadline,
+      ]);
+      if (first === "deadline") {
+        for (const bundle of states.filter((held) => !held.landed))
+          deps.log.warn("load.slow", {
+            bundle: bundle.id,
+            detail:
+              "its first load has not landed by the deadline; the network answers without it until it does",
+          });
+      }
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   function start(): void {
     if (firstLoad !== undefined || closed) return;
     firstLoad = (async () => {
       try {
-        return await firstLoadBody();
+        try {
+          await prepare();
+        } catch (error) {
+          prepareFailed = true;
+          throw error;
+        }
+        prepareFailed = false;
+        const loads = states.map((bundle) => {
+          bundle.landed = false;
+          const loading = firstLoadOf(bundle);
+          bundle.loading = loading;
+          return loading;
+        });
+        if (states.length === 1) await Promise.all(loads);
+        else await landedOrDeadline(loads);
       } catch (error) {
-        refusing = (error as Error).message;
+        refusal = (error as Error).message;
+        refusalIndex = (error as Described).index === true;
         firstLoadFailed = true;
-        lastAttempt = { at: deps.clock(), outcome: "failed" };
-        const detail = (error as { detail?: unknown }).detail;
+        const detail = (error as Described).detail;
         deps.log.error("serve.refusing", {
-          problem: refusing,
+          problem: refusal,
           ...(typeof detail === "string" ? { detail } : {}),
         });
         throw error;
@@ -317,19 +650,29 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
     firstLoad.catch(() => undefined);
   }
 
-  async function ready(): Promise<Generation> {
-    if (refusing !== undefined) throw new Error(refusing);
+  /** Every bundle as a tool call reads it, in the configuration's order. */
+  const network = (): Network => ({
+    bundles: states.map((bundle) => ({ id: bundle.id, generation: viewOf(bundle) })),
+  });
+
+  async function ready(): Promise<Network> {
+    const why = refusingNow();
+    if (why !== undefined) throw new Error(why);
     start();
     if (firstLoad === undefined) throw new Error("the runtime is shut down");
-    return firstLoad;
+    await firstLoad;
+    // The load just awaited may itself have made the network refuse (every bundle failed, or the one broke).
+    const after = refusingNow();
+    if (after !== undefined) throw new Error(after);
+    return network();
   }
 
   /**
    * A lease is counted from the moment it is requested, so a shutdown that follows the request waits for it; it
-   * becomes active only once it reads a generation, so a swap waits for readers and never for a call that is
+   * becomes active only once it reads the network, so a swap waits for readers and never for a call that is
    * itself waiting for the first load.
    */
-  function lease<T>(fn: (generation: Generation, engine: Engine) => Promise<T>): Promise<T> {
+  function lease<T>(fn: (network: Network, engine: Engine) => Promise<T>): Promise<T> {
     if (closed) return Promise.reject(new Error("the runtime is shut down"));
     requested += 1;
     let reading = false;
@@ -353,81 +696,144 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
       try {
         await ready();
         while (gate !== undefined) await gate;
-        const generation = current;
         const live = engine;
-        if (generation === undefined || live === undefined) {
-          throw new Error("no generation is published");
-        }
+        if (live === undefined) throw new Error("no generation is published");
+        const served = network();
         reading = true;
         active += 1;
-        return await fn(generation, live);
+        return await fn(served, live);
       } finally {
         release();
       }
     })();
   }
 
-  function refresh(): Promise<RefreshOutcome> {
+  /** The bundle a refresh names: the only one when none is named. */
+  function bundleNamed(id: string | undefined): Held {
+    if (id === undefined) {
+      const [only] = states;
+      if (only !== undefined && states.length === 1) return only;
+      throw new Error(
+        `name the bundle to refresh: this network holds ${states.map((bundle) => bundle.id).join(", ")}`,
+      );
+    }
+    const found = states.find((bundle) => bundle.id === id);
+    if (found === undefined) throw new Error(`no bundle ${JSON.stringify(id)} in this network`);
+    return found;
+  }
+
+  /** A first load's outcome for one bundle, as a refresh reports it. */
+  function outcomeOf(bundle: Held): RefreshOutcome {
+    if (bundle.broken !== undefined) return { outcome: "failed", error: bundle.broken };
+    const current = bundle.current;
+    if (current === undefined)
+      return { outcome: "failed", error: bundle.failed?.message ?? "the bundle did not load" };
+    const fatal = current.report.fatal;
+    if (fatal === undefined) return { outcome: "swapped", generation: current };
+    return fatal.rule === LOAD_FAILED
+      ? { outcome: "failed", error: fatal.detail }
+      : { outcome: "fatal", report: current.report };
+  }
+
+  function refresh(id?: string): Promise<RefreshOutcome> {
     if (closed) return Promise.reject(new Error("the runtime is shut down"));
-    if (refreshing !== undefined) return refreshing;
-    refreshing = (async (): Promise<RefreshOutcome> => {
+    let bundle: Held;
+    try {
+      bundle = bundleNamed(id);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    const inFlight = bundle.refreshing;
+    if (inFlight !== undefined) return inFlight;
+    const refreshing = (async (): Promise<RefreshOutcome> => {
+      let committing = false;
       try {
         if (firstLoad === undefined) throw new Error("the first load has not started");
         if (firstLoadFailed) {
-          // A first load that failed (the network, the cache, the lock) is tried again from the start.
+          // A first load that failed as a whole (the network could not be prepared, or its one bundle's load threw)
+          // is tried again from the start.
           firstLoadFailed = false;
           firstLoad = undefined;
           start();
           if (firstLoad === undefined) throw new Error("the runtime is shut down");
-          const generation: Generation = await firstLoad;
-          refusing = undefined;
-          return generation.report.fatal === undefined
-            ? { outcome: "swapped", generation }
-            : { outcome: "fatal", report: generation.report };
+          await firstLoad;
+          refusal = undefined;
+          refusalIndex = false;
+          return outcomeOf(bundle);
         }
         await firstLoad;
-        const next = await prepareDocs();
+        // The bundle's own first load, still running: this refresh is that load.
+        if (!bundle.landed && bundle.loading !== undefined) {
+          await bundle.loading;
+          return outcomeOf(bundle);
+        }
+        const next = await prepareDocs(bundle);
         if (next.kind === "fatal") {
-          lastAttempt = { at: deps.clock(), outcome: "fatal" };
+          bundle.lastAttempt = { at: deps.clock(), outcome: "fatal" };
           deps.log.error("refresh.fatal", {
+            bundle: bundle.id,
             rule: next.report.fatal?.rule,
             path: next.report.fatal?.path,
             detail: next.report.fatal?.detail,
           });
+          // The previous generation stays; a broken bundle's part of the index is put back in line with it (D39).
+          if (bundle.broken !== undefined) await realign(bundle);
           return { outcome: "fatal", report: next.report };
         }
-        const generation = await commit(next);
-        refusing = undefined;
-        lastAttempt = { at: deps.clock(), outcome: "swapped" };
-        deps.log.info("refresh.done", counts(generation.report, generation.index));
-        warnUnmatched(generation.report);
+        committing = true;
+        const generation = await commit(bundle, next);
+        bundle.lastAttempt = { at: deps.clock(), outcome: "swapped" };
+        deps.log.info("refresh.done", {
+          bundle: bundle.id,
+          ...counts(generation.report, generation.index),
+        });
+        warnUnmatched(bundle, generation.report);
         return { outcome: "swapped", generation };
       } catch (error) {
         const message = (error as Error).message;
-        lastAttempt = { at: deps.clock(), outcome: "failed" };
-        const detail = (error as { detail?: unknown }).detail;
+        bundle.lastAttempt = { at: deps.clock(), outcome: "failed" };
+        const detail = (error as Described).detail;
         deps.log.error("refresh.failed", {
+          bundle: bundle.id,
           error: message,
           ...(typeof detail === "string" ? { detail } : {}),
         });
+        // A load that threw before any write: a broken bundle's index is put back in line all the same (D39).
+        if (!committing && bundle.broken !== undefined && engine !== undefined)
+          await realign(bundle);
         return { outcome: "failed", error: message };
       } finally {
-        refreshing = undefined;
+        bundle.refreshing = undefined;
       }
     })();
+    bundle.refreshing = refreshing;
     return refreshing;
   }
 
   function status(): RuntimeStatus {
+    const extra = deps.extra?.() ?? {};
     const result: RuntimeStatus = {
       lock,
-      loaded: current !== undefined,
-      fatal: current?.report.fatal !== undefined,
-      ...(deps.extra?.() ?? {}),
+      loaded: states.every((bundle) => bundle.current !== undefined),
+      ...(extra.lockOwner === undefined ? {} : { lockOwner: extra.lockOwner }),
+      bundles: states.map((bundle) => {
+        const row: BundleRuntimeStatus = {
+          id: bundle.id,
+          loaded: bundle.current !== undefined,
+          fatal: viewOf(bundle).report.fatal !== undefined,
+        };
+        if (bundle.lastAttempt !== undefined) row.lastAttempt = bundle.lastAttempt;
+        if (bundle.lastRefusal !== undefined) row.lastRefusal = bundle.lastRefusal;
+        const poller = extra.pollers?.[bundle.id];
+        if (poller !== undefined) row.poller = poller;
+        return row;
+      }),
     };
-    if (lastAttempt !== undefined) result.lastAttempt = lastAttempt;
-    if (lastRefusal !== undefined) result.lastRefusal = lastRefusal;
-    if (refusing !== undefined) result.refusing = refusing;
+    const why = refusingNow();
+    if (why !== undefined) {
+      result.refusing = why;
+      if (refusingFromIndex()) result.refusingIndex = true;
+    }
     if (resetOnOpen !== undefined) result.resetOnOpen = resetOnOpen;
     return result;
   }
@@ -436,14 +842,17 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
     if (closing !== undefined) return closing;
     closed = true;
     closing = (async () => {
-      source.abort?.();
+      for (const bundle of states) bundle.source.abort?.();
       if (firstLoad !== undefined) await firstLoad.catch(() => undefined);
-      if (refreshing !== undefined) await refreshing.catch(() => undefined);
+      for (const bundle of states)
+        if (bundle.loading !== undefined) await bundle.loading.catch(() => undefined);
+      for (const bundle of states)
+        if (bundle.refreshing !== undefined) await bundle.refreshing.catch(() => undefined);
       await whenNoneRequested();
       if (engine !== undefined) await engine.close();
     })();
     return closing;
   }
 
-  return { start, ready, lease, refresh, status, shutdown };
+  return { start, ready, snapshot: network, lease, refresh, status, shutdown };
 }

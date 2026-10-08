@@ -4,7 +4,9 @@
 // keywords when the question carries them), prints the expected page's rank, the top hit's path, trust tier,
 // verifier and recheck date, and the expected page's header from `get_page`, and exits 1 when an expected
 // page is absent from the hits of every form asked. Evidence for the server, not for the model: items 2 to 4
-// of the acceptance list are judged on Claude Code's answers (claude.sh and verify.mjs).
+// of the acceptance list are judged on Claude Code's answers (claude.sh and verify.mjs). Beyond one bundle a gold
+// page is written as a result line prints it, `<bundle>:<path>`, and only that bundle's page is the gold; a gold
+// without a bundle is its path in any bundle, as version 0's questions are.
 // Usage: node bench/acceptance/ask.mjs --config <okf-catalog.yaml> --questions <file> [--limit 8]
 import { readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -45,11 +47,19 @@ const call = async (name, args) => {
 };
 const verifierOf = (v) =>
   v === undefined || v === null ? "-" : `${v.by}${v.at ? ` at ${v.at}` : ""}`;
+/** A gold as written: `<bundle>:<path>`, its prefix a bundle id, names that bundle's page; a bare path, any bundle's. */
+const goldOf = (gold) => {
+  const named = /^([a-z0-9][a-z0-9-]{0,62}):(.+)$/.exec(gold);
+  return named === null ? { path: gold } : { bundle: named[1], path: named[2] };
+};
+const isGold = (hit, gold) =>
+  hit.path === gold.path && (gold.bundle === undefined || hit.bundle === gold.bundle);
 let failures = 0;
 for (const q of questions) {
   const forms = [["question", q.question]];
   if (Array.isArray(q.keywords) && q.keywords.length > 0)
     forms.push(["keywords", q.keywords.join(" ")]);
+  const gold = goldOf(q.gold);
   const ranks = [];
   let top;
   for (const [form, text] of forms) {
@@ -60,7 +70,7 @@ for (const q of questions) {
       ranks.push(`${form}: absent (${error.message.replace(/^search: /, "")})`);
       continue;
     }
-    const position = out.hits.findIndex((h) => h.path === q.gold);
+    const position = out.hits.findIndex((h) => isGold(h, gold));
     ranks.push(
       `${form}: ${position === -1 ? "absent" : `rank ${position + 1}`} of ${out.hits.length} hits`,
     );
@@ -77,10 +87,13 @@ for (const q of questions) {
     );
   }
   try {
-    const page = await call("get_page", { path: q.gold });
+    const page = await call(
+      "get_page",
+      gold.bundle === undefined ? { path: gold.path } : { path: gold.path, bundle: gold.bundle },
+    );
     const header = page.header ?? page.provenance ?? page;
     process.stdout.write(
-      `  expected page: ${header.path}, type ${header.type}, status ${header.status}, trust ${header.trust}, verifier ${verifierOf(header.latestVerification)}, recheck ${header.staleAfter?.raw ?? "-"}\n`,
+      `  expected page: ${gold.bundle === undefined ? "" : `${page.bundle}:`}${header.path}, type ${header.type}, status ${header.status}, trust ${header.trust}, verifier ${verifierOf(header.latestVerification)}, recheck ${header.staleAfter?.raw ?? "-"}\n`,
     );
   } catch (error) {
     process.stdout.write(`  expected page: ${error.message}\n`);

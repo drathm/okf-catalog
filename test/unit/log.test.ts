@@ -11,14 +11,14 @@ describe("createLog", () => {
     const out = sink();
     const log = createLog(out, "info", () => new Date("2026-10-07T00:00:00Z"));
     log.debug("serve.start", {});
-    log.info("serve.start", { company: "acme" });
+    log.info("serve.start", { network: "acme" });
     log.error("load.fatal", { rule: "manifest-missing", path: "manifest.json" });
     expect(out.lines).toHaveLength(2);
     expect(JSON.parse(out.lines[0] ?? "")).toEqual({
       time: "2026-10-07T00:00:00.000Z",
       level: "info",
       event: "serve.start",
-      company: "acme",
+      network: "acme",
     });
     expect(JSON.parse(out.lines[1] ?? "")).toMatchObject({
       level: "error",

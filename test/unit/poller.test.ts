@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type {
   Generation,
+  Network,
   RefreshOutcome,
   Runtime,
   RuntimeStatus,
@@ -28,6 +29,10 @@ function fakes(initial: { loaded?: boolean; refusing?: string; fatal?: boolean }
     fatal: initial.fatal ?? false,
     refusing: initial.refusing,
     refreshes: 0,
+    /** The bundle each refresh named. */
+    refreshed: [] as Array<string | undefined>,
+    /** Another bundle of the network, refused: its state must never move this poller. */
+    otherFatal: true,
     aborts: 0,
     closed: false,
   };
@@ -38,22 +43,27 @@ function fakes(initial: { loaded?: boolean; refusing?: string; fatal?: boolean }
   let refreshOutcome: RefreshOutcome = { outcome: "swapped", generation: {} as Generation };
   const runtime: Runtime = {
     async ready() {
-      return {} as Generation;
+      return { bundles: [] } as Network;
     },
+    snapshot: () => ({ bundles: [] }) as Network,
     async lease() {
       throw new Error("unused");
     },
-    async refresh() {
+    async refresh(bundle?: string) {
       if (state.closed) throw new Error("the runtime is shut down");
       state.refreshes += 1;
+      state.refreshed.push(bundle);
       if (refreshDelayMs > 0) await new Promise((r) => setTimeout(r, refreshDelayMs));
       return refreshOutcome;
     },
     status: (): RuntimeStatus => ({
       lock: "exclusive",
       loaded: state.loaded,
-      fatal: state.fatal,
       ...(state.refusing === undefined ? {} : { refusing: state.refusing }),
+      bundles: [
+        { id: "other", loaded: true, fatal: state.otherFatal },
+        { id: "b", loaded: state.loaded, fatal: state.fatal },
+      ],
     }),
     async shutdown() {
       state.closed = true;
@@ -107,6 +117,7 @@ describe("createPoller", () => {
     const f = fakes();
     const poller = createPoller({
       ...f,
+      bundle: "b",
       source: () => f.source,
       intervalMs: 60_000,
       clock: () => NOW,
@@ -126,6 +137,7 @@ describe("createPoller", () => {
     const f = fakes({ loaded: false, refusing: "the repository could not be fetched" });
     const poller = createPoller({
       ...f,
+      bundle: "b",
       source: () => f.source,
       intervalMs: 60_000,
       clock: () => NOW,
@@ -145,6 +157,7 @@ describe("createPoller", () => {
     const f = fakes();
     const poller = createPoller({
       ...f,
+      bundle: "b",
       source: () => f.source,
       intervalMs: 60_000,
       clock: () => NOW,
@@ -162,6 +175,7 @@ describe("createPoller", () => {
     f.setChanges(["moved"]);
     const poller = createPoller({
       ...f,
+      bundle: "b",
       source: () => f.source,
       intervalMs: 60_000,
       clock: () => NOW,
@@ -176,6 +190,7 @@ describe("createPoller", () => {
     const f = fakes();
     const poller = createPoller({
       ...f,
+      bundle: "b",
       source: () => f.source,
       intervalMs: 60_000,
       clock: () => NOW,
@@ -192,6 +207,7 @@ describe("createPoller", () => {
     f.setChanges(["same", "same", "same", "same"]);
     const poller = createPoller({
       ...f,
+      bundle: "b",
       source: () => f.source,
       intervalMs: 30,
       clock: () => NOW,
@@ -214,6 +230,7 @@ describe("createPoller", () => {
     f.setChanges(["moved"]);
     const poller = createPoller({
       ...f,
+      bundle: "b",
       source: () => f.source,
       intervalMs: 60_000,
       clock: () => NOW,
@@ -234,6 +251,7 @@ describe("createPoller", () => {
     g.state.closed = true;
     const late = createPoller({
       ...g,
+      bundle: "b",
       source: () => g.source,
       intervalMs: 60_000,
       clock: () => NOW,
@@ -246,6 +264,7 @@ describe("createPoller", () => {
     const f = fakes({ loaded: false, refusing: "git was not found on PATH" });
     const poller = createPoller({
       ...f,
+      bundle: "b",
       source: () => undefined,
       intervalMs: 60_000,
       clock: () => NOW,
@@ -260,6 +279,7 @@ describe("createPoller", () => {
     f.setChanges(["moved"]);
     const poller = createPoller({
       ...f,
+      bundle: "b",
       source: () => f.source,
       intervalMs: 60_000,
       clock: () => NOW,
@@ -277,6 +297,7 @@ describe("createPoller", () => {
     f.failChanges("the repository could not be asked; the log has git's message");
     const poller = createPoller({
       ...f,
+      bundle: "b",
       source: () => f.source,
       intervalMs: 60_000,
       clock: () => NOW,
@@ -290,6 +311,7 @@ describe("createPoller", () => {
     const f = fakes();
     const poller = createPoller({
       ...f,
+      bundle: "b",
       source: () => f.source,
       intervalMs: 60_000,
       clock: () => NOW,
@@ -304,11 +326,58 @@ describe("createPoller", () => {
     const f = fakes({ loaded: true, fatal: true });
     const poller = createPoller({
       ...f,
+      bundle: "b",
       source: () => f.source,
       intervalMs: 60_000,
       clock: () => NOW,
     });
     expect(await poller.tick()).toBe("refreshed");
     expect(f.state.refreshes).toBe(1);
+  });
+});
+
+// D75: one poller per repository bundle, each at its own interval, refreshing its own bundle alone.
+describe("createPoller: one bundle of a network", () => {
+  it("refreshes its own bundle by name, and a refusal of another bundle never moves it", async () => {
+    const f = fakes();
+    const poller = createPoller({
+      ...f,
+      bundle: "b",
+      source: () => f.source,
+      intervalMs: 60_000,
+      clock: () => NOW,
+    });
+    // The other bundle of the network is refused; this one is loaded and its remote has not moved.
+    expect(f.state.otherFatal).toBe(true);
+    f.setChanges(["same"]);
+    expect(await poller.tick()).toBe("unchanged");
+    expect(f.state.refreshes).toBe(0);
+    f.setChanges(["moved"]);
+    expect(await poller.tick()).toBe("refreshed");
+    expect(f.state.refreshed).toEqual(["b"]);
+    // Its own bundle refused: the next tick retries it, by name, without asking the remote.
+    f.state.fatal = true;
+    expect(await poller.tick()).toBe("refreshed");
+    expect(f.state.refreshed).toEqual(["b", "b"]);
+    const tick = f.records.filter((r) => r.event === "poller.tick").at(-1);
+    expect(tick?.fields.bundle).toBe("b");
+  });
+
+  it("asks its own remote while the network refuses for another reason: only its own bundle's state moves it (C-I-A1)", async () => {
+    // The network refuses (every other bundle failed, say), while this bundle is loaded and served.
+    const f = fakes({ loaded: true, fatal: false, refusing: "a: the bundle folder ./a is gone" });
+    const poller = createPoller({
+      ...f,
+      bundle: "b",
+      source: () => f.source,
+      intervalMs: 60_000,
+      clock: () => NOW,
+    });
+    f.setChanges(["same"]);
+    expect(await poller.tick()).toBe("unchanged");
+    expect(f.state.refreshes).toBe(0);
+    f.setChanges(["moved"]);
+    expect(await poller.tick()).toBe("refreshed");
+    expect(f.state.refreshed).toEqual(["b"]);
   });
 });

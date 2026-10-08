@@ -1,13 +1,16 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
+  readlinkSync,
   renameSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +26,7 @@ import {
   INITIALIZED,
   impureLines,
   NOW_ISO,
+  REPO,
   rawServer,
   type Sandbox,
   sandbox,
@@ -104,7 +108,10 @@ describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
       structuredContent: { admitted: number };
     };
     expect(status.structuredContent.admitted).toBe(17);
-    const copy = readFileSync(join(companyDir(b), "derived", "terms", "alpha.md"), "utf8");
+    const copy = readFileSync(
+      join(companyDir(b), "bundles", "fixture", "derived", "terms", "alpha.md"),
+      "utf8",
+    );
     expect(copy.startsWith("# Alpha\n")).toBe(true);
     expect(copy).not.toContain("qmd:");
     expect(copy).not.toContain("metadata:");
@@ -490,7 +497,11 @@ describe("okf-catalog serve over stdio with a repository source", { timeout: 90_
       expect(status.structuredContent.poller?.intervalMs).toBe(600_000);
       expect(status.structuredContent.lockOwner).toBeNull();
       expect(status.structuredContent.source).toBe(repo.url);
-      expect(existsSync(join(companyDir(b), "source", "repo.git", "HEAD"))).toBe(true);
+      // Each bundle's clone lives in its own folder under the network's (D73).
+      expect(
+        existsSync(join(companyDir(b), "bundles", "fixture", "source", "repo.git", "HEAD")),
+      ).toBe(true);
+      expect(existsSync(join(companyDir(b), "source"))).toBe(false);
       first.send({
         jsonrpc: "2.0",
         id: 3,
@@ -526,7 +537,9 @@ describe("okf-catalog serve over stdio with a repository source", { timeout: 90_
       expect((other.structuredContent as unknown as { poller: unknown }).poller).not.toBeNull();
       expect(other.content[0]?.text).toMatch(/lock private \(held by pid \d+ since .*, alive\)/);
       const privateSources = readdirSync(join(companyDir(b), "private")).map((pid) =>
-        existsSync(join(companyDir(b), "private", pid, "source", "repo.git", "HEAD")),
+        existsSync(
+          join(companyDir(b), "private", pid, "bundles", "fixture", "source", "repo.git", "HEAD"),
+        ),
       );
       expect(privateSources).toEqual([true]);
       expect((await second.end()).code).toBe(0);
@@ -692,5 +705,688 @@ process.exit(0);
     expect(r.content[0]?.text).not.toMatch(/not a database/);
     expect(r.content[0]?.text).not.toContain(companyDir(b));
     expect((await run.end()).code).toBe(0);
+  });
+});
+
+/** The published branch of one page, as `pack` writes it, on a bare repository reached through file://. */
+function packedRepo(): { url: string; root: string } {
+  const packWork = mkdtempSync(join(tmpdir(), "okf-catalog-stdio-net-pack-"));
+  mkdirSync(join(packWork, "kb"));
+  writeFileSync(join(packWork, "kb", "alpha.md"), PUBLISHED_PAGE);
+  writeFileSync(join(packWork, "okf-catalog.yaml"), "company: fixture\nsource:\n  local: ./kb\n");
+  const packed = join(packWork, "out");
+  const code = runPack(
+    [
+      "--config",
+      join(packWork, "okf-catalog.yaml"),
+      "--from",
+      join(packWork, "kb"),
+      "--out",
+      packed,
+    ],
+    { stdout: () => undefined, stderr: () => undefined, env: { OKF_CATALOG_NOW: NOW_ISO } },
+  );
+  if (code !== 0) throw new Error(`pack exited ${code}`);
+  const repo = publishedRepo(
+    Object.fromEntries(
+      readdirSync(packed).map((name) => [name, readFileSync(join(packed, name), "utf8")]),
+    ),
+  );
+  rmSync(packWork, { recursive: true, force: true });
+  return repo;
+}
+
+/** A status call over the raw protocol, its structured content. */
+async function statusOver(
+  run: ReturnType<typeof rawServer>,
+  id: number,
+): Promise<Record<string, unknown>> {
+  run.send({ jsonrpc: "2.0", id, method: "tools/call", params: { name: "status", arguments: {} } });
+  return ((await run.waitFor(id)).result as { structuredContent: Record<string, unknown> })
+    .structuredContent;
+}
+
+/** What a version 0 server left at the root of its folder: the clone, the link and its generation (D73). */
+function plantVersion0(dir: string): void {
+  mkdirSync(join(dir, "source"), { recursive: true, mode: 0o700 });
+  writeFileSync(join(dir, "source", "state.json"), '{"planted":"version 0"}\n');
+  mkdirSync(join(dir, "gen-1-1-1"), { recursive: true });
+  writeFileSync(join(dir, "gen-1-1-1", "page.md"), "# Page\n");
+  symlinkSync("gen-1-1-1", join(dir, "derived"));
+}
+
+// Issue 3, D72 and D73: one process, one lock, one store for a network; each bundle's folder under bundles/<id>.
+describe("okf-catalog serve over stdio: a network (D72, D73)", { timeout: 90_000 }, () => {
+  it("serves two local bundles from one lock and one store", async () => {
+    const fixtures = join(REPO, "test", "fixtures", "bundles");
+    const yaml = `network: fixture\nbundles:\n  - id: terms\n    source:\n      local: ${join(fixtures, "behaviours")}\n  - id: acme\n    source:\n      local: ${join(fixtures, "spec-example")}\n`;
+    const b = box("spec-example", yaml);
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [CLI, "serve", "--config", b.configPath],
+      env: b.env,
+      cwd: b.cwd,
+      stderr: "pipe",
+    });
+    let stderr = "";
+    transport.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    const client = new Client({ name: "test", version: "0.0.0" });
+    await client.connect(transport);
+    const status = (await client.callTool({ name: "status", arguments: {} })) as {
+      structuredContent: {
+        network: string;
+        lock: string;
+        bundles: Array<{ id: string; admitted: number; sourceKind: string; source: string }>;
+      };
+    };
+    expect(status.structuredContent.network).toBe("fixture");
+    expect(status.structuredContent.lock).toBe("exclusive");
+    expect(
+      status.structuredContent.bundles.map((row) => [row.id, row.admitted, row.sourceKind]),
+    ).toEqual([
+      ["terms", 17, "local"],
+      ["acme", 9, "local"],
+    ]);
+    const hitsOf = async (question: string) =>
+      (
+        (await client.callTool({ name: "search", arguments: { question } })) as {
+          structuredContent: { hits: Array<{ bundle: string; path: string }> };
+        }
+      ).structuredContent.hits;
+    expect((await hitsOf("alpha glossary"))[0]).toMatchObject({
+      bundle: "terms",
+      path: "terms/alpha.md",
+    });
+    expect((await hitsOf("revenue")).some((hit) => hit.bundle === "acme")).toBe(true);
+    await client.close();
+    // One lock and one store for the network; each bundle's generations behind its own link.
+    const dir = companyDir(b);
+    expect(existsSync(join(dir, "lock.sqlite"))).toBe(true);
+    expect(existsSync(join(dir, "index.sqlite"))).toBe(true);
+    const locks = execFileSync("find", [b.cacheRoot, "-name", "lock.sqlite"], { encoding: "utf8" })
+      .split("\n")
+      .filter((line) => line.length > 0);
+    expect(locks).toEqual([join(dir, "lock.sqlite")]);
+    for (const id of ["terms", "acme"]) {
+      expect(
+        readdirSync(join(dir, "bundles", id)).filter((n) => n.startsWith("gen-")),
+      ).toHaveLength(1);
+      expect(existsSync(join(dir, "bundles", id, "derived"))).toBe(true);
+    }
+    expect(stderr).toMatch(
+      /"event":"serve.start","network":"fixture","form":"network","bundles":\["terms","acme"\]/,
+    );
+    expect(stderr).not.toMatch(/"event":"serve.alias"/);
+  });
+
+  // D39 per bundle (the fold of bite c's build reviews, C-I-A1, C-I-A4, C-A-A1), from the adversarial review's d39
+  // reproduction: one bundle's folder in the cache cannot be written, so its index and then its drop fail.
+  it("serves the other bundle while one bundle's folder in the cache cannot be written, naming neither the cache path nor the engine's words", async () => {
+    const fixtures = join(REPO, "test", "fixtures", "bundles");
+    const yaml = `network: fixture\nbundles:\n  - id: terms\n    source:\n      local: ${join(fixtures, "behaviours")}\n  - id: acme\n    source:\n      local: ${join(fixtures, "spec-example")}\n`;
+    const b = box("spec-example", yaml);
+    const own = join(companyDir(b), "bundles", "acme");
+    mkdirSync(own, { recursive: true, mode: 0o700 });
+    chmodSync(own, 0o500);
+    try {
+      const run = rawServer(b);
+      run.send(INITIALIZE);
+      await run.waitFor(1);
+      run.send(INITIALIZED);
+      const call = async (id: number, name: string, args: Record<string, unknown>) => {
+        run.send({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
+        const answer = await run.waitFor(id);
+        // Neither channel names the cache folder, nor carries the file system's words.
+        expect(JSON.stringify(answer), name).not.toContain(b.cacheRoot);
+        expect(JSON.stringify(answer), name).not.toMatch(/EACCES|permission denied/);
+        return answer.result as {
+          isError?: boolean;
+          content: Array<{ text: string }>;
+          structuredContent?: Record<string, unknown>;
+        };
+      };
+      const found = await call(2, "search", { question: "alpha glossary" });
+      expect(found.isError).not.toBe(true);
+      expect(found.content[0]?.text.split("\n")[0]).toContain("not searched: acme (index-broken)");
+      expect(
+        (found.structuredContent as { hits: Array<{ bundle: string }> }).hits.every(
+          (hit) => hit.bundle === "terms",
+        ),
+      ).toBe(true);
+      const named = await call(3, "get_page", { path: "index.md", bundle: "acme" });
+      expect(named.isError).toBe(true);
+      expect(named.content[0]?.text).toMatch(
+        /^the bundle acme was refused and nothing in it is served: index-broken: .*tried again when the server restarts/,
+      );
+      const status = await call(4, "status", {});
+      expect(status.isError).not.toBe(true);
+      expect(
+        (status.structuredContent as { bundles: Array<{ id: string; state: string }> }).bundles.map(
+          (row) => [row.id, row.state],
+        ),
+      ).toEqual([
+        ["terms", "serving"],
+        ["acme", "index-broken"],
+      ]);
+      expect((await run.end()).code).toBe(0);
+      // The log carries what the model is not told: the folder and the file system's words, under the bundle.
+      expect(run.stderr()).toMatch(/"event":"index.broken","bundle":"acme".*EACCES/);
+      expect(run.stderr()).toContain(own);
+    } finally {
+      chmodSync(own, 0o700);
+    }
+  });
+
+  // The fold of bite c's build reviews, C-I-A4: a network of one bundle refuses as a whole, as version 0 did (D74),
+  // when its bundle's part of the index cannot be brought in line (D39) or its first load cannot be indexed; either
+  // way the model reads a fixed sentence, and the log has the folder and the engine's words. The sentence says the
+  // index refuses, never that the configuration needs fixing, which would not fix it (bite c's verification).
+  it("refuses a one-bundle network whose index cannot take or drop its pages, naming neither the cache path nor the engine's words", async () => {
+    const PREFIX = "the server is refusing every request: ";
+    for (const [fixture, sentence] of [
+      // Refused by the loader (no manifest), its pages cannot leave the index: D39.
+      [
+        "no-manifest",
+        "the index could not be re-aligned with the served pages; nothing is served until the server restarts, and the log has the detail",
+      ],
+      // Loaded, its pages cannot enter the index: the first load fails.
+      ["spec-example", "the index could not take this bundle's pages; the log has the detail"],
+    ] as const) {
+      const b = box(fixture);
+      const own = join(companyDir(b), "bundles", "fixture");
+      mkdirSync(own, { recursive: true, mode: 0o700 });
+      chmodSync(own, 0o500);
+      try {
+        const run = rawServer(b);
+        run.send(INITIALIZE);
+        await run.waitFor(1);
+        run.send(INITIALIZED);
+        for (const [id, name, args] of [
+          [2, "search", { question: "revenue" }],
+          [3, "get_page", { path: "index.md" }],
+          [4, "status", {}],
+        ] as const) {
+          run.send({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
+          const answer = await run.waitFor(id);
+          // Neither channel names the cache folder, nor carries the file system's words.
+          expect(JSON.stringify(answer), `${fixture} ${name}`).not.toContain(b.cacheRoot);
+          expect(JSON.stringify(answer), `${fixture} ${name}`).not.toMatch(
+            /EACCES|permission denied/,
+          );
+          const result = answer.result as { isError?: boolean; content: Array<{ text: string }> };
+          expect(result.isError, `${fixture} ${name}`).toBe(true);
+          expect(result.content[0]?.text, `${fixture} ${name}`).toBe(`${PREFIX}${sentence}`);
+        }
+        expect((await run.end()).code).toBe(0);
+        // The log carries what the model is not told: the folder and the file system's words, under the bundle.
+        expect(run.stderr(), fixture).toMatch(/"bundle":"fixture".*EACCES/);
+        expect(run.stderr(), fixture).toContain(own);
+      } finally {
+        chmodSync(own, 0o700);
+      }
+    }
+  });
+
+  // The fold of bite c's build reviews, C-I-A3: git that cannot be prepared refuses the repository bundles alone when
+  // the network holds a local bundle, and the network as a whole when every bundle is a repository's.
+  it("serves a local bundle while git cannot be prepared, each repository bundle refused alone as load-failed", async () => {
+    const fixtures = join(REPO, "test", "fixtures", "bundles");
+    const yaml = `network: fixture\nbundles:\n  - id: terms\n    source:\n      local: ${join(fixtures, "behaviours")}\n  - id: remote\n    source:\n      repository: "https://host.example/org/repo.git"\n`;
+    const b = box("spec-example", yaml);
+    const noGit = mkdtempSync(join(tmpdir(), "okf-catalog-nogit-"));
+    b.env.PATH = noGit;
+    try {
+      const run = rawServer(b);
+      run.send(INITIALIZE);
+      await run.waitFor(1);
+      run.send(INITIALIZED);
+      const call = async (id: number, name: string, args: Record<string, unknown>) => {
+        run.send({ jsonrpc: "2.0", id, method: "tools/call", params: { name, arguments: args } });
+        return (await run.waitFor(id)).result as {
+          isError?: boolean;
+          content: Array<{ text: string }>;
+          structuredContent?: Record<string, unknown>;
+        };
+      };
+      const found = await call(2, "search", { question: "alpha glossary" });
+      expect(found.isError).not.toBe(true);
+      expect(found.content[0]?.text.split("\n")[0]).toContain("not searched: remote (load-failed)");
+      const named = await call(3, "get_page", { path: "index.md", bundle: "remote" });
+      expect(named.content[0]?.text).toBe(
+        "the bundle remote was refused and nothing in it is served: load-failed: git was not found on PATH; install git 2.30 or later to serve a repository source",
+      );
+      const status = await call(4, "status", {});
+      expect(status.structuredContent?.refusing).toBeNull();
+      expect(
+        (status.structuredContent as { bundles: Array<{ id: string; state: string }> }).bundles.map(
+          (row) => [row.id, row.state],
+        ),
+      ).toEqual([
+        ["terms", "serving"],
+        ["remote", "load-failed"],
+      ]);
+      expect((await run.end()).code).toBe(0);
+      expect(run.stderr()).toMatch(/"event":"load.failed","bundle":"remote"/);
+    } finally {
+      rmSync(noGit, { recursive: true, force: true });
+    }
+  });
+
+  // Bite c's verification: git that is on PATH but cannot be run to read its version answers with a fixed sentence,
+  // its own words (which may name its path or the cache folder) going to the log; a mutation that put git's words
+  // back into the sentence survived the suite.
+  it("refuses each repository bundle with a fixed sentence when git cannot be run to read its version", async () => {
+    const fixtures = join(REPO, "test", "fixtures", "bundles");
+    const yaml = `network: fixture\nbundles:\n  - id: terms\n    source:\n      local: ${join(fixtures, "behaviours")}\n  - id: remote\n    source:\n      repository: "https://host.example/org/repo.git"\n`;
+    const b = box("spec-example", yaml);
+    const broken = mkdtempSync(join(tmpdir(), "okf-catalog-badgit-"));
+    writeFileSync(
+      join(broken, "git"),
+      `#!/bin/sh\necho "fatal: cannot read ${b.cacheRoot}/okf-catalog/secret" >&2\nexit 1\n`,
+    );
+    chmodSync(join(broken, "git"), 0o755);
+    b.env.PATH = broken;
+    try {
+      const run = rawServer(b);
+      run.send(INITIALIZE);
+      await run.waitFor(1);
+      run.send(INITIALIZED);
+      run.send({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "get_page", arguments: { path: "index.md", bundle: "remote" } },
+      });
+      const answer = await run.waitFor(2);
+      expect(JSON.stringify(answer)).not.toContain(b.cacheRoot);
+      expect((answer.result as { content: Array<{ text: string }> }).content[0]?.text).toBe(
+        "the bundle remote was refused and nothing in it is served: load-failed: git could not be run to read its version; install git 2.30 or later to serve a repository source (the log has the detail)",
+      );
+      expect((await run.end()).code).toBe(0);
+      // The log has git's own words, under the bundle.
+      expect(run.stderr()).toMatch(/"event":"load.failed","bundle":"remote".*cannot read/);
+    } finally {
+      rmSync(broken, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses an all-repository network as a whole while git cannot be prepared, and still answers status with its rows", async () => {
+    const yaml = `network: fixture\nbundles:\n  - id: one\n    source:\n      repository: "https://host.example/org/one.git"\n  - id: two\n    source:\n      repository: "https://host.example/org/two.git"\n`;
+    const b = box("spec-example", yaml);
+    const noGit = mkdtempSync(join(tmpdir(), "okf-catalog-nogit-"));
+    b.env.PATH = noGit;
+    try {
+      const run = rawServer(b);
+      run.send(INITIALIZE);
+      await run.waitFor(1);
+      run.send(INITIALIZED);
+      run.send({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "search", arguments: { question: "alpha" } },
+      });
+      const found = (await run.waitFor(2)).result as {
+        isError?: boolean;
+        content: Array<{ text: string }>;
+      };
+      expect(found.isError).toBe(true);
+      expect(found.content[0]?.text).toBe(
+        "the server is refusing every request until its configuration is fixed: git was not found on PATH; install git 2.30 or later to serve a repository source",
+      );
+      const status = await statusOver(run, 3);
+      expect(status.refusing).toMatch(/^git was not found on PATH/);
+      expect(
+        (status.bundles as Array<{ id: string; state: string }>).map((row) => [row.id, row.state]),
+      ).toEqual([
+        ["one", "load-failed"],
+        ["two", "load-failed"],
+      ]);
+      expect((await run.end()).code).toBe(0);
+    } finally {
+      rmSync(noGit, { recursive: true, force: true });
+    }
+  });
+
+  it("loads a company: file as a one-bundle network and moves the version 0 cache into bundles/<id>", async () => {
+    const repo = packedRepo();
+    try {
+      const yaml = `company: fixture\nsource:\n  repository: "${repo.url}"\n  branch: published\n`;
+      const b = box("spec-example", yaml);
+      b.env.OKF_CATALOG_GIT_PROTOCOLS = "file";
+      const dir = companyDir(b);
+      // A first server writes the network's layout; its clone, link and generation are then put back where a
+      // version 0 server kept them, at the root of the folder.
+      const first = rawServer(b);
+      first.send(INITIALIZE);
+      await first.waitFor(1);
+      first.send(INITIALIZED);
+      const before = await statusOver(first, 2);
+      const commit = (before.published as { commit: string }).commit;
+      expect((await first.end()).code).toBe(0);
+      const own = join(dir, "bundles", "fixture");
+      renameSync(join(own, "source"), join(dir, "source"));
+      const [generation] = readdirSync(own).filter((n) => n.startsWith("gen-"));
+      if (generation === undefined) throw new Error("no generation");
+      renameSync(join(own, generation), join(dir, generation));
+      symlinkSync(generation, join(dir, "derived"));
+      rmSync(join(dir, "bundles"), { recursive: true, force: true });
+      // The remote goes away: the moved clone's tree is what the next server answers from (the offline fallback).
+      renameSync(join(repo.root, "origin.git"), join(repo.root, "origin.moved"));
+      const second = rawServer(b);
+      second.send(INITIALIZE);
+      await second.waitFor(1);
+      second.send(INITIALIZED);
+      const after = await statusOver(second, 2);
+      // A company: file's status keeps version 0's shape (D74).
+      expect(after).toMatchObject({
+        company: "fixture",
+        source: repo.url,
+        admitted: 1,
+        lock: "exclusive",
+        published: { commit },
+      });
+      expect(after.network).toBeUndefined();
+      second.send({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "get_page", arguments: { path: "alpha.md" } },
+      });
+      expect(JSON.stringify(await second.waitFor(3))).toContain("alpha body");
+      expect((await second.end()).code).toBe(0);
+      // Under the lock the clone was moved into the bundle's folder, and the root link and generation removed.
+      expect(existsSync(join(own, "source", "repo.git", "HEAD"))).toBe(true);
+      expect(existsSync(join(dir, "source"))).toBe(false);
+      expect(existsSync(join(dir, "derived"))).toBe(false);
+      expect(readdirSync(dir).filter((n) => n.startsWith("gen-"))).toEqual([]);
+      // The alias is named in the log at start (D-G).
+      expect(second.stderr()).toMatch(/"event":"serve.alias"/);
+    } finally {
+      rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  // The fold of bite c's build reviews, C-I-E3: a version 0 file whose company is vendor, dist or build still loads
+  // until 0.5.0 (one collection per bundle makes the name harmless, D73), and the log says why it must change.
+  it("serves a company: file whose company is vendor, noting at start that a network: file refuses the name", async () => {
+    const b = box(
+      "spec-example",
+      `company: vendor\nsource:\n  local: ${join(REPO, "test", "fixtures", "bundles", "spec-example")}\n`,
+    );
+    const run = rawServer(b);
+    run.send(INITIALIZE);
+    await run.waitFor(1);
+    run.send(INITIALIZED);
+    run.send({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "search", arguments: { question: "revenue recognition" } },
+    });
+    const found = (await run.waitFor(2)).result as {
+      isError?: boolean;
+      structuredContent: { hits: Array<{ bundle: string; path: string }> };
+    };
+    expect(found.isError).not.toBe(true);
+    expect(found.structuredContent.hits.map((hit) => [hit.bundle, hit.path])).toContainEqual([
+      "vendor",
+      "policies/revenue-recognition.md",
+    ]);
+    expect((await run.end()).code).toBe(0);
+    expect(existsSync(join(b.cacheRoot, "okf-catalog", "vendor", "bundles", "vendor"))).toBe(true);
+    const notes = run
+      .stderr()
+      .split("\n")
+      .filter((line) => line.includes('"event":"serve.alias"'));
+    expect(notes).toHaveLength(2);
+    expect(notes[1]).toContain(
+      "company: vendor stays the bundle's id until 0.5.0 removes company:; a network: file refuses vendor, dist and build as bundle ids",
+    );
+  });
+
+  it("removes a version 0 clone the bundle's own clone has replaced, and a link in its place, touching nothing it points at", async () => {
+    const repo = packedRepo();
+    try {
+      const yaml = `company: fixture\nsource:\n  repository: "${repo.url}"\n  branch: published\n`;
+      const b = box("spec-example", yaml);
+      b.env.OKF_CATALOG_GIT_PROTOCOLS = "file";
+      const dir = companyDir(b);
+      const once = async (): Promise<ReturnType<typeof rawServer>> => {
+        const run = rawServer(b);
+        run.send(INITIALIZE);
+        await run.waitFor(1);
+        run.send(INITIALIZED);
+        expect((await statusOver(run, 2)).admitted).toBe(1);
+        expect((await run.end()).code).toBe(0);
+        return run;
+      };
+      await once();
+      const own = join(dir, "bundles", "fixture", "source", "repo.git", "HEAD");
+      expect(existsSync(own)).toBe(true);
+      // A version 0 clone beside the bundle's own: the bundle keeps its own, the old one goes.
+      mkdirSync(join(dir, "source"), { mode: 0o700 });
+      writeFileSync(join(dir, "source", "state.json"), "{}\n");
+      const second = await once();
+      expect(existsSync(join(dir, "source"))).toBe(false);
+      expect(existsSync(own)).toBe(true);
+      expect(second.stderr()).toMatch(/"event":"cache.version0".*removed/);
+      // A link where the clone was: the link goes, and what it points at stays.
+      const outside = mkdtempSync(join(tmpdir(), "okf-catalog-outside-"));
+      writeFileSync(join(outside, "keep.txt"), "kept\n");
+      symlinkSync(outside, join(dir, "source"));
+      await once();
+      expect(existsSync(join(dir, "source"))).toBe(false);
+      expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("kept\n");
+      rmSync(outside, { recursive: true, force: true });
+    } finally {
+      rmSync(repo.root, { recursive: true, force: true });
+    }
+  });
+
+  // The fold of bite c's build reviews, C-I-B3, C-I-B4 and C-A-B1: two repository bundles through serve, each with its
+  // own clone, its own poller at its own interval, and its source's log records under its own id (D75).
+  it("serves two repository bundles, each polled at its own interval and logged under its own id", async () => {
+    const first = packedRepo();
+    const second = packedRepo();
+    const yaml = (one: string, two: string): string =>
+      `network: fixture\nbundles:\n  - id: one\n    source:\n      repository: "${one}"\n    serve:\n      pull_interval: 30s\n  - id: two\n    source:\n      repository: "${two}"\n    serve:\n      pull_interval: 2m\n`;
+    type Row = {
+      id: string;
+      state: string;
+      poller: { intervalMs: number; lastTick: string | null; lastOutcome: string | null } | null;
+    };
+    try {
+      const b = box("spec-example", yaml(first.url, second.url));
+      b.env.OKF_CATALOG_GIT_PROTOCOLS = "file";
+      const start = async (): Promise<ReturnType<typeof rawServer>> => {
+        const run = rawServer(b);
+        run.send(INITIALIZE);
+        await run.waitFor(1);
+        run.send(INITIALIZED);
+        return run;
+      };
+      // Each bundle clones its own repository into its own folder, and both are searched.
+      const online = await start();
+      const rows = (await statusOver(online, 2)).bundles as Row[];
+      expect(rows.map((row) => [row.id, row.state])).toEqual([
+        ["one", "serving"],
+        ["two", "serving"],
+      ]);
+      online.send({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "search", arguments: { question: "alpha" } },
+      });
+      const found = (await online.waitFor(3)).result as {
+        structuredContent: { hits: Array<{ bundle: string }> };
+      };
+      expect(new Set(found.structuredContent.hits.map((hit) => hit.bundle))).toEqual(
+        new Set(["one", "two"]),
+      );
+      expect((await online.end()).code).toBe(0);
+      for (const id of ["one", "two"])
+        expect(
+          existsSync(join(companyDir(b), "bundles", id, "source", "repo.git", "HEAD")),
+          id,
+        ).toBe(true);
+      // Each bundle names the other's repository now: each source starts over, and says so under its own id.
+      writeFileSync(b.configPath, yaml(second.url, first.url));
+      const swapped = await start();
+      expect(
+        ((await statusOver(swapped, 2)).bundles as Row[]).map((row) => [row.id, row.state]),
+      ).toEqual([
+        ["one", "serving"],
+        ["two", "serving"],
+      ]);
+      expect((await swapped.end()).code).toBe(0);
+      for (const id of ["one", "two"])
+        expect(swapped.stderr(), id).toMatch(
+          new RegExp(`"event":"source.recloned","bundle":"${id}"`),
+        );
+      // Offline, each bundle answers from its tree on disk and its own poller ticks at once: each tick names its
+      // bundle, and each row shows its own poller at its own interval.
+      renameSync(join(first.root, "origin.git"), join(first.root, "origin.moved"));
+      renameSync(join(second.root, "origin.git"), join(second.root, "origin.moved"));
+      const offline = await start();
+      const ticked = (id: string): boolean =>
+        offline.stderr().includes(`"event":"poller.tick","bundle":"${id}"`);
+      const started = Date.now();
+      while (!(ticked("one") && ticked("two")) && Date.now() - started < 20_000)
+        await new Promise((r) => setTimeout(r, 50));
+      expect(ticked("one") && ticked("two")).toBe(true);
+      const polled = (await statusOver(offline, 2)).bundles as Row[];
+      expect(
+        polled.map((row) => [row.id, row.poller?.intervalMs, row.poller?.lastOutcome]),
+      ).toEqual([
+        ["one", 30_000, "failed"],
+        ["two", 120_000, "failed"],
+      ]);
+      expect((await offline.end()).code).toBe(0);
+    } finally {
+      rmSync(first.root, { recursive: true, force: true });
+      rmSync(second.root, { recursive: true, force: true });
+    }
+  });
+
+  // The fold of bite c's build reviews, C-I-B2 (D73's "else removed"): a version 0 clone moves only into the one
+  // repository bundle of a network that has exactly one, and only when it is a folder; otherwise it is removed.
+  it("removes a version 0 clone that no one repository bundle can take, and never moves a link", async () => {
+    const planted = '{"planted":"version 0"}\n';
+    const serveOnce = async (
+      b: Sandbox,
+    ): Promise<{ status: Record<string, unknown>; log: string }> => {
+      const run = rawServer(b);
+      run.send(INITIALIZE);
+      await run.waitFor(1);
+      run.send(INITIALIZED);
+      const status = await statusOver(run, 2);
+      expect((await run.end()).code).toBe(0);
+      return { status, log: run.stderr() };
+    };
+    const removed = /"event":"cache.version0","detail":"the version 0 clone was removed/;
+    // No repository bundle: a company: file with a local source.
+    {
+      const b = box("spec-example");
+      const dir = companyDir(b);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      plantVersion0(dir);
+      const { status, log } = await serveOnce(b);
+      expect(status.admitted).toBe(9);
+      expect(existsSync(join(dir, "source"))).toBe(false);
+      expect(existsSync(join(dir, "derived"))).toBe(false);
+      expect(log).toMatch(removed);
+    }
+    // Two repository bundles: neither takes it.
+    const one = packedRepo();
+    const two = packedRepo();
+    try {
+      const b = box(
+        "spec-example",
+        `network: fixture\nbundles:\n  - id: one\n    source:\n      repository: "${one.url}"\n  - id: two\n    source:\n      repository: "${two.url}"\n`,
+      );
+      b.env.OKF_CATALOG_GIT_PROTOCOLS = "file";
+      const dir = companyDir(b);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      plantVersion0(dir);
+      const { status, log } = await serveOnce(b);
+      expect(
+        (status.bundles as Array<{ id: string; state: string }>).map((row) => [row.id, row.state]),
+      ).toEqual([
+        ["one", "serving"],
+        ["two", "serving"],
+      ]);
+      expect(existsSync(join(dir, "source"))).toBe(false);
+      expect(log).toMatch(removed);
+      expect(log).not.toMatch(/moved into the bundle's folder/);
+      for (const id of ["one", "two"]) {
+        const state = join(dir, "bundles", id, "source", "state.json");
+        expect(existsSync(state) ? readFileSync(state, "utf8") : "", id).not.toBe(planted);
+      }
+    } finally {
+      rmSync(one.root, { recursive: true, force: true });
+      rmSync(two.root, { recursive: true, force: true });
+    }
+    // One repository bundle with no clone of its own yet, and a link where the clone was: the link goes, what it
+    // points at stays, and the bundle clones into a folder of its own.
+    const repo = packedRepo();
+    const outside = mkdtempSync(join(tmpdir(), "okf-catalog-outside-"));
+    try {
+      const b = box(
+        "spec-example",
+        `company: fixture\nsource:\n  repository: "${repo.url}"\n  branch: published\n`,
+      );
+      b.env.OKF_CATALOG_GIT_PROTOCOLS = "file";
+      const dir = companyDir(b);
+      mkdirSync(dir, { recursive: true, mode: 0o700 });
+      writeFileSync(join(outside, "keep.txt"), "kept\n");
+      symlinkSync(outside, join(dir, "source"));
+      const { status, log } = await serveOnce(b);
+      expect(status.admitted).toBe(1);
+      expect(existsSync(join(dir, "source"))).toBe(false);
+      expect(lstatSync(join(dir, "bundles", "fixture", "source")).isSymbolicLink()).toBe(false);
+      expect(readFileSync(join(outside, "keep.txt"), "utf8")).toBe("kept\n");
+      expect(log).toMatch(removed);
+    } finally {
+      rmSync(repo.root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves the version 0 cache alone in the private fallback", async () => {
+    const b = box("spec-example");
+    const dir = companyDir(b);
+    mkdirSync(dir, { recursive: true, mode: 0o700 });
+    plantVersion0(dir);
+    // Another process holds the network's lock: this one serves from a private folder and moves nothing.
+    const holder = spawn(process.execPath, [join(REPO, "test", "helpers", "hold-lock.mjs"), dir], {
+      stdio: ["pipe", "pipe", "inherit"],
+    });
+    try {
+      const held = await new Promise<string>((resolve) =>
+        holder.stdout?.once("data", (chunk: Buffer) => resolve(chunk.toString().trim())),
+      );
+      expect(held).toBe("exclusive");
+      const run = rawServer(b);
+      run.send(INITIALIZE);
+      await run.waitFor(1);
+      run.send(INITIALIZED);
+      const status = await statusOver(run, 2);
+      expect(status.lock).toBe("private");
+      expect(status.admitted).toBe(9);
+      expect((await run.end()).code).toBe(0);
+      expect(readFileSync(join(dir, "source", "state.json"), "utf8")).toBe(
+        '{"planted":"version 0"}\n',
+      );
+      expect(readlinkSync(join(dir, "derived"))).toBe("gen-1-1-1");
+      expect(existsSync(join(dir, "gen-1-1-1", "page.md"))).toBe(true);
+      expect(existsSync(join(dir, "bundles"))).toBe(false);
+    } finally {
+      holder.stdin?.end();
+      holder.kill();
+    }
   });
 });

@@ -4,7 +4,7 @@ Status: planning document, 2026-10-06. Nothing is built yet. This document says 
 
 ## 1. In one sentence
 
-A small-company hosted knowledge catalog for agents: a server that serves a company's verified OKF pages over MCP, runs on your own machine today and from a cheap cloud recipe tomorrow, so that local coding agents and the web versions of Claude and ChatGPT answer from the same cited knowledge.
+A small-company hosted knowledge catalog for agents: a server that serves a company's verified OKF pages over MCP (one bundle, or, from 0.4.0, a network of the bundles one audience follows, in one index), runs on your own machine today and from a cheap cloud recipe tomorrow, so that local coding agents and the web versions of Claude and ChatGPT answer from the same cited knowledge.
 
 The value added: **qmd done right for OKF.** qmd is the best Markdown search engine there is. okf-catalog makes it understand OKF's fields. Titles, descriptions and tags are ranked as they should be, status and recheck dates are respected, trust and provenance come back with every answer, and deprecated pages point to their replacements.
 
@@ -21,13 +21,13 @@ The priority: serving is the problem. Publishing is the contract the server need
 | Tool | Takes | Returns |
 |---|---|---|
 | `search` | Keywords or a short question; optional `type`, `topic`, `tag`, `status`, `min_trust` and `freshness` (`include_stale` its alias until 0.5.0), applied after the engine answers; `tag`, `status`, `min_trust` and `freshness` never reach the engine, while `type` and `topic` also add their words to the first query. Common words are dropped, and when nothing matches every word the match is relaxed and the answer says so. Pages past their recheck date are included and flagged unless the caller asks for fresh ones (from 0.2.0). Caller-written sub-queries arrive with full mode in version 1 | Ranked pages with path, title, snippet, trust tier, status and recheck date |
-| `get_page` | A page path, or its concept id (the path without `.md`) | The page body plus provenance: verifier and date, recheck date, sources with their ids, replacement if deprecated |
-| `catalog` | An optional folder | The index of the bundle or of one folder |
-| `status` | Nothing | What is loaded, from which commit, when it was last pulled, and the report of what was degraded or refused |
+| `get_page` | A page path, or its concept id (the path without `.md`); the bundle when two bundles serve the name (from 0.4.0) | The page body plus provenance: verifier and date, recheck date, sources with their ids, replacement if deprecated; its bundle and concept id |
+| `catalog` | An optional folder, and the bundle it is in (from 0.4.0) | The index of the bundle or of one folder; beyond one bundle and none named, the bundles with their root indexes |
+| `status` | Nothing | What is loaded, from which commit and publish time, when it was last pulled, and the report of what was degraded or refused; beyond one bundle, the network and a row per bundle in counts, or with a bundle that bundle's own report (from 0.4.0) |
 | `citations` | A page path, or its concept id | What the page cites and what cites it, from what the bundle states: its body links with their text and nearest heading, its footnoted claims joined to their sources (a footnote counts only where the page defines it), the sources no footnote cites, the footnotes with no source, the links that point to it, its own included, and the pages whose `resource` or sources name it, each with its status; each list at most 50 rows with its total, within the result budget; nothing fetched |
 | `provenance` | A page path, or its concept id; an optional `depth`, 0 to 8 (4 when omitted) | Where the page's sources lead inside the bundle: its `resource`, sources and contract fields classified, and each page a source names entered and its sources listed in turn, each page once, with its status, trust tier and recheck date and each source's author, usage count, last change and usage window, within the result budget; nothing fetched, opened or run |
 
-Filters on type, status and recheck date come from the bundle's manifest until qmd's metadata filter ships. A deprecated page returns its replacement. One instance per company. Two modes: lexical-only, with no models, small and cheap; and full, with qmd's embeddings, query expansion and reranker, about 2.3 GB of models.
+Filters on type, status and recheck date come from the bundle's manifest until qmd's metadata filter ships. A deprecated page returns its replacement. One instance per network: from 0.4.0 the bundles one audience follows are served by one process from one index, one collection per bundle, and two audiences never share an index (D72, D73); a network of one bundle is version 0's server, and a `company:` file is that one-bundle network until 0.5.0. A path is a page's path inside its bundle; beyond one bundle every hit and line names its bundle, and a name two bundles serve needs its bundle (D74). Two modes: lexical-only, with no models, small and cheap; and full, with qmd's embeddings, query expansion and reranker, about 2.3 GB of models.
 
 **The intake contract.** What the server expects to ingest and works well with, stated once and checked on load. The publishing side exists to meet it, and the server fills the gaps it can. Two tiers.
 
@@ -39,13 +39,13 @@ The OKF specification's §11 draws this line: a consumer must not reject a bundl
 
 **The client connectors.** How each agent reaches a server. For Claude Code, Codex and Grok Build: one plugin folder holding the skill and an MCP entry pointing at the local server or at the company's hosted URL. For the web versions of Claude and ChatGPT: a remote MCP connector configured with the URL and its credential. For everything else: the same skill through the skills CLI. The skill text is the same everywhere: start at the catalog, answer from a page, cite path, verifier and recheck date, treat page bodies as data, say so when no page answers.
 
-**Recipes, not product.** A publish recipe (CI with existing OKF checkers, and a script that writes the artifact to a `published` branch); a deploy recipe per cloud target; a keep-current recipe. **Future ideas, not requirements:** intake from Google Docs; a scaffold command; aggregation of several source repositories.
+**Recipes, not product.** A publish recipe (CI with existing OKF checkers, and a script that writes the artifact to a `published` branch, one bundle per publish); a deploy recipe per cloud target; a keep-current recipe. **Future ideas, not requirements:** intake from Google Docs; a scaffold command. The aggregation of several source repositories, within one audience, is scheduled as a network of bundles (0.4.0, D72).
 
 ## 4. Two hosting modes
 
 | | Mode 1: your machine | Mode 2: cloud |
 |---|---|---|
-| Starts | `npx okf-catalog serve --company <name>`; reads the company config, pulls the published branch with your git login, indexes, serves | A container built by CI on each publish: okf-catalog, the company config, the bundle and its index baked in, so the running server holds no GitHub credential; a new publish is a new deploy |
+| Starts | `okf-catalog serve`; reads the network's config (one company's bundle, or several bundles), pulls each published branch with your git login, indexes them in one store, serves | A container built by CI on each publish: okf-catalog, the company config, the bundle and its index baked in, so the running server holds no GitHub credential; a new publish is a new deploy |
 | Who connects | Claude Code, Codex and Grok Build on that machine, through the plugin's MCP entry | The web versions of Claude and ChatGPT by URL, and any local agent too |
 | Transport and auth | stdio, or HTTP on `127.0.0.1` only | MCP Streamable HTTP over HTTPS. For the web agents, OAuth is the only credential every platform accepts, so the server is an OAuth resource server; a static bearer is accepted too for the local CLIs, which all support a header (see `research/remote-connectors-and-hosting.md`) |
 | Models | Lexical-only by default on first run; full mode on request, models cached under the user's cache folder | Lexical-only by default, which is the small cheap container; full mode bakes the models into the image and needs about 2 vCPU and 8 GiB. qmd's own query path downloads models lazily, so lexical mode calls qmd's lexical search directly |
@@ -59,7 +59,7 @@ The two modes serve the same artifact and run the same code. The difference is w
 1. **Today, locally.** The server runs on a developer's machine over a real bundle. Claude Code, through the plugin, answers a question from a page and cites path, verifier and recheck date, refuses an instruction found inside a page, and says so when no page answers.
 2. **A real publish.** One page is verified and promoted; the publish recipe writes the branch; the local server picks it up at its next pull; the next session answers from the new text with no reinstall.
 3. **Cloud.** First a spike, before any recipe: a hosted instance behind OAuth, and claude.ai's connector completing the handshake and a cited answer end to end. This is the biggest unknown. Then the recipe: the same server deployed from CI, claude.ai and ChatGPT connect by URL and give the same cited answer, and a wrong credential and a connection without one both fail closed.
-4. **Second company.** The same from a second config file, with no code change, and a search in one company returns nothing from the other.
+4. **Second audience.** The same from a second config file, with no code change, and a search in one network returns nothing from the other. Within one audience, several bundles are one network: one process, one index, each bundle loaded, refused and refreshed on its own (0.4.0).
 
 Items 1 and 2 are version 0; 3 and 4 are version 1.
 
@@ -108,7 +108,7 @@ What qmd does, checked against its code at release 2.8.3 and at main on 2026-10-
 - offline, the server serves its cache and reports when it last pulled;
 - lexical and full mode are measured against each other on one laptop, on the benchmark corpus and the acceptance questions, and the result is recorded before the default is confirmed.
 
-**Version 1: cloud, and the web agents.** First the OAuth spike (section 5, item 3), with its result recorded before anything else is built. Then the deploy recipe for Cloud Run and a VPS; the resource-server auth; full mode as an option; Codex and Grok Build plugins. Done when: claude.ai and ChatGPT connect to a hosted instance by URL and give a cited answer; a wrong credential and a connection without one fail closed; a new publish reaches the hosted instance; a second company runs from a second config with no code change; a search in one company returns nothing from the other; the lexical-versus-full measurement is repeated on at least 50 questions from a company's pages, paraphrases counted separately, and the default for cloud mode is chosen from it.
+**Version 1: cloud, and the web agents.** First the OAuth spike (section 5, item 3), with its result recorded before anything else is built. Then the deploy recipe for Cloud Run and a VPS; the resource-server auth; full mode as an option; Codex and Grok Build plugins. Done when: claude.ai and ChatGPT connect to a hosted instance by URL and give a cited answer; a wrong credential and a connection without one fail closed; a new publish reaches the hosted instance; a second network (another audience) runs from a second config with no code change; a search in one network returns nothing from the other; the lexical-versus-full measurement is repeated on at least 50 questions from a company's pages, paraphrases counted separately, and the default for cloud mode is chosen from it.
 
 **Version 2: recipes polished.** CI recipe hardening; the skills CLI and Cursor and Gemini connectors; upstream proposals to qmd (frontmatter into metadata; date comparison). Future ideas stay future until a company asks.
 
@@ -144,9 +144,9 @@ Access: one server and one repository per company, readable by everyone who shou
 
 - A validator or linter of our own: the publish recipe runs the existing OKF checkers.
 - A publishing and delivery kit of many commands.
-- A multi-tenant server: one instance per company, by design.
+- A multi-tenant server: one instance per network, an audience's bundles, by design; two audiences never share an index.
 - Windows as a supported host.
-- Intake from Google Docs, a scaffold command, aggregation of several repositories: future ideas, not requirements.
+- Intake from Google Docs and a scaffold command: future ideas, not requirements. Aggregation within one audience is a network (0.4.0); a graph across bundles is not planned.
 
 ## 12. Open questions
 

@@ -3,9 +3,11 @@ import { type BundleFile, DEFAULT_CAPS, type LoadOptions } from "../../src/bundl
 import type { Catalog } from "../../src/catalog/model.js";
 import type {
   Generation,
+  Network,
   RefreshOutcome,
   Runtime,
   RuntimeStatus,
+  ToolOptions,
 } from "../../src/catalog/runtime.js";
 import { deriveDocument } from "../../src/derive/derived-document.js";
 import { renderDocument } from "../../src/engine/qmd-render.js";
@@ -23,28 +25,36 @@ const EMPTY_INDEX: IndexResult = {
   encodedFolders: [],
 };
 
-/** An in-memory engine with qmd's observable contract: prefix match on every term, the path as a column, SQLite's frequency floor. */
-export function fakeEngine(catalog: Catalog): Engine {
-  const texts = new Map<string, string[]>();
-  for (const page of catalog.pages.values()) {
-    const text = `${page.path} ${renderDocument(deriveDocument(page))}`.toLowerCase();
-    texts.set(
-      page.path,
-      text.split(/[^\p{L}\p{N}\p{M}-]+/u).filter((w) => w.length > 0),
-    );
+/**
+ * An in-memory engine with qmd's observable contract: prefix match on every term, the path as a column, SQLite's
+ * frequency floor; one table for every catalog it is given, as the network's index is (D73), each hit with its
+ * bundle.
+ */
+export function fakeEngine(catalogs: Catalog | readonly Catalog[]): Engine {
+  const texts: Array<{ bundle: string; path: string; words: string[] }> = [];
+  for (const catalog of Array.isArray(catalogs) ? catalogs : [catalogs as Catalog]) {
+    for (const page of catalog.pages.values()) {
+      const text =
+        `${catalog.bundle} ${page.path} ${renderDocument(deriveDocument(page))}`.toLowerCase();
+      texts.push({
+        bundle: catalog.bundle,
+        path: page.path,
+        words: text.split(/[^\p{L}\p{N}\p{M}-]+/u).filter((w) => w.length > 0),
+      });
+    }
   }
   const weight = (term: string): number => {
     let df = 0;
-    for (const words of texts.values()) if (words.some((w) => w.startsWith(term))) df += 1;
-    return df * 2 >= texts.size ? 1e-6 : 1;
+    for (const { words } of texts) if (words.some((w) => w.startsWith(term))) df += 1;
+    return df * 2 >= texts.length ? 1e-6 : 1;
   };
   return {
     async index(): Promise<IndexResult> {
-      return { ...EMPTY_INDEX, documents: texts.size, indexed: texts.size };
+      return { ...EMPTY_INDEX, documents: texts.length, indexed: texts.length };
     },
     async lex(terms, limit): Promise<EngineHit[]> {
       const hits: EngineHit[] = [];
-      for (const [path, words] of texts) {
+      for (const { bundle, path, words } of texts) {
         let bm25 = 0;
         let all = true;
         for (const term of terms) {
@@ -52,21 +62,32 @@ export function fakeEngine(catalog: Catalog): Engine {
           if (n === 0) all = false;
           bm25 += n * weight(term);
         }
-        if (all && terms.length > 0) hits.push({ path, bm25, score: bm25 / (1 + bm25) });
+        if (all && terms.length > 0) hits.push({ bundle, path, bm25, score: bm25 / (1 + bm25) });
       }
-      return hits.sort((a, b) => b.bm25 - a.bm25 || (a.path < b.path ? -1 : 1)).slice(0, limit);
+      return hits
+        .sort(
+          (a, b) =>
+            b.bm25 - a.bm25 ||
+            (a.path < b.path ? -1 : a.path > b.path ? 1 : a.bundle < b.bundle ? -1 : 1),
+        )
+        .slice(0, limit);
+    },
+    async drop(): Promise<IndexResult> {
+      return EMPTY_INDEX;
     },
     async status() {
-      return { documents: texts.size };
+      return { documents: texts.length };
     },
     async close() {},
   };
 }
 
+/** A generation of one bundle, `b` unless another id is given. */
 export function loadGeneration(
   files: BundleFile[],
   patch: Partial<LoadOptions>,
   now: Date,
+  bundle = "b",
 ): Generation {
   const options: LoadOptions = {
     admit: ["stable", "deprecated"],
@@ -76,7 +97,7 @@ export function loadGeneration(
     caps: DEFAULT_CAPS,
     ...patch,
   };
-  const { catalog, report } = loadBundle("b", files, options, now);
+  const { catalog, report } = loadBundle(bundle, files, options, now);
   return {
     catalog,
     report,
@@ -87,29 +108,48 @@ export function loadGeneration(
   };
 }
 
-/** A runtime over one fixed generation, or one that refuses with a fix. */
+/**
+ * A runtime over fixed generations: one, a network of one bundle named as its catalog is, or several, a network of
+ * those bundles in that order; or one that refuses with a fix.
+ */
 export function fakeRuntime(
-  generation: Generation | undefined,
+  generations: Generation | readonly Generation[] | undefined,
   refusing?: string,
 ): Runtime & { leases: number } {
-  const engine = generation === undefined ? undefined : fakeEngine(generation.catalog);
+  const list =
+    generations === undefined
+      ? []
+      : Array.isArray(generations)
+        ? (generations as readonly Generation[])
+        : [generations as Generation];
+  const engine = list.length === 0 ? undefined : fakeEngine(list.map((g) => g.catalog));
+  const network: Network | undefined =
+    list.length === 0
+      ? undefined
+      : { bundles: list.map((generation) => ({ id: generation.catalog.bundle, generation })) };
+  const bundles: RuntimeStatus["bundles"] = list.map((generation) => ({
+    id: generation.catalog.bundle,
+    loaded: true,
+    fatal: generation.report.fatal !== undefined,
+  }));
   const status: RuntimeStatus =
     refusing === undefined
-      ? { lock: "exclusive", loaded: generation !== undefined }
-      : { lock: "exclusive", loaded: false, refusing };
+      ? { lock: "exclusive", loaded: list.length > 0, bundles }
+      : { lock: "exclusive", loaded: false, refusing, bundles };
   const runtime: Runtime & { leases: number } = {
     leases: 0,
     async ready() {
-      if (generation === undefined || refusing !== undefined)
+      if (network === undefined || refusing !== undefined)
         throw new Error(refusing ?? "no generation");
-      return generation;
+      return network;
     },
+    snapshot: () => network ?? { bundles: [] },
     async lease(fn) {
-      if (generation === undefined || engine === undefined || refusing !== undefined) {
+      if (network === undefined || engine === undefined || refusing !== undefined) {
         throw new Error(refusing ?? "no generation");
       }
       runtime.leases += 1;
-      return fn(generation, engine);
+      return fn(network, engine);
     },
     async refresh(): Promise<RefreshOutcome> {
       return { outcome: "failed", error: "the fake runtime does not refresh" };
@@ -118,4 +158,23 @@ export function fakeRuntime(
     async shutdown() {},
   };
   return runtime;
+}
+
+/** The tool options of a network of these bundles, each a local source at `./<id>` unless given. */
+export function toolOptions(
+  network: string,
+  bundles: ReadonlyArray<string | { id: string; source: string; sourceKind: "local" | "git" }>,
+  patch: Partial<Omit<ToolOptions, "network" | "bundles">> = {},
+): ToolOptions {
+  return {
+    network,
+    bundles: bundles.map((bundle) =>
+      typeof bundle === "string"
+        ? { id: bundle, source: `./${bundle}`, sourceKind: "local" as const }
+        : bundle,
+    ),
+    limitDefault: 8,
+    resultBudget: 40_000,
+    ...patch,
+  };
 }

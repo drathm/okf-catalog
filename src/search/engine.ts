@@ -2,10 +2,13 @@ import type { PagePath } from "../bundle/model.js";
 import type { DerivedDocument } from "../derive/derived-document.js";
 
 export interface EngineHit {
+  /** The bundle the page is in: one of the network's bundle ids (D73, D74). */
+  bundle: string;
+  /** The page's path inside its bundle. */
   path: PagePath;
   /** qmd's score in [0, 1). */
   score: number;
-  /** The raw BM25 value recovered from the score: on one scale for every query, and additive across terms. */
+  /** The raw BM25 value recovered from the score: on one scale for every query and every bundle, and additive across terms. */
   bm25: number;
 }
 
@@ -24,11 +27,18 @@ export interface IndexResult {
   encodedFolders: string[];
 }
 
-/** The search engine as the OKF layer sees it. The adapter owns files, paths and the engine's conventions. */
+/**
+ * The search engine as the OKF layer sees it: one index for the network, one part of it per bundle (D73). The
+ * adapter owns files, paths and the engine's conventions.
+ */
 export interface Engine {
-  index(docs: readonly DerivedDocument[]): Promise<IndexResult>;
-  /** Every term must match as a prefix; `limit` is exact; hits come best first. */
+  /** Replaces one bundle's documents with these; no other bundle's documents are read, written or deactivated. */
+  index(bundle: string, docs: readonly DerivedDocument[]): Promise<IndexResult>;
+  /** Takes one bundle's documents out of search and out of the statistics every score is computed from (D75). */
+  drop(bundle: string): Promise<IndexResult>;
+  /** Every term must match as a prefix; `limit` is exact, over every bundle at once; hits come best first. */
   lex(terms: readonly string[], limit: number): Promise<EngineHit[]>;
-  status(): Promise<{ documents: number }>;
+  /** The documents indexed for one bundle, or for every bundle when none is named. */
+  status(bundle?: string): Promise<{ documents: number }>;
   close(): Promise<void>;
 }

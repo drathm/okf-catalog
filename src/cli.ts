@@ -6,7 +6,7 @@ const USAGE = `usage: okf-catalog <command> [options]
 commands:
   check <bundle folder>   apply the intake contract to a folder and print the report
   pack                    write the bundle a server will serve, with its manifest
-  serve                   serve the company's bundle to an MCP client over stdio
+  serve                   serve a network of bundles to an MCP client over stdio
 
 options:
   --version   print the version

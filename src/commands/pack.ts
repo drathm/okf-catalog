@@ -13,7 +13,7 @@ import { buildManifest, MANIFEST_NAME } from "../bundle/manifest.js";
 import type { BundleFile, LoadOptions } from "../bundle/model.js";
 import { findCollision } from "../bundle/paths.js";
 import { reservedKind } from "../bundle/reserved.js";
-import { readCompanyConfig } from "../config/company-config.js";
+import { readNetworkConfig } from "../config/network-config.js";
 import { cacheOverlapsBundle } from "../fs/cache-dir.js";
 import { walkBundle } from "../fs/walk.js";
 import { renderReport } from "../report/report.js";
@@ -24,10 +24,12 @@ export const PACK_USAGE = `usage: okf-catalog pack --config <path> --from <bundl
 Writes the bundle a server will serve: the admitted pages, the reserved files and the attachments as they are,
 an index.md for every folder of pages that lacks one, and a manifest covering every file. The output folder
 must be new or empty and must not lie inside the source folder (nor the reverse). Nothing is written when the
-loader refuses a file; the report says why and the exit code is 1.
+loader refuses a file; the report says why and the exit code is 1. pack publishes one bundle, never a network.
 
 options:
-  --config <path>     the company configuration (admission, caps, types, spec text)
+  --config <path>     the configuration: the bundle's admission, caps, types and spec text
+  --bundle <id>       which bundle of the configuration this is; required when it lists more than one, and
+                      implied by a file with one (a company: file, or a network: file with one bundle)
   --from <folder>     the bundle folder to pack (a checkout's bundle folder, never a repository root)
   --out <folder>      where to write; new or empty
   --admit <status>    a status to admit: stable, deprecated or a word of the company's own, never draft;
@@ -69,6 +71,7 @@ export function runPack(argv: string[], io: CommandIo): number {
         from: { type: "string" },
         out: { type: "string" },
         admit: { type: "string", multiple: true },
+        bundle: { type: "string" },
         commit: { type: "string" },
         "allow-empty": { type: "boolean", default: false },
       },
@@ -83,11 +86,13 @@ export function runPack(argv: string[], io: CommandIo): number {
     from,
     out,
     commit,
+    bundle: bundleId,
   } = parsed.values as {
     config?: string;
     from?: string;
     out?: string;
     commit?: string;
+    bundle?: string;
   };
   const admitFlags = (parsed.values.admit as string[] | undefined) ?? [];
   if (configPath === undefined || from === undefined || out === undefined)
@@ -103,12 +108,32 @@ export function runPack(argv: string[], io: CommandIo): number {
     admit.push(status);
   }
 
-  const read = readCompanyConfig(resolve(configPath), homedir());
+  const read = readNetworkConfig(resolve(configPath), homedir());
   if (!read.ok) {
     io.stderr(`the configuration is not usable: ${read.problems.join("; ")}\n`);
     return 2;
   }
-  const config = read.config;
+  const bundles = read.config.bundles;
+  const ids = bundles.map((bundle) => bundle.id).join(", ");
+  let chosen = bundles.length === 1 ? bundles[0] : undefined;
+  if (bundleId !== undefined) {
+    chosen = bundles.find((bundle) => bundle.id === bundleId);
+    if (chosen === undefined) {
+      io.stderr(
+        `the configuration lists no bundle ${JSON.stringify(bundleId)}; its bundles are: ${ids}\n`,
+      );
+      return 2;
+    }
+  }
+  if (chosen === undefined) {
+    return usage(
+      io,
+      `--bundle is required: the configuration lists ${bundles.length} bundles (${ids}); pack publishes one bundle, never a network`,
+    );
+  }
+  // The alias, and a company name a network: file refuses (D-G; C-I-E3).
+  for (const note of read.config.notes) io.stderr(`note: ${note}\n`);
+  const config = chosen;
 
   let now: Date;
   try {
@@ -163,7 +188,7 @@ export function runPack(argv: string[], io: CommandIo): number {
     hiddenFolders: walked.hiddenFolders,
     ...(walked.fatal === undefined ? {} : { walkFatal: walked.fatal }),
   };
-  const { catalog, report } = loadForCheck(config.company, walked.files, options, now);
+  const { catalog, report } = loadForCheck(config.id, walked.files, options, now);
   if (report.fatal !== undefined || report.refusals.length > 0) {
     io.stderr(renderReport(report));
     return 1;

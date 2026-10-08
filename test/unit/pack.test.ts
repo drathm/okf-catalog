@@ -319,3 +319,100 @@ describe("okf-catalog pack", () => {
     expect(linked.stderr()).toMatch(/link/);
   });
 });
+
+// Issue 3 and D76: pack publishes one bundle, never a network; beyond one bundle the file needs --bundle.
+describe("okf-catalog pack: a network file (D76)", () => {
+  it("refuses a two-bundle file without --bundle and packs with it", () => {
+    const work = temp();
+    const from = join(work, "kb");
+    mkdirSync(from);
+    writeFileSync(join(from, "kept.md"), PAGE("Kept"));
+    writeFileSync(join(from, "old.md"), PAGE("Old", "archived"));
+    const cfg = join(work, "network.yaml");
+    writeFileSync(
+      cfg,
+      "network: acme\nbundles:\n  - id: open\n    source:\n      local: ./open\n  - id: kept\n    source:\n      local: ./kept\n    serve:\n      admit: [stable, deprecated, archived]\n",
+    );
+    const none = io();
+    expect(runPack(["--config", cfg, "--from", from, "--out", join(work, "none")], none.io)).toBe(
+      2,
+    );
+    expect(none.stderr()).toContain(
+      "--bundle is required: the configuration lists 2 bundles (open, kept); pack publishes one bundle, never a network",
+    );
+    expect(existsSync(join(work, "none"))).toBe(false);
+    const unknown = io();
+    expect(
+      runPack(
+        ["--config", cfg, "--from", from, "--out", join(work, "zz"), "--bundle", "zz"],
+        unknown.io,
+      ),
+    ).toBe(2);
+    expect(unknown.stderr()).toContain(
+      'the configuration lists no bundle "zz"; its bundles are: open, kept',
+    );
+    // With --bundle, that bundle's admission decides what travels.
+    const kept = join(work, "kept-out");
+    expect(
+      runPack(["--config", cfg, "--from", from, "--out", kept, "--bundle", "kept"], io().io),
+    ).toBe(0);
+    expect(list(kept)).toContain("old.md");
+    const open = join(work, "open-out");
+    expect(
+      runPack(["--config", cfg, "--from", from, "--out", open, "--bundle", "open"], io().io),
+    ).toBe(0);
+    expect(list(open)).not.toContain("old.md");
+    expect(list(open)).toContain("kept.md");
+    // A one-bundle network file implies its id; naming another is refused.
+    const single = join(work, "single.yaml");
+    writeFileSync(single, "network: acme\nbundles:\n  - id: kb\n    source:\n      local: ./kb\n");
+    expect(runPack(["--config", single, "--from", from, "--out", join(work, "s1")], io().io)).toBe(
+      0,
+    );
+    expect(
+      runPack(
+        ["--config", single, "--from", from, "--out", join(work, "s2"), "--bundle", "kb"],
+        io().io,
+      ),
+    ).toBe(0);
+    expect(
+      runPack(
+        ["--config", single, "--from", from, "--out", join(work, "s3"), "--bundle", "other"],
+        io().io,
+      ),
+    ).toBe(2);
+    // A company: file implies its company's id too, and pack notes the alias (D-G).
+    const company = config(work);
+    const alias = io();
+    expect(
+      runPack(["--config", company, "--from", from, "--out", join(work, "c1")], alias.io),
+    ).toBe(0);
+    expect(alias.stderr()).toContain(
+      "note: company: is read as a network of that name with one bundle of that id; write network: and bundles: before 0.5.0, which removes company:",
+    );
+    expect(PACK_USAGE).toContain("--bundle <id>");
+  });
+
+  // The fold of bite c's build reviews, C-I-E3: a version 0 file whose company is vendor, dist or build still packs
+  // until 0.5.0, and pack says why it must change.
+  it("packs a company: file whose company is vendor, dist or build, noting it until 0.5.0", () => {
+    const work = temp();
+    const from = join(work, "kb");
+    mkdirSync(from);
+    writeFileSync(join(from, "kept.md"), PAGE("Kept"));
+    const noted = io();
+    expect(
+      runPack(
+        ["--config", config(work, "dist"), "--from", from, "--out", join(work, "out")],
+        noted.io,
+      ),
+    ).toBe(0);
+    expect(list(join(work, "out"))).toContain("kept.md");
+    expect(noted.stderr()).toContain(
+      "note: company: is read as a network of that name with one bundle of that id; write network: and bundles: before 0.5.0, which removes company:\n",
+    );
+    expect(noted.stderr()).toContain(
+      "note: company: dist stays the bundle's id until 0.5.0 removes company:; a network: file refuses vendor, dist and build as bundle ids (folder names the search engine skips), so give the bundle another id when you write network: and bundles:\n",
+    );
+  });
+});

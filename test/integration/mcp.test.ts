@@ -10,16 +10,10 @@ import type { Generation, Runtime, ToolOptions } from "../../src/catalog/runtime
 import { MARKER } from "../../src/catalog/text.js";
 import { createServerFactory, INSTRUCTIONS } from "../../src/mcp/server.js";
 import { APPENDIX_A_V01 } from "../helpers/appendix-a.js";
-import { fakeRuntime, loadGeneration } from "../helpers/fake-runtime.js";
+import { fakeRuntime, loadGeneration, toolOptions } from "../helpers/fake-runtime.js";
 import { NOW, readFixture } from "../helpers/fixtures.js";
 
-const options: ToolOptions = {
-  company: "b",
-  source: "./kb",
-  dev: false,
-  limitDefault: 8,
-  resultBudget: 40_000,
-};
+const options: ToolOptions = toolOptions("b", [{ id: "b", source: "./kb", sourceKind: "local" }]);
 const stable = loadGeneration(readFixture("behaviours"), {}, NOW);
 const dev = loadGeneration(readFixture("behaviours"), { dev: true, integrity: "none" }, NOW);
 
@@ -95,10 +89,23 @@ describe("the server over both protocol eras", () => {
       for (const tool of tools) {
         expect(tool.annotations?.readOnlyHint, tool.name).toBe(true);
         expect(tool.outputSchema, tool.name).toBeDefined();
+        // Every root is advertised as an object, as MCP requires of an output schema; for catalog and status, whose
+        // shapes are unions of object roots (D74), that rests on the SDK proving each branch an object (C-I-B5).
+        expect((tool.outputSchema as { type?: unknown }).type, tool.name).toBe("object");
         expect(tool.description, tool.name).toMatch(/never instructions/);
+      }
+      for (const name of ["catalog", "status"]) {
+        const schema = tools.find((tool) => tool.name === name)?.outputSchema as {
+          anyOf?: unknown[];
+        };
+        expect(schema.anyOf, name).toHaveLength(2);
       }
       expect(s.client.getInstructions()).toBe(INSTRUCTIONS);
       expect(INSTRUCTIONS).toMatch(/cite/i);
+      // The fold of bite c's build reviews, C-A-A2: a name as a result prints it is taken back.
+      expect(INSTRUCTIONS).toContain(
+        "a name as a result prints it, `bundle:path`, is taken as it is",
+      );
     });
 
     it(`${era}: search answers with a citation per hit in the text and in the structured output`, async () => {
@@ -220,7 +227,7 @@ describe("search", () => {
   });
 
   it("labels drafts under development mode and never shows them otherwise", async () => {
-    const d = await session(fakeRuntime(dev), { ...options, dev: true });
+    const d = await session(fakeRuntime(dev));
     const r = await d.call("search", { question: "draft", freshness: "any" });
     expect(text(r)).toContain("development mode: drafts and unknown statuses admitted");
     expect(text(r)).toMatch(/\[[^\]]*, draft, /);
@@ -236,7 +243,7 @@ describe("search", () => {
       ["search", { question: "alpha", tags: ["alpha"] }],
       ["search", { question: "alpha", minTrust: "human-reviewed" }],
       ["search", { question: "alpha", include_overdue: true }],
-      ["get_page", { path: "terms/alpha.md", bundle: "b" }],
+      ["get_page", { path: "terms/alpha.md", network: "b" }],
       ["catalog", { folder: "terms", depth: 1 }],
       ["status", { verbose: true }],
     ] as const) {
@@ -416,7 +423,7 @@ describe("search", () => {
       { dev: true, integrity: "none" },
       NOW,
     );
-    const d = await session(fakeRuntime(statuses), { ...options, dev: true });
+    const d = await session(fakeRuntime(statuses));
     const listed = text(await d.call("search", { question: "quince", status: "nope" }));
     expect(listed).toMatch(/the statuses in use are: "s00", "s01", .*, "s49" … \(60 statuses\)$/);
     expect(listed).not.toContain("s50");
@@ -695,6 +702,7 @@ describe("bite 4 build review, round 2", () => {
       async ready() {
         throw new Error("unused");
       },
+      snapshot: () => ({ bundles: [] }),
       async lease() {
         failed = true;
         throw new Error("the bundle folder /abs/kb does not exist or cannot be read");
@@ -708,8 +716,9 @@ describe("bite 4 build review, round 2", () => {
               lock: "exclusive",
               loaded: false,
               refusing: "the bundle folder ./kb does not exist or cannot be read",
+              bundles: [],
             }
-          : { lock: "exclusive", loaded: false },
+          : { lock: "exclusive", loaded: false, bundles: [] },
       async shutdown() {},
     };
     const s = await session(runtime);
@@ -718,6 +727,51 @@ describe("bite 4 build review, round 2", () => {
     expect(text(r)).toContain("./kb");
     expect(text(r)).not.toContain("/abs/kb");
     expect(text(r)).not.toContain("defect");
+  });
+
+  // Bite c's verification: a network of one bundle refused for its index (D39, or a first load the index could not
+  // take) said "until its configuration is fixed", which no configuration fixes; it now says what it is.
+  it("says an index refusal is the index's, not the configuration's, in every tool", async () => {
+    const sentence =
+      "the index could not be re-aligned with the served pages; nothing is served until the server restarts, and the log has the detail";
+    const refusingFor = (index: boolean): Runtime => ({
+      async ready() {
+        throw new Error(sentence);
+      },
+      snapshot: () => ({ bundles: [] }),
+      async lease() {
+        throw new Error(sentence);
+      },
+      async refresh() {
+        return { outcome: "failed", error: sentence };
+      },
+      status: () => ({
+        lock: "exclusive",
+        loaded: true,
+        refusing: sentence,
+        ...(index ? { refusingIndex: true as const } : {}),
+        bundles: [{ id: "kb", loaded: true, fatal: false }],
+      }),
+      async shutdown() {},
+    });
+    const broken = await session(refusingFor(true));
+    const unset = await session(refusingFor(false));
+    for (const [name, args] of [
+      ["search", { question: "alpha" }],
+      ["get_page", { path: "a.md" }],
+      ["catalog", {}],
+      ["status", {}],
+      ["citations", { path: "a.md" }],
+      ["provenance", { path: "a.md" }],
+    ] as const) {
+      const r = await broken.call(name, args);
+      expect(r.isError, name).toBe(true);
+      expect(text(r), name).toBe(`the server is refusing every request: ${sentence}`);
+      // A refusal the runtime does not mark is the configuration's, as version 0 said.
+      expect(text(await unset.call(name, args)), name).toBe(
+        `the server is refusing every request until its configuration is fixed: ${sentence}`,
+      );
+    }
   });
 
   it("keeps a refusal whose manifest key carries the marker to one line in every tool and in the status line", async () => {
@@ -854,12 +908,17 @@ describe("get_page and the concept id (R7)", () => {
     expect(text(await c.call("get_page", { path: "foo.md.md" }))).toBe(
       '"foo.md.md" names more than one page: foo.md.md (no name reaches it alone), foo.md.md.md (ask for "foo.md.md.md")',
     );
-    // The path's description promises a name of its own only where there is one (the fix pass's verification).
+    // The path's description promises a name of its own only where there is one (the fix pass's verification),
+    // and, since bite c, that the name is its bundle's own and is asked for with that bundle (D74).
     const getPage = (await c.client.listTools()).tools.find((t) => t.name === "get_page");
     if (getPage === undefined) throw new Error("get_page is not listed");
-    const path = (getPage.inputSchema.properties as Record<string, { description?: string }>).path;
-    expect(path?.description).toMatch(
-      /names each page, with a name that means it alone where there is one\.$/,
+    const properties = getPage.inputSchema.properties as Record<string, { description?: string }>;
+    expect(properties.path?.description).toMatch(
+      /names each page, with its bundle when the server serves more than one, and a name that means it alone in its bundle where there is one, to ask for with that bundle\.$/,
+    );
+    expect(properties.bundle?.description).toMatch(/needed when two bundles serve the name/);
+    expect(getPage.description).toMatch(
+      /a name two bundles serve.*is an error naming each page \(with its bundle when the server serves more than one\)/,
     );
     const miss = await s.call("get_page", { path: "guides/b" });
     expect(miss.isError).toBe(true);
@@ -1210,5 +1269,684 @@ describe("citations and provenance (#5)", () => {
       "metrics/revenue.md",
       "tables/orders.md",
     ]);
+  });
+});
+
+// Issue 3 and D74: identity across the bundles of a network, the shapes beyond one bundle and today's for one.
+describe("a network of bundles (D74)", () => {
+  const specA = loadGeneration(readFixture("spec-example"), {}, NOW, "a");
+  const specB = loadGeneration(readFixture("spec-example"), {}, NOW, "b");
+  const terms = loadGeneration(readFixture("behaviours"), {}, NOW, "terms");
+  const refusedC = loadGeneration(readFixture("no-manifest"), {}, NOW, "c");
+  const refusedD = loadGeneration(readFixture("no-manifest"), {}, NOW, "d");
+
+  it("answers a path two bundles hold with two hits and a get_page error", async () => {
+    // The instructions say so before any call: a name in two bundles needs its bundle.
+    expect(INSTRUCTIONS).toContain(
+      "When a page's path is in more than one bundle, name the bundle: `get_page`, `citations`, `provenance` and `catalog` take it,",
+    );
+    const s = await session(fakeRuntime([specA, specB]), toolOptions("acme", ["a", "b"]));
+    const found = await s.call("search", { question: "revenue", limit: 25 });
+    expect(found.isError).not.toBe(true);
+    const hits = (
+      found.structuredContent as {
+        hits: Array<{ bundle: string; path: string; conceptId: string; citation: string }>;
+      }
+    ).hits.filter((hit) => hit.path === "metrics/revenue.md");
+    expect(hits.map((hit) => hit.bundle).sort()).toEqual(["a", "b"]);
+    for (const hit of hits) {
+      expect(hit.conceptId).toBe("metrics/revenue");
+      // Beyond one bundle, every line names its page's bundle first.
+      expect(hit.citation.startsWith(`${hit.bundle}:metrics/revenue.md — `)).toBe(true);
+    }
+    expect(text(found)).toContain("\na:metrics/revenue.md — ");
+    expect(text(found)).toContain("\nb:metrics/revenue.md — ");
+    // The same name in two bundles is an error until the caller names the bundle, each with a name and its bundle.
+    for (const name of ["metrics/revenue.md", "metrics/revenue", "/metrics/revenue.md"]) {
+      const page = await s.call("get_page", { path: name });
+      expect(page.isError, name).toBe(true);
+      expect(text(page)).toBe(
+        `${JSON.stringify(name.replace(/^\//, ""))} names more than one page: a:metrics/revenue.md (ask for "metrics/revenue" with bundle "a"), b:metrics/revenue.md (ask for "metrics/revenue" with bundle "b")`,
+      );
+    }
+    const named = await s.call("get_page", { path: "metrics/revenue", bundle: "b" });
+    expect(named.isError).not.toBe(true);
+    expect(named.structuredContent).toMatchObject({
+      bundle: "b",
+      path: "metrics/revenue.md",
+      conceptId: "metrics/revenue",
+      kind: "page",
+    });
+    expect(text(named).split("\n")[0]).toMatch(/^b:metrics\/revenue\.md \[/);
+    // A reserved file, named with its bundle, says whose it is too.
+    const index = await s.call("get_page", { path: "index.md", bundle: "a" });
+    expect(text(index).split("\n")[0]).toBe("a:index.md [reserved index, file]");
+    expect(index.structuredContent).toMatchObject({ bundle: "a", path: "index.md", kind: "index" });
+    // A bundle that is not the network's, and a name a named bundle does not hold.
+    const unknown = await s.call("get_page", { path: "metrics/revenue.md", bundle: "zz" });
+    expect(unknown.isError).toBe(true);
+    expect(text(unknown)).toBe('there is no bundle "zz"; the bundles are: a, b');
+    const missing = await s.call("get_page", { path: "metrics/revenu.md", bundle: "a" });
+    expect(missing.isError).toBe(true);
+    expect(text(missing)).toMatch(
+      /^no page at "metrics\/revenu\.md" in bundle a; the nearest served paths are: a:metrics\/revenue\.md, /,
+    );
+    const nowhere = await s.call("get_page", { path: "metrics/revenu.md" });
+    expect(text(nowhere)).toMatch(
+      /^no page at "metrics\/revenu\.md"; the nearest served paths are: a:metrics\/revenue\.md, b:metrics\/revenue\.md, /,
+    );
+    // citations and provenance take the bundle as get_page does, and answer with its errors without it.
+    for (const tool of ["citations", "provenance"] as const) {
+      const ambiguous = await s.call(tool, { path: "metrics/revenue.md" });
+      expect(ambiguous.isError, tool).toBe(true);
+      expect(text(ambiguous), tool).toContain('(ask for "metrics/revenue" with bundle "a")');
+      const ok = await s.call(tool, { path: "metrics/revenue.md", bundle: "a" });
+      expect(ok.isError, tool).not.toBe(true);
+      expect(text(ok).split("\n")[0], tool).toMatch(
+        new RegExp(`^${tool} of a:metrics/revenue\\.md`),
+      );
+      expect((ok.structuredContent as { bundle: string }).bundle, tool).toBe("a");
+    }
+  });
+
+  it("lists the bundles and their root indexes without a bundle", async () => {
+    const s = await session(
+      fakeRuntime([specA, terms, refusedC]),
+      toolOptions("acme", ["a", "terms", "c"]),
+    );
+    const r = await s.call("catalog", {});
+    expect(r.isError).not.toBe(true);
+    const listing = r.structuredContent as {
+      network: string;
+      bundles: Array<{
+        bundle: string;
+        served: boolean;
+        pages: number;
+        refusal: { rule: string; path: string; detail: string } | null;
+        index: { source: string; text: string; truncated: boolean } | null;
+      }>;
+      notice: string;
+      truncated: boolean;
+    };
+    expect(listing.network).toBe("acme");
+    expect(listing.bundles.map((b) => [b.bundle, b.served, b.pages])).toEqual([
+      ["a", true, 9],
+      ["terms", true, 17],
+      ["c", false, 0],
+    ]);
+    expect(listing.bundles[0]?.index?.source).toBe("file");
+    expect(listing.bundles[0]?.index?.text).toContain("BigQuery tables the bundle grounds against");
+    expect(listing.bundles[1]?.index?.text).toContain("lifecycle and link behaviours");
+    expect(listing.bundles[2]?.index).toBeNull();
+    expect(listing.bundles[2]?.refusal?.rule).toBe("manifest-missing");
+    expect(listing.truncated).toBe(false);
+    const lines = text(r).split("\n");
+    expect(lines[0]).toBe(
+      "catalog of the network acme: 3 bundles, 2 served; ask catalog with a bundle for its folders",
+    );
+    expect(lines).toContain("- bundle a: 9 pages, root index (file)");
+    expect(lines).toContain("- bundle terms: 17 pages, root index (file)");
+    expect(lines).toContain("- bundle c: refused, manifest-missing (manifest.json)");
+    // Server voice first, then the marker, then each root index's text, quoted, one line per bundle.
+    const marker = lines.findIndex((line) => line.startsWith(MARKER));
+    expect(marker).toBeGreaterThan(
+      lines.indexOf("- bundle c: refused, manifest-missing (manifest.json)"),
+    );
+    expect(
+      lines.slice(marker + 1).every((line) => /^- root index of [a-z]+: ".*"$/.test(line)),
+    ).toBe(true);
+    // With a bundle: that bundle's folder, as catalog has always answered, saying whose it is.
+    const folder = await s.call("catalog", { bundle: "terms", folder: "terms" });
+    expect(folder.isError).not.toBe(true);
+    expect(folder.structuredContent).toMatchObject({ bundle: "terms", folder: "terms" });
+    expect(text(folder).split("\n")[0]).toMatch(
+      /^catalog of terms:terms \(file index, \d+ pages\)$/,
+    );
+    const root = await s.call("catalog", { bundle: "a" });
+    expect(text(root).split("\n")[0]).toBe("catalog of the root of bundle a (file index, 0 pages)");
+    const refused = await s.call("catalog", { bundle: "c" });
+    expect(refused.isError).toBe(true);
+    expect(text(refused)).toBe(
+      "the bundle c was refused and nothing in it is served: manifest-missing (manifest.json): integrity is required and the bundle has no manifest.json",
+    );
+    const nowhere = await s.call("catalog", { bundle: "a", folder: "nowhere" });
+    expect(text(nowhere)).toMatch(/^there is no folder "nowhere" in bundle a; the folders are: /);
+  });
+
+  it("reports one status row per bundle", async () => {
+    const s = await session(
+      fakeRuntime([specA, terms, refusedC]),
+      toolOptions("acme", [
+        { id: "a", source: "./kb-a", sourceKind: "local" },
+        { id: "terms", source: "git@example.test:acme/terms.git", sourceKind: "git" },
+        { id: "c", source: "./kb-c", sourceKind: "local" },
+      ]),
+    );
+    const r = await s.call("status", {});
+    expect(r.isError).not.toBe(true);
+    const status = r.structuredContent as {
+      network: string;
+      lock: string;
+      refusing: string | null;
+      bundles: Array<Record<string, unknown>>;
+    };
+    expect(status.network).toBe("acme");
+    expect(status.lock).toBe("exclusive");
+    expect(status.refusing).toBeNull();
+    expect(status.bundles.map((row) => row.id)).toEqual(["a", "terms", "c"]);
+    expect(status.bundles[0]).toMatchObject({
+      id: "a",
+      sourceKind: "local",
+      source: "./kb-a",
+      commit: "0000000000000000000000000000000000000000",
+      publishedAt: "2026-10-06T00:00:00Z",
+      okfVersion: null,
+      integrity: "checked",
+      admitted: 9,
+      fatal: null,
+    });
+    expect(status.bundles[1]).toMatchObject({
+      id: "terms",
+      sourceKind: "git",
+      okfVersion: "0.2",
+      admitted: 17,
+      fatal: null,
+    });
+    expect(status.bundles[2]).toMatchObject({
+      id: "c",
+      sourceKind: "local",
+      commit: null,
+      publishedAt: null,
+      admitted: 0,
+      fatal: { rule: "manifest-missing", path: "manifest.json" },
+    });
+    // The network's line, then a line per bundle, each starting with its id.
+    const lines = text(r).split("\n");
+    expect(lines[0]).toMatch(/^network acme: 3 bundles, 2 served, 1 refused; lock exclusive/);
+    expect(lines[1]).toMatch(/^a: 9 pages admitted, /);
+    expect(lines[2]).toMatch(/^terms: 17 pages admitted, /);
+    expect(lines[3]).toMatch(/^c: 0 pages admitted, .*FATAL manifest-missing \(manifest\.json\)/);
+  });
+
+  it("keeps today's status and catalog shapes for one bundle", async () => {
+    const s = await session(
+      fakeRuntime(stable),
+      toolOptions("acme", [{ id: "b", source: "./kb", sourceKind: "local" }]),
+    );
+    const status = (await s.call("status", {})).structuredContent as Record<string, unknown>;
+    expect(Object.keys(status).sort()).toEqual(
+      [
+        "company",
+        "source",
+        "commit",
+        "loadedAt",
+        "dev",
+        "integrity",
+        "admitted",
+        "excludedByStatus",
+        "attachments",
+        "hidden",
+        "overdue",
+        "refusals",
+        "degradations",
+        "unknownTypes",
+        "unknownStatuses",
+        "unmatchedAdmits",
+        "brokenLinks",
+        "linksToUnserved",
+        "foldersWithoutIndex",
+        "missingOnDisk",
+        "fatal",
+        "engine",
+        "lock",
+        "lockOwner",
+        "published",
+        "poller",
+        "lastAttempt",
+        "lastRefusal",
+        "refusing",
+        // The two fields a one-bundle network adds (D74).
+        "publishedAt",
+        "okfVersion",
+      ].sort(),
+    );
+    // Its company is the network's name.
+    expect(status).toMatchObject({
+      company: "acme",
+      source: "./kb",
+      publishedAt: "2026-10-06T00:00:00Z",
+      okfVersion: "0.2",
+    });
+    const catalog = await s.call("catalog", {});
+    expect(Object.keys(catalog.structuredContent as object).sort()).toEqual(
+      ["entries", "folder", "notice", "source", "text", "truncated"].sort(),
+    );
+    expect(text(catalog).split("\n")[0]).toMatch(/^catalog of the bundle root \(/);
+    // Today's lines: no bundle before a path.
+    const found = text(await s.call("search", { question: "alpha glossary" }));
+    expect(found).toMatch(/\nterms\/alpha\.md — Alpha \[/);
+    const page = text(await s.call("get_page", { path: "terms/alpha.md" }));
+    expect(page.split("\n")[0]).toMatch(/^terms\/alpha\.md \[/);
+    // A bundle named that the one-bundle network does not hold is refused like any other.
+    const other = await s.call("catalog", { bundle: "zz" });
+    expect(text(other)).toBe('there is no bundle "zz"; the bundles are: b');
+    const same = await s.call("get_page", { path: "terms/alpha.md", bundle: "b" });
+    expect(same.isError).not.toBe(true);
+  });
+
+  it("refuses only when every bundle is refused", async () => {
+    const s = await session(fakeRuntime([terms, refusedC]), toolOptions("acme", ["terms", "c"]));
+    const found = await s.call("search", { question: "alpha glossary" });
+    expect(found.isError).not.toBe(true);
+    expect(
+      (found.structuredContent as { hits: Array<{ bundle: string }> }).hits.every(
+        (hit) => hit.bundle === "terms",
+      ),
+    ).toBe(true);
+    expect(text(found).split("\n")[0]).toContain("not searched: c (manifest-missing)");
+    expect((await s.call("get_page", { path: "terms/alpha.md" })).isError).not.toBe(true);
+    const named = await s.call("get_page", { path: "terms/alpha.md", bundle: "c" });
+    expect(named.isError).toBe(true);
+    expect(text(named)).toBe(
+      "the bundle c was refused and nothing in it is served: manifest-missing (manifest.json): integrity is required and the bundle has no manifest.json",
+    );
+    expect((await s.call("catalog", {})).isError).not.toBe(true);
+    // Every bundle refused: every tool but status answers with each bundle's refusal.
+    const none = await session(fakeRuntime([refusedC, refusedD]), toolOptions("acme", ["c", "d"]));
+    for (const [name, args] of [
+      ["search", { question: "alpha" }],
+      ["get_page", { path: "a.md" }],
+      ["catalog", {}],
+      ["citations", { path: "a.md" }],
+      ["provenance", { path: "a.md" }],
+    ] as const) {
+      const r = await none.call(name, args);
+      expect(r.isError, name).toBe(true);
+      expect(text(r), name).toBe(
+        "no bundle of the network is served: c: manifest-missing (manifest.json): integrity is required and the bundle has no manifest.json; d: manifest-missing (manifest.json): integrity is required and the bundle has no manifest.json",
+      );
+    }
+    const status = await none.call("status", {});
+    expect(status.isError).not.toBe(true);
+  });
+
+  // The fold of bite c's build reviews, C-A-A2 and C-A-A7: every name the server prints is a name it takes back.
+  it("takes back every name it prints, of a search hit, a catalog entry and a nearest path, in the three page tools", async () => {
+    const colon = Buffer.from(
+      "---\ntype: Note\ntitle: Colon page\nstatus: stable\n---\n\nThe zephyr colon page.\n",
+    );
+    const withColon = loadGeneration(
+      [...readFixture("spec-example"), { path: "notes/x:y.md", bytes: colon }],
+      { integrity: "none" },
+      NOW,
+      "a",
+    );
+    const s = await session(fakeRuntime([withColon, specB]), toolOptions("acme", ["a", "b"]));
+    // The names a search prints: each hit line's name, before the title.
+    const names = new Set<string>();
+    for (const question of ["revenue", "zephyr colon", "margin standard", "orders table"]) {
+      const found = await s.call("search", { question, limit: 25 });
+      for (const line of text(found).split("\n").slice(1))
+        names.add(line.split(" — ")[0] as string);
+    }
+    // A path that is not plain, such as one holding a colon, is printed quoted after its bundle.
+    expect(names).toContain('a:"notes/x:y.md"');
+    expect([...names].some((name) => name.startsWith("b:"))).toBe(true);
+    // The names a catalog entry stands for: its bundle, then its path, as a line would print them.
+    for (const bundle of ["a", "b"]) {
+      const listed = (await s.call("catalog", { bundle, folder: "metrics" })).structuredContent as {
+        bundle: string;
+        entries: Array<{ path: string }>;
+      };
+      for (const entry of listed.entries) names.add(`${listed.bundle}:${entry.path}`);
+    }
+    // The names a not-found error offers.
+    const miss = text(await s.call("get_page", { path: "metrics/revenu.md" }));
+    const offered = miss.slice(miss.indexOf("are: ") + "are: ".length).split(", ");
+    expect(offered.length).toBeGreaterThan(0);
+    for (const name of offered) names.add(name);
+    expect(names.size).toBeGreaterThan(6);
+    for (const name of names) {
+      const page = await s.call("get_page", { path: name });
+      expect(page.isError, name).not.toBe(true);
+      const bundle = name.slice(0, name.indexOf(":"));
+      expect((page.structuredContent as { bundle: string }).bundle, name).toBe(bundle);
+      // With the bundle named too, the same.
+      const named = await s.call("get_page", { path: name, bundle });
+      expect(named.isError, name).not.toBe(true);
+      if ((page.structuredContent as { kind: string }).kind !== "page") continue;
+      for (const tool of ["citations", "provenance"] as const) {
+        const r = await s.call(tool, { path: name });
+        expect(r.isError, `${tool} ${name}`).not.toBe(true);
+        expect((r.structuredContent as { bundle: string }).bundle, `${tool} ${name}`).toBe(bundle);
+      }
+    }
+    // The path's description says so.
+    const tools = (await s.client.listTools()).tools;
+    const properties = tools.find((tool) => tool.name === "get_page")?.inputSchema.properties as
+      | Record<string, { description?: string }>
+      | undefined;
+    expect(properties?.path?.description).toMatch(/as a result prints it/);
+  });
+
+  it("requires bundle in what the three page tools return, and refuses a bundle that is only whitespace", async () => {
+    const s = await session(fakeRuntime([specA, specB]), toolOptions("acme", ["a", "b"]));
+    const tools = (await s.client.listTools()).tools;
+    for (const name of ["get_page", "citations", "provenance"]) {
+      const schema = tools.find((tool) => tool.name === name)?.outputSchema as {
+        required?: string[];
+      };
+      expect(schema.required, name).toContain("bundle");
+    }
+    // The catalog's folder answer keeps a one-bundle network's shape: bundle stays optional there.
+    const catalog = tools.find((tool) => tool.name === "catalog")?.outputSchema as {
+      anyOf: Array<{ properties: Record<string, unknown>; required?: string[] }>;
+    };
+    const folder = catalog.anyOf.find((branch) => "folder" in branch.properties);
+    expect(folder?.required).not.toContain("bundle");
+    for (const [name, args] of [
+      ["get_page", { path: "index.md", bundle: "   " }],
+      ["citations", { path: "metrics/revenue.md", bundle: " " }],
+      ["provenance", { path: "metrics/revenue.md", bundle: "\t" }],
+      ["catalog", { bundle: "  " }],
+    ] as const) {
+      const r = await s.call(name, args);
+      expect(r.isError, name).toBe(true);
+      // The SDK's input validation answers, with the schema's sentence; no tool ran.
+      expect(text(r), name).toMatch(/a bundle cannot be blank: name one, or leave bundle out/);
+      expect(text(r), name).not.toMatch(/^catalog of the network/);
+    }
+  });
+
+  it("lists the bundles for the root folder written as a slash, as it does with no folder", async () => {
+    const s = await session(fakeRuntime([specA, terms]), toolOptions("acme", ["a", "terms"]));
+    for (const folder of ["/", "", " / "]) {
+      const r = await s.call("catalog", { folder });
+      expect(r.isError, JSON.stringify(folder)).not.toBe(true);
+      expect(text(r).split("\n")[0], JSON.stringify(folder)).toBe(
+        "catalog of the network acme: 2 bundles, 2 served; ask catalog with a bundle for its folders",
+      );
+    }
+  });
+
+  // D82 extended (the fold of bite c's build reviews, C-A-A5): at 150 bundles, every list an answer names is cut.
+  it("caps every list of bundles or candidates an answer names at 50, with the total, at 150 bundles", async () => {
+    const many = Array.from({ length: 150 }, (_, i) => `b${i + 1}`);
+    const loaded = loadGeneration(readFixture("behaviours"), {}, NOW, "b1");
+    const generations = many.map((id) => ({
+      ...loaded,
+      catalog: { ...loaded.catalog, bundle: id },
+    }));
+    const s = await session(fakeRuntime(generations), toolOptions("acme", many));
+    // index.md is in every bundle: the ambiguity lists 50 of the 150, then the total.
+    const ambiguous = text(await s.call("get_page", { path: "index.md" }));
+    expect(ambiguous).toMatch(
+      /^"index\.md" names more than one page: b1:index\.md \(ask for "index" with bundle "b1"\), /,
+    );
+    expect(ambiguous.match(/ with bundle "/g)).toHaveLength(50);
+    expect(ambiguous.endsWith(" … (150 pages)")).toBe(true);
+    // An unknown bundle lists 50 of the network's bundles, then the total.
+    const unknown = text(await s.call("get_page", { path: "index.md", bundle: "zz" }));
+    expect(unknown).toMatch(/^there is no bundle "zz"; the bundles are: b1, b2, /);
+    expect(unknown.endsWith(" … (150 bundles)")).toBe(true);
+    expect(unknown.split(", ")).toHaveLength(50);
+    // status with a bundle: that bundle's own shape, lists and all; without one, the rows in counts.
+    const one = await s.call("status", { bundle: "b7" });
+    expect(one.isError).not.toBe(true);
+    expect(one.structuredContent).toMatchObject({ bundle: "b7", company: "acme", source: "./b7" });
+    expect(text(one).startsWith("b7: ")).toBe(true);
+    const all = await s.call("status", {});
+    expect(JSON.stringify(all.structuredContent).length).toBeLessThanOrEqual(RESULT_BUDGET);
+    expect(text(all).length).toBeLessThanOrEqual(RESULT_BUDGET);
+    expect(all.structuredContent).toMatchObject({ bundlesTotal: 150, truncated: true });
+    const nowhere = await s.call("status", { bundle: "zz" });
+    expect(nowhere.isError).toBe(true);
+    expect(text(nowhere)).toMatch(/^there is no bundle "zz"; the bundles are: b1, /);
+    const blankBundle = await s.call("status", { bundle: " " });
+    expect(blankBundle.isError).toBe(true);
+    expect(text(blankBundle)).toMatch(/a bundle cannot be blank/);
+    const catalog = await s.call("catalog", {});
+    expect(JSON.stringify(catalog.structuredContent).length).toBeLessThanOrEqual(RESULT_BUDGET);
+    expect(text(catalog).length).toBeLessThanOrEqual(RESULT_BUDGET);
+    // Every bundle but one refused: the search header names 50 of the 149 it did not read, then the total.
+    const refusedOnes = many
+      .slice(1)
+      .map((id) => loadGeneration(readFixture("no-manifest"), {}, NOW, id));
+    const mostly = await session(
+      fakeRuntime([loadGeneration(readFixture("behaviours"), {}, NOW, "b1"), ...refusedOnes]),
+      toolOptions("acme", many),
+    );
+    const header = text(await mostly.call("search", { question: "alpha glossary" })).split("\n")[0];
+    expect(header).toMatch(/not searched: b2 \(manifest-missing\), b3 \(manifest-missing\), /);
+    expect(header?.match(/\(manifest-missing\)/g)).toHaveLength(50);
+    expect(header).toContain(" … (149 bundles)");
+    // One bundle of a network named in status keeps its own lists; a one-bundle network keeps version 0's shape.
+    const single = await session(fakeRuntime(stable), toolOptions("acme", ["b"]));
+    const same = await single.call("status", { bundle: "b" });
+    expect(same.isError).not.toBe(true);
+    expect((same.structuredContent as Record<string, unknown>).bundle).toBeUndefined();
+    expect((same.structuredContent as Record<string, unknown>).company).toBe("acme");
+  });
+
+  // D39 per bundle (the fold of bite c's build reviews, C-I-A1, C-A-A1): a broken bundle is refused alone.
+  const BROKEN =
+    "the index could not be brought in line with this bundle's pages; it is tried again when the server restarts, and the log has the detail";
+  const brokenB = loadGeneration(
+    [],
+    { walkFatal: { path: "", rule: "index-broken", detail: BROKEN } },
+    NOW,
+    "b",
+  );
+
+  it("names each bundle a search did not read and why, refuses a broken bundle by name, and shows its state in status", async () => {
+    const s = await session(
+      fakeRuntime([terms, brokenB, refusedC]),
+      toolOptions("acme", ["terms", "b", "c"]),
+    );
+    const found = await s.call("search", { question: "alpha glossary" });
+    expect(found.isError).not.toBe(true);
+    expect(text(found).split("\n")[0]).toContain(
+      "not searched: b (index-broken), c (manifest-missing)",
+    );
+    const named = await s.call("get_page", { path: "terms/alpha.md", bundle: "b" });
+    expect(named.isError).toBe(true);
+    expect(text(named)).toBe(
+      `the bundle b was refused and nothing in it is served: index-broken: ${BROKEN}`,
+    );
+    const status = await s.call("status", {});
+    expect(status.isError).not.toBe(true);
+    const rows = (
+      status.structuredContent as {
+        bundles: Array<{ id: string; state: string; loadedAt: string | null }>;
+      }
+    ).bundles;
+    expect(rows.map((row) => [row.id, row.state])).toEqual([
+      ["terms", "serving"],
+      ["b", "index-broken"],
+      ["c", "refused"],
+    ]);
+    expect(rows[1]?.loadedAt).toBeNull();
+    const lines = text(status).split("\n");
+    expect(lines[0]).toMatch(/^network acme: 3 bundles, 1 served, 1 index-broken, 1 refused; /);
+    // A bundle that serves nothing reads as what it is, never "integrity checked … loaded <time>" (C-A-D3).
+    expect(lines[2]).toBe(`b: index-broken: ${BROKEN}`);
+  });
+
+  it("answers while a bundle is still loading: not searched, refused by name with when, and shown in status and catalog", async () => {
+    const STILL = "the bundle's first load has not finished; it is served when it lands";
+    const loadingB = loadGeneration(
+      [],
+      { walkFatal: { path: "", rule: "loading", detail: STILL } },
+      NOW,
+      "b",
+    );
+    const s = await session(fakeRuntime([terms, loadingB]), toolOptions("acme", ["terms", "b"]));
+    const found = await s.call("search", { question: "alpha glossary" });
+    expect(found.isError).not.toBe(true);
+    expect(text(found).split("\n")[0]).toContain("not searched: b (loading)");
+    for (const [name, args] of [
+      ["get_page", { path: "index.md", bundle: "b" }],
+      ["citations", { path: "a.md", bundle: "b" }],
+      ["provenance", { path: "a.md", bundle: "b" }],
+      ["catalog", { bundle: "b" }],
+    ] as const) {
+      const r = await s.call(name, args);
+      expect(r.isError, name).toBe(true);
+      expect(text(r), name).toBe(
+        "the bundle b is still loading, and nothing in it is served yet; ask again shortly",
+      );
+    }
+    const listing = text(await s.call("catalog", {})).split("\n");
+    expect(listing).toContain("- bundle b: loading");
+    const status = await s.call("status", {});
+    const lines = text(status).split("\n");
+    expect(lines[0]).toMatch(/^network acme: 2 bundles, 1 served, 1 loading; /);
+    expect(lines[2]).toBe(`b: loading: ${STILL}`);
+    // Asked by name, the bundle's own status names its state as its row does, never "loaded null" (C-A-D3).
+    expect(text(await s.call("status", { bundle: "b" }))).toBe(
+      `b: loading: ${STILL}; lock exclusive`,
+    );
+  });
+
+  // Bite c's verification: a mutation that answered the call which itself started the failing first load with the
+  // refusal, rather than with the rows, survived the suite. The first call and every later one answer alike.
+  it("answers status with its rows when the first load that status itself started makes the network refuse", async () => {
+    const failedIn = (id: string) =>
+      loadGeneration(
+        [],
+        {
+          walkFatal: {
+            path: "",
+            rule: "load-failed",
+            detail: `the bundle folder ./${id} does not exist or cannot be read`,
+          },
+        },
+        NOW,
+        id,
+      );
+    const refusing =
+      "a: the bundle folder ./a does not exist or cannot be read; b: the bundle folder ./b does not exist or cannot be read";
+    const rows = [
+      { id: "a", loaded: true, fatal: true },
+      { id: "b", loaded: true, fatal: true },
+    ];
+    let started = false;
+    const runtime: Runtime = {
+      async ready() {
+        started = true;
+        throw new Error(refusing);
+      },
+      snapshot: () => ({
+        bundles: [
+          { id: "a", generation: failedIn("a") },
+          { id: "b", generation: failedIn("b") },
+        ],
+      }),
+      async lease() {
+        started = true;
+        throw new Error(refusing);
+      },
+      async refresh() {
+        return { outcome: "failed", error: refusing };
+      },
+      status: () =>
+        started
+          ? { lock: "exclusive", loaded: false, refusing, bundles: rows }
+          : { lock: "exclusive", loaded: false, bundles: rows },
+      async shutdown() {},
+    };
+    const s = await session(runtime, toolOptions("acme", ["a", "b"]));
+    for (const call of ["first", "second"]) {
+      const status = await s.call("status", {});
+      expect(status.isError, call).not.toBe(true);
+      expect(
+        (status.structuredContent as { bundles: Array<{ state: string }> }).bundles.map(
+          (row) => row.state,
+        ),
+        call,
+      ).toEqual(["load-failed", "load-failed"]);
+      expect(text(status).split("\n")[0], call).toMatch(
+        /^network acme: 2 bundles, 0 served, 2 load-failed; lock exclusive; refusing: a: /,
+      );
+    }
+  });
+
+  // Bite c's verification: a mutation that printed an ambiguous name's candidates uncut survived the suite.
+  it("cuts each path and name an ambiguity error lists at 200 characters", async () => {
+    const long = `${"p".repeat(300)}.md`;
+    const holding = (bundle: string) =>
+      loadGeneration(
+        [
+          {
+            path: long,
+            bytes: Buffer.from("---\ntype: Note\ntitle: Long\nstatus: stable\n---\n\nBody.\n"),
+          },
+        ],
+        { integrity: "none" },
+        NOW,
+        bundle,
+      );
+    const s = await session(
+      fakeRuntime([holding("a"), holding("b")]),
+      toolOptions("acme", ["a", "b"]),
+    );
+    const r = await s.call("get_page", { path: long });
+    expect(r.isError).toBe(true);
+    const cut = `"${"p".repeat(200)}"…`;
+    expect(text(r)).toBe(
+      `${cut} names more than one page: a:${cut} (ask for ${cut} with bundle "a"), b:${cut} (ask for ${cut} with bundle "b")`,
+    );
+  });
+
+  it("answers status with a row per bundle while the network refuses, and every other tool with the refusal (C-I-C1)", async () => {
+    const failed = (id: string) =>
+      loadGeneration(
+        [],
+        {
+          walkFatal: {
+            path: "",
+            rule: "load-failed",
+            detail: `the bundle folder ./${id} does not exist or cannot be read`,
+          },
+        },
+        NOW,
+        id,
+      );
+    const refusing =
+      "a: the bundle folder ./a does not exist or cannot be read; b: the bundle folder ./b does not exist or cannot be read";
+    const s = await session(
+      fakeRuntime([failed("a"), failed("b")], refusing),
+      toolOptions("acme", ["a", "b"]),
+    );
+    const status = await s.call("status", {});
+    expect(status.isError).not.toBe(true);
+    const out = status.structuredContent as {
+      refusing: string;
+      bundles: Array<{ id: string; state: string; loadedAt: string | null }>;
+    };
+    expect(out.refusing).toBe(refusing);
+    expect(out.bundles.map((row) => [row.id, row.state, row.loadedAt])).toEqual([
+      ["a", "load-failed", null],
+      ["b", "load-failed", null],
+    ]);
+    const lines = text(status).split("\n");
+    expect(lines[0]).toMatch(
+      /^network acme: 2 bundles, 0 served, 2 load-failed; lock exclusive; refusing: a: /,
+    );
+    expect(lines[1]).toBe("a: load-failed: the bundle folder ./a does not exist or cannot be read");
+    for (const line of lines.slice(1)) {
+      expect(line).not.toMatch(/integrity|loaded /);
+    }
+    for (const [name, args] of [
+      ["search", { question: "alpha" }],
+      ["get_page", { path: "a.md" }],
+      ["catalog", {}],
+    ] as const) {
+      const r = await s.call(name, args);
+      expect(r.isError, name).toBe(true);
+      expect(text(r), name).toBe(
+        `the server is refusing every request until its configuration is fixed: ${refusing}`,
+      );
+    }
   });
 });

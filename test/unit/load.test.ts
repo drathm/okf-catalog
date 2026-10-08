@@ -23,8 +23,22 @@ describe("loadBundle on the specification's example bundle", () => {
     expect(report.attachments).toBe(2);
     expect(report.hidden).toBe(0);
     expect(catalog.pages.size).toBe(9);
-    expect(catalog.company).toBe("acme");
+    expect(catalog.bundle).toBe("acme");
     expect(catalog.commit).toBe("0000000000000000000000000000000000000000");
+  });
+
+  it("reports the manifest's commit and publish time, as written, which status returns per bundle (D74)", () => {
+    expect(report.commit).toBe("0000000000000000000000000000000000000000");
+    expect(report.publishedAt).toBe("2026-10-06T00:00:00Z");
+    // The specification's example declares no okf_version; the behaviours fixture's root index does.
+    expect(catalog.okfVersion).toBeUndefined();
+    const behaviours = loadBundle("b", readFixture("behaviours"), options(), NOW);
+    expect(behaviours.catalog.okfVersion).toBe("0.2");
+    expect(behaviours.report.publishedAt).toBe(behaviours.report.publishedAt?.trim());
+    // No manifest read, no publish time: integrity off and no manifest, or a manifest that does not parse.
+    const bare = loadBundle("x", readFixture("no-manifest"), options({ integrity: "none" }), NOW);
+    expect(bare.report.publishedAt).toBeUndefined();
+    expect(bare.report.commit).toBeUndefined();
   });
 
   it("keeps the company's own index files, with the log at the root", () => {

@@ -9,13 +9,16 @@
 // of the orders page repeats its words, so that text is flagged for review, never failed), are the person's
 // reading of the printed answer against ask.mjs's header: the script does not parse prose for them.
 // Usage: node bench/acceptance/verify.mjs <stream.jsonl> [--expect-path p] [--expect-trust] [--expect-no-page]
-//        [--forbid-text t]
+//        [--forbid-text t] [--expect-bundle id]
+// --expect-bundle (the 0.4 item): beyond one bundle, the answer must cite the page by the name a result line prints,
+// <bundle>:<path>, whole: not the bundle apart from the path, nor inside a longer id or before a longer path. It
+// needs --expect-path.
 import { readFileSync } from "node:fs";
 
 const [file, ...rest] = process.argv.slice(2);
 if (file === undefined) {
   process.stderr.write(
-    "usage: verify.mjs <stream.jsonl> [--expect-path p] [--expect-trust] [--expect-no-page] [--forbid-text t]\n",
+    "usage: verify.mjs <stream.jsonl> [--expect-path p] [--expect-trust] [--expect-no-page] [--forbid-text t] [--expect-bundle id]\n",
   );
   process.exit(2);
 }
@@ -27,6 +30,13 @@ const expectPath = option("--expect-path");
 const expectTrust = rest.includes("--expect-trust");
 const expectNoPage = rest.includes("--expect-no-page");
 const forbidText = option("--forbid-text");
+const expectBundle = option("--expect-bundle");
+if (expectBundle !== undefined && expectPath === undefined) {
+  process.stderr.write(
+    "--expect-bundle needs --expect-path: the bundle is checked on the cited name\n",
+  );
+  process.exit(2);
+}
 
 const events = readFileSync(file, "utf8")
   .split("\n")
@@ -86,6 +96,18 @@ if (expectPath !== undefined && !answer.includes(expectPath))
   failures.push(`the answer does not name ${expectPath}`);
 if (expectTrust && !/\b(unverified|machine-confirmed|human-reviewed)\b/i.test(answer))
   failures.push("the answer names no trust tier");
+if (expectBundle !== undefined) {
+  // The cited name whole: no id character before it, no path character after it (a sentence's full stop aside).
+  const literal = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const cited = new RegExp(
+    `(?<![a-z0-9-])${literal(`${expectBundle}:${expectPath}`)}(?![\\p{L}\\p{N}_/-]|\\.[\\p{L}\\p{N}_/-])`,
+    "u",
+  );
+  if (!answer.includes(expectBundle))
+    failures.push(`the answer does not name the bundle ${expectBundle}`);
+  else if (!cited.test(answer))
+    failures.push(`the answer does not cite ${expectBundle}:${expectPath}`);
+}
 if (expectNoPage) {
   if (/\b[\w./-]+\.md\b/.test(answer))
     failures.push("the answer names a page path, but none should cover the question");
