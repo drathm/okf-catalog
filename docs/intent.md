@@ -16,7 +16,7 @@ The priority: serving is the problem. Publishing is the contract the server need
 
 ## 3. The product, in three parts
 
-**The server.** A TypeScript MCP server built on the qmd library with an OKF layer. It loads a published bundle, indexes it with qmd, and exposes four tools:
+**The server.** A TypeScript MCP server built on the qmd library with an OKF layer. It loads a published bundle, indexes it with qmd, and exposes six tools (`citations` and `provenance` from 0.3.0):
 
 | Tool | Takes | Returns |
 |---|---|---|
@@ -24,6 +24,8 @@ The priority: serving is the problem. Publishing is the contract the server need
 | `get_page` | A page path, or its concept id (the path without `.md`) | The page body plus provenance: verifier and date, recheck date, sources with their ids, replacement if deprecated |
 | `catalog` | An optional folder | The index of the bundle or of one folder |
 | `status` | Nothing | What is loaded, from which commit, when it was last pulled, and the report of what was degraded or refused |
+| `citations` | A page path, or its concept id | What the page cites and what cites it, from what the bundle states: its body links with their text and nearest heading, its footnoted claims joined to their sources, the sources no footnote cites, the footnotes with no source, other pages' links to it, and the pages whose `resource` or sources name it; each list at most 50 rows with its total; nothing fetched |
+| `provenance` | A page path, or its concept id; an optional `depth`, 0 to 8 (4 when omitted) | Where the page's sources lead inside the bundle: its `resource`, sources and contract fields classified, and each page a source names entered and its sources listed in turn, each page once, with its trust tier and recheck date and each source's author, usage count, last change and usage window; nothing fetched, opened or run |
 
 Filters on type, status and recheck date come from the bundle's manifest until qmd's metadata filter ships. A deprecated page returns its replacement. One instance per company. Two modes: lexical-only, with no models, small and cheap; and full, with qmd's embeddings, query expansion and reranker, about 2.3 GB of models.
 
@@ -82,7 +84,7 @@ What qmd does, checked against its code at release 2.8.3 and at main on 2026-10-
 | `verified` (§5.2, §5.3) | A list, or the bare mapping the spec allows | The trust tier the spec defines, derived per page: unverified, machine-confirmed or human-reviewed; shown on every hit; the latest verifier and date in provenance; a tie-break between equal-scoring hits; the `min_trust` argument of `search`, a filter the caller asks for, never a silent one | Unverified, and still served, as §11 requires |
 | `sources` (§5.1) | Entries with `resource`, and ids where the body cites them | Listed with their ids in `get_page`, so an agent can resolve a `[^id]` footnote to its source, each with the usage window that frames its count, its own or the page's `usage_window`; the count on hits; no effect on ranking | Provenance says none; on an OKF 0.1 page with none of `generated`, `verified` and `sources`, a level-one `# Citations` list is read as the sources and reported (D63) |
 | `resource` (§3) | A URI | Returned on hits and `get_page`, so an agent can follow to the underlying asset | Nothing |
-| Links (§6) | Bundle-absolute (leading slash) or relative paths that resolve inside the bundle | Resolved to page paths; followed by `get_page` on request; broken ones listed by `status` | Reported, never refused, as §6 requires |
+| Links (§6) | Bundle-absolute (leading slash) or relative paths that resolve inside the bundle | Resolved to page paths; followed by `get_page` on request; returned by `citations` with their text and nearest heading, as the page's mentions and as the mentions of the page they point at, and the path fields (`resource`, `sources[].resource`, `computation`, `executor`, `attester`) walked by `provenance` (from 0.3.0); broken ones listed by `status` | Reported, never refused, as §6 requires |
 | `index.md` (§8) | One per folder, in the spec's layout | Served by `catalog`; excluded from the search index; its folder is the `topic` scope of `search` | `catalog` generates the listing from the folder's frontmatter; reported |
 | `log.md` (§9) | Optional | Excluded from the index; served by `get_page` on request | Nothing |
 | Path and file name | Lower-case, hyphenated, descriptive | qmd ranks the path at one and a half times body weight, so names carry signal; the folder is the topic | Nothing |

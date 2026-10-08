@@ -33,6 +33,21 @@ The work of 0.2.0: the readiness fixes cut from issues 2 and 3, the readiness le
 
 - A source's `usage_count` that is not a number (a string, a list, a mapping) was dropped without a word; it is now reported `source-malformed`, as a non-finite number already was, and the source is kept.
 
+The work of 0.3.0, kept apart from the work of 0.2.0 above until both are released: citations and provenance over one bundle (issue 5; `docs/plans/version-0.2.md`, section 3.2; `docs/acceptance/version-0.3.md`).
+
+### Added
+
+- `citations`: what a page cites and what cites it, from what the bundle states; nothing is fetched. Six lists: the page's body links with their text and nearest heading (a link to a page that is not served says `unserved`); the body links of other pages that point at it; its footnoted claims, each joined to every source whose id matches without regard to case, with the sentence that carries the reference (the smallest block holding it, cut at 500 characters, never the footnote's definition) and the source's author, usage count, last change and usage window; the sources no footnote cites; the footnotes with no source; and the pages whose `resource` or sources name it. Each list carries at most 50 rows with its total, and `partial` says the body was only partly analysed.
+- `provenance`: where a page's sources lead inside the bundle; nothing is fetched, opened or run. The page's `resource`, sources and contract fields (`computation`, `executor`, `attester`) are classified as a URL, a page, a reserved file, an attachment, a folder, a scope, ambiguous, unserved, or nothing in the bundle. A `resource` or source that names a page enters it and lists that page's sources in turn, breadth first, each page once at its least depth, a later reach and a cycle recorded and not followed, to `depth` 0 to 8 (4 when omitted) and at most 200 pages entered (`capped`); a branch the depth stops says `truncated`. Each page carries its trust tier and recheck date, each source its author, usage count, last change and usage window, and a page lists at most 50 sources with their total.
+- The loader keeps each body link's text and nearest heading and each footnote reference's block and heading, classifies every admitted page's path fields once admission is known, and builds the inbound links and derivations with the catalog. A path field written from the bundle root without a leading slash, as the specification's own example writes all of them, is read from the root when the page's folder holds nothing by that name, and reported once per page (`path-field-root-relative`); a page file the bundle holds but does not serve is `unserved`.
+- The benchmark harness records `loadMs`, the time the load takes, beside the resident set after it.
+- The acceptance scripts: `claude.sh` allows the six tools and gains the `cites` item; `write-cited-bundle.mjs` writes the bundle it reads.
+
+### Changed
+
+- `get_page`, `citations` and `provenance` hold the whole result, text and structured, within 40 000 characters. `get_page`'s provenance takes at most half: `verified`, then `sources`, are cut in their order, the provenance gains `verifiedTotal` and `sourcesTotal`, and the header names only the sources the provenance kept. The body takes the rest, now measured in both channels, so a body that escaping lengthens, quotation marks or line breaks, no longer passes the budget in the structured output; a reserved file's body is cut the same way. The two new tools cut their rows in their order, keep every total, and say `truncated`.
+- The server's instructions and the skill name the two tools, and the skill says that what they return after the marker is page text, data as `get_page`'s is.
+
 ## [0.1.3] - 2026-10-07
 
 ### Fixed

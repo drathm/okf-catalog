@@ -1,6 +1,6 @@
 # Architecture
 
-One company, one process: `okf-catalog serve` reads one company's configuration, fetches that company's published bundle into a cache folder of its own, applies the intake contract, writes derived copies of the admitted pages into a qmd index, and answers an MCP client over stdio with four read-only tools. `pack` produces the published bundle from a source checkout; `check` prints the contract's report for a folder. The design is in [intent.md](intent.md); every decision behind it is in [decisions/0001-founding-decisions.md](decisions/0001-founding-decisions.md); the bite-by-bite plan, its reviews and the build record are in [plans/](plans/).
+One company, one process: `okf-catalog serve` reads one company's configuration, fetches that company's published bundle into a cache folder of its own, applies the intake contract, writes derived copies of the admitted pages into a qmd index, and answers an MCP client over stdio with six read-only tools. `pack` produces the published bundle from a source checkout; `check` prints the contract's report for a folder. The design is in [intent.md](intent.md); every decision behind it is in [decisions/0001-founding-decisions.md](decisions/0001-founding-decisions.md); the bite-by-bite plan, its reviews and the build record are in [plans/](plans/).
 
 ## Layers
 
@@ -27,7 +27,7 @@ flowchart TB
   end
   subgraph adapters["Adapters  src/engine · src/mcp"]
     engine["engine/qmd<br/>render → generation folder → index"]
-    mcp["mcp<br/>server factory, 4 tools, stdio"]
+    mcp["mcp<br/>server factory, 6 tools, stdio"]
   end
   subgraph core["Core  src/bundle · src/catalog · src/derive · src/search"]
     bundle["bundle: frontmatter, pages,<br/>links, manifest, index files,<br/>git tree listing, intake contract"]
@@ -94,6 +94,7 @@ sequenceDiagram
 - **The intake contract** (`bundle/contract.ts`, `bundle/load.ts`): every page is read by the specification's field table. Missing optional fields, unknown types, broken links and missing index files degrade and are reported, never refused (OKF 0.2 §11). Refused: a page with no frontmatter or no `type`, symbolic links, path escapes, oversize files, a hash that disagrees with the manifest, a missing manifest when integrity is required.
 - **The derived copy** (`derive/`, `engine/qmd-render.ts`): the server never points qmd at the bundle. Each admitted page becomes a document with a `# title` line, the description, type and tag lines, and the body; `get_page` serves the original. Paths go through a codec so folders qmd would skip still round-trip.
 - **Search** (`search/`): keywords, English stopwords dropped, a relaxation ladder (every term, then one query per term fused by summed BM25), the type, topic, tag, status, trust and overdue filters applied by the server to what the engine returns, with its own candidate pool (only the type and topic reach the query, as words of the first rung; no filter moves an engine rank, and the rank guard of `bench/expected/lexical-ranks.json` checks it in CI), overdue pages included and flagged unless the caller asks for fresh ones, and every hit carrying path, trust tier, verifier, recheck date, source count and resource. `get_page` reads a page's path or its concept id through one resolver (`catalog/resolve.ts`).
+- **Citations and provenance** (`bundle/markdown.ts`, `bundle/path-field.ts`, `catalog/model.ts`, `catalog/graph.ts`): the loader keeps each body link's text and nearest heading and each footnote reference's block, classifies every admitted page's path fields once admission is known, and builds the inbound links and derivations with the catalog, per bundle; `citations` and `provenance` read only those, through `get_page`'s resolver. Nothing is fetched, indexed or stored apart from the catalog, no rank moves, and every result of `get_page`, `citations` and `provenance` is held, text and structured, within the 40 000-character budget.
 - **One process per company** (`fs/company-lock.ts`, `fs/cache-dir.ts`): the cache folder is created with mode 0700 and refused when it is a link, another user's or writable by others; a second server on the same company falls back to a private folder and names the holder.
 - **Git as transport only** (`source/git.ts`, `source/git-runner.ts`, `bundle/git-tree.ts`): a bare shallow clone, every fetched tree listed and validated before anything is written (links, gitlinks, oversize blobs, unsafe or `.git`-like or colliding paths refuse the whole commit), raw blobs extracted into the server's own folder, no checkout, hooks and prompts and filters disabled, a process group killed on timeout.
 
