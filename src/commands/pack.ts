@@ -13,7 +13,7 @@ import { buildManifest, MANIFEST_NAME } from "../bundle/manifest.js";
 import type { BundleFile, LoadOptions } from "../bundle/model.js";
 import { findCollision } from "../bundle/paths.js";
 import { reservedKind } from "../bundle/reserved.js";
-import { readCompanyConfig } from "../config/company-config.js";
+import { readNetworkConfig } from "../config/network-config.js";
 import { cacheOverlapsBundle } from "../fs/cache-dir.js";
 import { walkBundle } from "../fs/walk.js";
 import { renderReport } from "../report/report.js";
@@ -103,12 +103,16 @@ export function runPack(argv: string[], io: CommandIo): number {
     admit.push(status);
   }
 
-  const read = readCompanyConfig(resolve(configPath), homedir());
+  const read = readNetworkConfig(resolve(configPath), homedir());
   if (!read.ok) {
     io.stderr(`the configuration is not usable: ${read.problems.join("; ")}\n`);
     return 2;
   }
-  const config = read.config;
+  if (read.config.bundles.length !== 1) {
+    io.stderr("the configuration lists more than one bundle; pack takes a file with one\n");
+    return 2;
+  }
+  const config = read.config.bundles[0] as (typeof read.config.bundles)[number];
 
   let now: Date;
   try {
@@ -163,7 +167,7 @@ export function runPack(argv: string[], io: CommandIo): number {
     hiddenFolders: walked.hiddenFolders,
     ...(walked.fatal === undefined ? {} : { walkFatal: walked.fatal }),
   };
-  const { catalog, report } = loadForCheck(config.company, walked.files, options, now);
+  const { catalog, report } = loadForCheck(config.id, walked.files, options, now);
   if (report.fatal !== undefined || report.refusals.length > 0) {
     io.stderr(renderReport(report));
     return 1;

@@ -13,9 +13,9 @@ import {
 import { hitLine, pageHeader, safe } from "../../src/catalog/text.js";
 import {
   discoverConfigPath,
-  parseCompanyConfig,
-  readCompanyConfig,
-} from "../../src/config/company-config.js";
+  parseNetworkConfig,
+  readNetworkConfig,
+} from "../../src/config/network-config.js";
 import { cacheOverlapsBundle, judgeFolder } from "../../src/fs/cache-dir.js";
 import { createLog, LOG_VALUE_CAP } from "../../src/log.js";
 import type { SearchHit } from "../../src/search/search.js";
@@ -213,20 +213,20 @@ describe("configuration (round 2)", () => {
   });
 
   it("refuses a configuration path that is not a regular file without reading it", () => {
-    const r = readCompanyConfig(dir, HOME);
+    const r = readNetworkConfig(dir, HOME);
     expect(!r.ok && r.problems[0]).toMatch(/not a regular file/);
   });
 
   it("reports a YAML problem as one line without the parser's code frame or any control character", () => {
     for (const name of ["bad.yaml", "binary.yaml"]) {
-      const r = readCompanyConfig(join(dir, name), HOME);
+      const r = readNetworkConfig(join(dir, name), HOME);
       expect(r.ok, name).toBe(false);
       const problem = r.ok ? "" : (r.problems[0] ?? "");
       expect(problem, name).not.toContain("\n");
       // biome-ignore lint/suspicious/noControlCharactersInRegex: the test is that none survive
       expect(problem, name).not.toMatch(/[\u0000-\u0008\u000b-\u001f\u007f]/);
     }
-    const inline = parseCompanyConfig("company: [\nsource: x\n", "/srv", HOME);
+    const inline = parseNetworkConfig("company: [\nsource: x\n", "/srv", HOME);
     // The parser names where it gave up (the line after the unclosed sequence), with no code frame after it.
     expect(!inline.ok && inline.problems[0]).toMatch(/at line \d+, column \d+:$/);
   });

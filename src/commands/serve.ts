@@ -6,8 +6,8 @@ import { Writable } from "node:stream";
 import { parseArgs } from "node:util";
 import { RESULT_BUDGET } from "../catalog/outputs.js";
 import type { Runtime, ToolOptions } from "../catalog/runtime.js";
-import { discoverConfigPath, readCompanyConfig } from "../config/company-config.js";
-import { cacheOverlapsBundle, cacheRoot, companyDir, ensureCache } from "../fs/cache-dir.js";
+import { discoverConfigPath, readNetworkConfig } from "../config/network-config.js";
+import { cacheRoot, ensureCache, networkDir } from "../fs/cache-dir.js";
 import {
   acquireLock,
   type Lock,
@@ -214,17 +214,21 @@ export async function runServe(argv: string[]): Promise<number> {
   } else {
     // A test-only setting (like OKF_CATALOG_NOW): `file` repositories, for the suite's local bare repositories.
     const fileRepositories = process.env.OKF_CATALOG_GIT_PROTOCOLS === "file";
-    const read = readCompanyConfig(found.path, home, { allowFileRepositories: fileRepositories });
-    if (!read.ok) {
+    const root = cacheRoot({ env: process.env, platform: process.platform, home });
+    const read = readNetworkConfig(found.path, home, {
+      allowFileRepositories: fileRepositories,
+      cacheRoot: root.root,
+    });
+    if (!read.ok || read.config.bundles.length !== 1) {
       runtime = refusingRuntime(
-        `the configuration at ${found.path} is not usable: ${read.problems.join("; ")}`,
+        `the configuration at ${found.path} is not usable: ${read.ok ? "this build serves one bundle" : read.problems.join("; ")}`,
         log,
       );
     } else {
-      const config = read.config;
+      const network = read.config;
+      const config = network.bundles[0] as (typeof network.bundles)[number];
       const configured = config.source;
-      const root = cacheRoot({ env: process.env, platform: process.platform, home });
-      const dir = companyDir(root.root, config.company);
+      const dir = networkDir(root.root, network.network);
       const described =
         configured.kind === "local"
           ? configured.configured
@@ -247,24 +251,17 @@ export async function runServe(argv: string[]): Promise<number> {
             )
           : placeholder;
       options = {
-        company: config.company,
+        company: network.network,
         source: described,
         dev: config.serve.dev,
-        limitDefault: config.serve.limitDefault,
+        limitDefault: network.limitDefault,
         resultBudget: RESULT_BUDGET,
       };
       let lockKind: "exclusive" | "private" = "exclusive";
       const serving = createRuntime({
-        company: config.company,
+        company: config.id,
         source,
         prepare: async () => {
-          if (configured.kind === "local" && cacheOverlapsBundle(dir, configured.path)) {
-            const described = new Error(
-              "the cache folder lies inside the bundle folder, or the bundle inside the cache folder; set XDG_CACHE_HOME to a folder outside the bundle",
-            ) as Error & { detail?: string };
-            described.detail = `cache ${dir}; bundle ${configured.path}`;
-            throw described;
-          }
           const ensured = ensureCache(dir, root.root, {
             uid: process.getuid?.() ?? 0,
             platform: process.platform,
@@ -296,7 +293,7 @@ export async function runServe(argv: string[]): Promise<number> {
           let result: PrepareResult;
           // Imported here, after stdout is reserved, so nothing the engine's modules do at load can reach the channel.
           const { QmdEngine } = await import("../engine/qmd.js");
-          const engine = await QmdEngine.open({ bundles: [config.company], dir: work });
+          const engine = await QmdEngine.open({ bundles: [config.id], dir: work });
           if (engine.resetOnOpen !== undefined)
             log.warn("engine.reset", { detail: engine.resetOnOpen });
           result = {
@@ -388,7 +385,7 @@ export async function runServe(argv: string[]): Promise<number> {
         },
       };
       log.info("serve.start", {
-        company: config.company,
+        company: network.network,
         source: described,
         dev: config.serve.dev,
         node: process.versions.node,

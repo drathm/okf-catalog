@@ -21,8 +21,14 @@ export function cacheRoot(input: {
 const fallbackRoot = (platform: NodeJS.Platform, home: string): string =>
   platform === "darwin" ? join(home, "Library", "Caches") : join(home, ".cache");
 
-export function companyDir(root: string, company: string): string {
-  return join(root, "okf-catalog", company);
+/** The network's cache folder: its lock, its store, its private folders, and a folder per bundle (D72, D73). */
+export function networkDir(root: string, network: string): string {
+  return join(root, "okf-catalog", network);
+}
+
+/** A bundle's folder under a work folder (the network's, or a private one): its clone, its trees and its generations. */
+export function bundleWorkDir(work: string, bundle: string): string {
+  return join(work, "bundles", bundle);
 }
 
 export interface FolderStat {
@@ -52,22 +58,27 @@ export function judgeFolder(stat: FolderStat, uid: number, isRoot: boolean): str
   return undefined;
 }
 
-/** Whether one folder lies inside the other: the cache must never sit inside the bundle, nor the bundle inside the cache. */
-export function cacheOverlapsBundle(cacheDir: string, bundleDir: string): boolean {
+/** Whether one folder lies inside the other, or is it: two bundles never share a file (D76). */
+export function foldersOverlap(one: string, other: string): boolean {
   const inside = (inner: string, outer: string): boolean => {
     const rel = relative(resolve(outer), resolve(inner));
     // A sibling named "..out" is outside; only ".." itself or a "../" prefix leaves the folder.
     return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
   };
-  return inside(cacheDir, bundleDir) || inside(bundleDir, cacheDir);
+  return inside(one, other) || inside(other, one);
+}
+
+/** Whether one folder lies inside the other: the cache must never sit inside the bundle, nor the bundle inside the cache. */
+export function cacheOverlapsBundle(cacheDir: string, bundleDir: string): boolean {
+  return foldersOverlap(cacheDir, bundleDir);
 }
 
 /** `problem` is for the model and names no path; `detail` is for the log and does. */
 export type EnsureResult = { ok: true } | { ok: false; problem: string; detail: string };
 
 /**
- * Makes the company folder under the cache root with mode 0700, tightens the folders it owns between the root
- * and the company folder, and refuses when any of them fails the rule above. Windows is not a version 0 host.
+ * Makes the network's folder under the cache root with mode 0700, tightens the folders it owns between the root
+ * and the network's folder, and refuses when any of them fails the rule above. Windows is not a version 0 host.
  */
 export function ensureCache(
   dir: string,
@@ -84,7 +95,7 @@ export function ensureCache(
       "Windows is not a version 0 host: the cache folder's ownership and mode checks assume POSIX";
     return refuse(text, text);
   }
-  // Judge what exists before anything is written: the root, then each existing folder down to the company's.
+  // Judge what exists before anything is written: the root, then each existing folder down to the network's.
   const judgeRoot = (): EnsureResult | undefined => {
     try {
       const rootStat = lstatSync(realpathSync(root));

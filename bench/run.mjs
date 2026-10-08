@@ -204,7 +204,7 @@ process.env.NODE_LLAMA_CPP_SKIP_DOWNLOAD = "1";
 const { loadBundle } = await import("../dist/bundle/load.js");
 const { DEFAULT_CAPS } = await import("../dist/bundle/model.js");
 const { folderOf } = await import("../dist/bundle/paths.js");
-const { parseCompanyConfig } = await import("../dist/config/company-config.js");
+const { parseNetworkConfig } = await import("../dist/config/network-config.js");
 const { deriveDocument } = await import("../dist/derive/derived-document.js");
 const { QmdEngine } = await import("../dist/engine/qmd.js");
 const { decodePath, encodePath } = await import("../dist/engine/qmd-render.js");
@@ -285,13 +285,16 @@ if (configPath === undefined) {
     specText: "2026-08-15",
   };
 } else {
-  const parsed = parseCompanyConfig(
+  const parsed = parseNetworkConfig(
     readFileSync(configPath, "utf8"),
     dirname(resolve(configPath)),
     homedir(),
   );
   if (!parsed.ok) fail(EXIT_USAGE, `configuration: ${parsed.problems.join("; ")}`);
-  company = parsed.config;
+  // The harness measures one bundle: the configuration's admission, caps and types are that bundle's.
+  if (parsed.config.bundles.length !== 1)
+    fail(EXIT_USAGE, "--config must name one bundle: the harness measures one bundle at a time");
+  company = parsed.config.bundles[0];
   caps = company.caps;
   options = {
     admit: company.serve.dev ? [...company.serve.admit, "draft"] : company.serve.admit,
