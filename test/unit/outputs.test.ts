@@ -1422,4 +1422,46 @@ describe("the verification of bite b's fix pass", () => {
     expect(hit?.citation).toContain(`"${long("n", 200)}"…`);
     expect(JSON.stringify(out).length).toBeLessThan(15_000);
   });
+
+  it("prints the last refusal's path and the fatal path on the status line by the path kind", () => {
+    const status = (path: string): string =>
+      statusSummary(
+        projectStatus(
+          {
+            ...generation,
+            report: {
+              ...generation.report,
+              fatal: { path, rule: "manifest-missing", detail: "no manifest.json" },
+            },
+          },
+          {
+            lock: "exclusive",
+            loaded: true,
+            lastRefusal: {
+              commit: "d".repeat(40),
+              rule: "symlink",
+              path,
+              detail: "a symbolic link",
+            },
+          },
+          {
+            company: "b",
+            source: "./kb",
+            dev: false,
+            limitDefault: 8,
+            resultBudget: RESULT_BUDGET,
+          },
+          NOW,
+        ),
+      );
+    // A path the loader refused can hold what a plain path cannot: it is quoted, so it adds no fact to the line.
+    const odd = 'notes/a; b: "c" [d].md';
+    const line = status(odd);
+    expect(line).toContain(`last refusal dddddddddddd symlink (${JSON.stringify(odd)})`);
+    expect(line).toContain(`FATAL manifest-missing (${JSON.stringify(odd)}): no manifest.json`);
+    // A path plain for its kind stays bare.
+    const plain = status("notes/link.md");
+    expect(plain).toContain("last refusal dddddddddddd symlink (notes/link.md)");
+    expect(plain).toContain("FATAL manifest-missing (notes/link.md): no manifest.json");
+  });
 });

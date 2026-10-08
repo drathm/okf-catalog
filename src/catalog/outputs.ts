@@ -28,6 +28,7 @@ import {
   mentionLine,
   pageHeader,
   pageWindowLine,
+  printed,
   provenanceHeader,
   reservedHeader,
   safe,
@@ -945,13 +946,14 @@ export function statusSummary(out: StatusOutput): string {
   ];
   if (out.lastAttempt !== null)
     parts.push(`last attempt ${out.lastAttempt.outcome} at ${out.lastAttempt.at}`);
+  // A refused path is printed by the path kind, bare only when plain, so it can add no fact to the line (P13).
   if (out.lastRefusal !== null)
     parts.push(
-      `last refusal ${out.lastRefusal.commit === null ? "" : `${out.lastRefusal.commit.slice(0, 12)} `}${out.lastRefusal.rule}${out.lastRefusal.path ? ` (${out.lastRefusal.path})` : ""}`,
+      `last refusal ${out.lastRefusal.commit === null ? "" : `${out.lastRefusal.commit.slice(0, 12)} `}${out.lastRefusal.rule}${out.lastRefusal.path ? ` (${printed(out.lastRefusal.path, "path")})` : ""}`,
     );
   if (out.fatal !== null) {
     parts.push(
-      `FATAL ${safe(out.fatal.rule)}${out.fatal.path ? ` (${safe(out.fatal.path)})` : ""}: ${safe(out.fatal.detail)}`,
+      `FATAL ${safe(out.fatal.rule)}${out.fatal.path ? ` (${printed(out.fatal.path, "path")})` : ""}: ${safe(out.fatal.detail)}`,
     );
   }
   if (out.refusing !== null) parts.push(`refusing: ${safe(out.refusing)}`);
