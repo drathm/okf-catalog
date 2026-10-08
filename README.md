@@ -8,7 +8,7 @@ okf-catalog is an MCP server that serves a company's [Open Knowledge Format](htt
 
 What it adds: **qmd done right for OKF.** [qmd](https://github.com/tobi/qmd) is the best Markdown search engine there is. okf-catalog makes it understand OKF's fields: titles, descriptions and tags ranked as they should be, status and recheck dates respected, trust and provenance returned with every answer, deprecated pages pointing to their replacements.
 
-**Status: version 0 (0.1.3) on npm, not yet accepted; the next release, 0.2.0, filters search by tag, status and trust tier, includes pages past their recheck date by default (flagged), takes a page's concept id, and reads the contract fields, usage windows and OKF 0.1 fallbacks; 0.3.0 adds `citations`, what a page cites and what cites it, and `provenance`, where its sources lead inside the bundle, neither fetching anything (`CHANGELOG.md`, Unreleased).** Every item of the version 0 acceptance list that a test can prove is proven on every run; the items that need a person on a clean account (a signed-in Claude Code answering from a bundle, a real publish, the network off) are pending, with their runbook in [docs/acceptance/version-0.md](docs/acceptance/version-0.md). The package is public on npm as `okf-catalog`; releases are tagged `v<version>` and published by the repository's release workflow through npm's trusted publishing, each with a provenance statement, and `CHANGELOG.md` has the entries. The licence is Apache-2.0 (decision D1). Start with [docs/intent.md](docs/intent.md); the implementation plan and its execution record are under [docs/plans/](docs/plans/).
+**Status: version 0 (0.1.3) on npm, not yet accepted; the next release, 0.2.0, filters search by tag, status and trust tier, includes pages past their recheck date by default (flagged), takes a page's concept id, and reads the contract fields, usage windows and OKF 0.1 fallbacks; 0.3.0 adds `citations`, what a page cites and what cites it, and `provenance`, where its sources lead inside the bundle, neither fetching anything; 0.4.0 serves a network of bundles, the bundles one audience follows, from one process and one index (`CHANGELOG.md`, Unreleased).** Every item of the version 0 acceptance list that a test can prove is proven on every run; the items that need a person on a clean account (a signed-in Claude Code answering from a bundle, a real publish, the network off) are pending, with their runbook in [docs/acceptance/version-0.md](docs/acceptance/version-0.md). The package is public on npm as `okf-catalog`; releases are tagged `v<version>` and published by the repository's release workflow through npm's trusted publishing, each with a provenance statement, and `CHANGELOG.md` has the entries. The licence is Apache-2.0 (decision D1). Start with [docs/intent.md](docs/intent.md); the implementation plan and its execution record are under [docs/plans/](docs/plans/).
 
 ## Quickstart
 
@@ -32,7 +32,7 @@ okf-catalog --version
 okf-catalog check path/to/bundle --integrity none --types Term,Guide
 ```
 
-Write the company's configuration, `okf-catalog.yaml`. A folder on this machine, served as it is, drafts admitted and labelled:
+Write the configuration, `okf-catalog.yaml`. A folder on this machine, served as it is, drafts admitted and labelled:
 
 ```yaml
 company: acme
@@ -56,6 +56,33 @@ serve:
 types: [Term, Guide, Policy]
 ```
 
+Or a network: several bundles one audience follows, served from one process and searched in one index (from 0.4.0). The top-level keys are the defaults each bundle inherits; a bundle may set its own `serve.admit`, `serve.pull_interval`, `caps`, `types` and `spec_text`, and only a local bundle may set `serve.dev`, which turns integrity off for it alone. Each id is one lower-case path segment, and not `vendor`, `dist` or `build`.
+
+```yaml
+network: acme
+serve:
+  pull_interval: 10m
+types: [Term, Guide, Policy]
+bundles:
+  - id: handbook
+    source:
+      repository: git@github.com:acme/handbook.git
+      branch: published
+  - id: finance
+    source:
+      repository: git@github.com:acme/finance-knowledge.git
+      branch: published
+      bundle_path: kb
+    types: [Metric, Policy]
+  - id: drafts
+    source:
+      local: ./drafts
+    serve:
+      dev: true
+```
+
+A `company:` file is a network of that name with one bundle of that id, and keeps the lines and the `catalog` and `status` shapes it had (`status` gains `publishedAt` and `okfVersion`; hits and pages gain `bundle` and `conceptId`); it is kept until 0.5.0, which removes it, and the server logs it as the alias at start. With more than one bundle, every hit names its bundle (`finance:metrics/revenue.md`), `catalog` without a bundle lists the bundles, `status` gives a row per bundle, and a path two bundles hold is read with its bundle (`get_page` with `bundle: "finance"`). A bundle that is refused, or cannot be fetched, is reported and the others are served.
+
 Give it to Claude Code through the plugin, which asks for no settings: it runs the `okf-catalog` command from PATH in the project folder, where the server finds `okf-catalog.yaml` (or the file named by `OKF_CATALOG_CONFIG`). The plugin folder ships inside the package:
 
 ```bash
@@ -64,16 +91,16 @@ claude --plugin-dir "$(npm root -g)/okf-catalog/plugin/claude-code"
 
 From a checkout, `npm install -g .` puts the command on PATH and `claude --plugin-dir ./plugin/claude-code` loads the same plugin. In the session, `/mcp` shows the `okf-catalog` server connected, and the skill tells Claude to search with keywords, read pages whole and cite the path, the trust tier, the verifier and the recheck date. The server can also be started from a shell with `okf-catalog serve --config okf-catalog.yaml`; it speaks MCP over stdio.
 
-To publish, `node dist/cli.js pack --config okf-catalog.yaml --from ./knowledge --out ./published` writes what a server serves; `recipes/publish/` has the workflow and scripts that run the OKF checkers around it and push the branch. Not in this version: full mode, a hosted server, Windows, a registry install.
+To publish, `node dist/cli.js pack --config okf-catalog.yaml --from ./knowledge --out ./published` writes what a server serves (one bundle: with a network file of more than one bundle, `--bundle <id>` names which); `recipes/publish/` has the workflow and scripts that run the OKF checkers around it and push the branch. Not in this version: full mode, a hosted server, Windows, a registry install.
 
 ## Requirements
 
 - Node 24 or later (the Active LTS line when version 0 was built), on macOS or Linux (Windows is not a version 0 host: the cache folder's ownership and mode checks assume POSIX).
-- The cache folder (`$XDG_CACHE_HOME/okf-catalog/<company>`, or the platform's user cache folder) must be on a local filesystem: the one-process-per-company lock is an operating-system lock on a SQLite file, which network filesystems do not honour reliably, and it must not lie inside the bundle folder.
+- The cache folder (`$XDG_CACHE_HOME/okf-catalog/<network>`, or the platform's user cache folder) must be on a local filesystem: the one-process-per-network lock is an operating-system lock on a SQLite file, which network filesystems do not honour reliably, and it must not lie inside a bundle folder. A cache folder written by 0.1 to 0.3 is taken over without a re-index: its clone moves into `bundles/<id>/` the first time a server holding the lock starts.
 
 ## Publishing
 
-A server reads a `published` branch, which `okf-catalog pack` writes from a bundle folder: the admitted pages, their index files, the attachments and a manifest. `recipes/publish/` holds the GitHub Actions workflow and the two shell scripts that produce that branch on every push to the source branch, with the OKF checkers run before and after `pack`. A configuration with `source.repository`, `branch` and `bundle_path` serves that branch and polls it at `serve.pull_interval`; one with `source.local` serves a folder as it is.
+A server reads a `published` branch per repository bundle, which `okf-catalog pack` writes from a bundle folder: the admitted pages, their index files, the attachments and a manifest. `recipes/publish/` holds the GitHub Actions workflow and the two shell scripts that produce that branch on every push to the source branch, with the OKF checkers run before and after `pack`. A configuration with `source.repository`, `branch` and `bundle_path` serves that branch and polls it at `serve.pull_interval`; one with `source.local` serves a folder as it is.
 
 ## Documents
 
