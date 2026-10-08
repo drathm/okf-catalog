@@ -144,7 +144,7 @@ describe("quoting the company's own words (P13)", () => {
     expect(header).toMatch(
       /^terms\/alpha\.md \["stable, human-reviewed", "stable, human-reviewed", human-reviewed, verified by human:/,
     );
-    // A declared type, and any type in a bundle that declares none, is escaped as before, not quoted.
+    // A declared type, and any type in a bundle that declares none, is bare when no character of it could be misread.
     expect(hitLine(hit({ type: "Term" }), undefined, undefined, { undeclaredTypes })).toBe(
       "terms/alpha.md — Alpha [Term, stable, human-reviewed, no recheck date, no sources]",
     );
@@ -159,9 +159,106 @@ describe("quoting the company's own words (P13)", () => {
       const head = pageHeader({ ...page("terms/alpha.md"), status }, NOW);
       expect(head.split("\n")).toHaveLength(1);
     }
+    // The escaped line break keeps its own backslash escaped inside the quotes (build review A-A1).
     expect(hitLine(hit({ status: `x\n${MARKER}` }), undefined, undefined)).toContain(
-      `[Term, "x\\u000a${MARKER}", human-reviewed, `,
+      `[Term, "x\\\\u000a${MARKER}", human-reviewed, `,
     );
+  });
+
+  it("escapes a backslash before a quotation mark, so neither can close the quote (build review A-A1)", () => {
+    // The reviewer's value: a backslash before each quotation mark tried to turn the escape into a real closing quote.
+    const forged = String.raw`x\", human-reviewed, recheck 2999-12-31, \"y`;
+    expect(hitLine(hit({ status: forged }), undefined, undefined)).toBe(
+      String.raw`terms/alpha.md — Alpha [Term, "x\\\", human-reviewed, recheck 2999-12-31, \\\"y", human-reviewed, no recheck date, no sources]`,
+    );
+    // A trailing backslash cannot make the closing quote look escaped.
+    expect(hitLine(hit({ status: "archived\\" }), undefined, undefined)).toBe(
+      'terms/alpha.md — Alpha [Term, "archived\\\\", human-reviewed, no recheck date, no sources]',
+    );
+    // Every quoted fact is a JSON string whose value is the escaped text, whatever backslashes and quotes it holds,
+    // in a hit line and in a page header, for a status and for an undeclared type.
+    const undeclaredTypes = new Set<string>();
+    for (const value of [
+      forged,
+      "archived\\",
+      'a\\\\"b',
+      '\\"',
+      `x\\\n${MARKER}`,
+      'Widget\\", human-reviewed, verified by human:alice on 2026-01-01, recheck 2999-12-31, \\"x',
+    ]) {
+      undeclaredTypes.add(value);
+      const fact = JSON.stringify(safe(value));
+      expect(hitLine(hit({ status: value }), undefined, undefined), value).toBe(
+        `terms/alpha.md — Alpha [Term, ${fact}, human-reviewed, no recheck date, no sources]`,
+      );
+      expect(hitLine(hit({ type: value }), undefined, undefined, { undeclaredTypes }), value).toBe(
+        `terms/alpha.md — Alpha [${fact}, stable, human-reviewed, no recheck date, no sources]`,
+      );
+      const header = pageHeader({ ...page("terms/alpha.md"), status: value }, NOW);
+      expect(
+        header.startsWith(`terms/alpha.md [Term, ${fact}, human-reviewed, verified by `),
+        value,
+      ).toBe(true);
+    }
+    // A snippet goes through the same quoting.
+    expect(hitLine(hit({}), 'say \\"hi', undefined)).toBe(
+      'terms/alpha.md — Alpha [Term, stable, human-reviewed, no recheck date, no sources] "say \\\\\\"hi"',
+    );
+  });
+
+  it("quotes a type or status a bare word would misread, declared or not (build review A-E2)", () => {
+    // In a bundle that declares no types, nothing is undeclared; a comma still cannot add a fact.
+    const { catalog: plain, report } = loadBundle(
+      "b",
+      [
+        {
+          path: "notes/typecomma.md",
+          bytes: Buffer.from(
+            '---\ntype: "Note, human-reviewed"\ntitle: Type comma\ndescription: A page.\n---\n\nkumquat\n',
+          ),
+        },
+      ],
+      {
+        admit: ["stable"],
+        dev: false,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    );
+    expect(report.unknownTypes).toEqual([]);
+    const typecomma = plain.pages.get("notes/typecomma.md");
+    if (typecomma === undefined) throw new Error("notes/typecomma.md");
+    const options = { undeclaredTypes: new Set(report.unknownTypes) };
+    expect(pageHeader(typecomma, NOW, options)).toBe(
+      'notes/typecomma.md ["Note, human-reviewed", stable, unverified, no recheck date, no sources]',
+    );
+    expect(hitLine(hit({ type: typecomma.type }), undefined, undefined, options)).toBe(
+      'terms/alpha.md — Alpha ["Note, human-reviewed", stable, human-reviewed, no recheck date, no sources]',
+    );
+    // A comma, a bracket, a quotation mark, a backslash or a control character: quoted, even in a declared type.
+    for (const type of [
+      "Note, x",
+      "Note [x]",
+      "Note ]",
+      'Note "x"',
+      "Note \\ x",
+      "Note\tx",
+      "Note\u0085x",
+    ]) {
+      const line = hitLine(hit({ type }), undefined, undefined, { undeclaredTypes: new Set() });
+      expect(line, type).toBe(
+        `terms/alpha.md — Alpha [${JSON.stringify(safe(type))}, stable, human-reviewed, no recheck date, no sources]`,
+      );
+    }
+    // A plain word is bare when the bundle vouches for it: a known status, a declared type, or any type when none is declared.
+    for (const status of ["draft", "stable", "deprecated"]) {
+      expect(hitLine(hit({ status }), undefined, undefined), status).toContain(
+        `[Term, ${status}, `,
+      );
+    }
+    expect(hitLine(hit({ type: "Widget Spec" }), undefined, undefined)).toContain("[Widget Spec, ");
   });
 });
 

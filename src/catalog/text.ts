@@ -65,8 +65,26 @@ function deprecationSuffix(status: string, replacement: string | undefined): str
 export const sourceCount = (count: number): string =>
   count === 0 ? "no sources" : `${count} source${count === 1 ? "" : "s"}`;
 
-/** Page text inside a server-voice quotation: made safe, and its own quotation marks escaped so it cannot close the quote. */
-const quoted = (text: string): string => `"${safe(text).replace(/"/g, '\\"')}"`;
+/**
+ * Page text inside a server-voice quotation: made safe, then its backslashes and quotation marks escaped, the
+ * backslashes first, so neither can close the quote. The result is a JSON string whose value is the safe text.
+ */
+const quoted = (text: string): string =>
+  `"${safe(text).replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+
+/**
+ * What a bare fact must not carry besides a control character: a comma or a bracket, which would read as another
+ * fact, or a quotation mark or a backslash, which would read as an escape (P13, amended after the build review).
+ */
+const MISREAD = /[,[\]"\\]/;
+
+/**
+ * A word as a fact in the brackets: bare only when the bundle vouches for it (a known status, a declared type), it
+ * carries none of `MISREAD`'s characters and nothing in it needs an escape (no control character, nor any other
+ * character `escapeControls` rewrites); otherwise quoted, so it reads as one fact.
+ */
+const fact = (word: string, vouched: boolean): string =>
+  vouched && !MISREAD.test(word) && escapeControls(word) === word ? safe(word) : quoted(word);
 
 /** What a line needs to know about the bundle beyond the page: the types the company did not declare. */
 export interface LineOptions {
@@ -80,12 +98,14 @@ const KNOWN_STATUSES: ReadonlySet<string> = new Set(["draft", "stable", "depreca
  * A status as a fact in the brackets: one of the three known values as it is, any other word quoted, since it is
  * the company's own text and a comma in it must not add a fact (P13).
  */
-const statusFact = (status: string): string =>
-  KNOWN_STATUSES.has(status) ? status : quoted(status);
+const statusFact = (status: string): string => fact(status, KNOWN_STATUSES.has(status));
 
-/** A type as a fact in the brackets: quoted when the company declares its types and this is not one of them (P13). */
+/**
+ * A type as a fact in the brackets: quoted when the company declares its types and this is not one of them, and
+ * whenever a character of it could be misread, declared or not (P13, amended after the build review).
+ */
 const typeFact = (type: string, options: LineOptions): string =>
-  options.undeclaredTypes?.has(type) === true ? quoted(type) : safe(type);
+  fact(type, options.undeclaredTypes?.has(type) !== true);
 
 /** One search hit as a line: path, title, the bracketed facts, the quoted snippet, the replacement. */
 export function hitLine(

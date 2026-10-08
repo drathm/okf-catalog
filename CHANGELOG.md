@@ -22,7 +22,7 @@ The work of 0.2.0: the readiness fixes cut from issues 2 and 3, the readiness le
 - With `freshness` and `include_stale` both omitted, `search` includes pages past their recheck date, each flagged `overdue since` its date, where it used to leave them out; `freshness: "fresh"` or `include_stale: false` leaves them out, and the two contradictory pairs are refused. A caller that omitted the argument now sees overdue pages, flagged.
 - A `status` other than `draft`, `stable` or `deprecated` is no longer rewritten to `draft`: the word is kept, trimmed, with its case, and reported, and the page is served only when `serve.admit` names that word, or in development mode, labelled with its own word. The three known statuses are read without regard to case, and every output schema takes any status. By default nothing new is served.
 - Every tool's input schema is strict: an argument a tool does not take, such as `tags` or `minTrust`, fails with the SDK's validation error instead of being dropped in silence.
-- Text lines quote an unknown status, and a type the company did not declare, so a comma in either cannot add a fact to a citation's brackets.
+- Text lines quote a status outside the three known values, a type the company did not declare, and any type or status, declared or not, that carries a comma, a bracket, a quotation mark, a backslash or a control character. Inside the quotes, backslashes and quotation marks are escaped, backslashes first, so no character of the value can add a fact to a citation's brackets or close the quote.
 - A page `usage_window` that is not a mapping of `from` and `to`, and a contract field without the shape the specification gives it, are reported `field-ignored`.
 
 ### Deprecated
