@@ -51,11 +51,17 @@ const blank = (value: string | undefined): string | undefined =>
 /** A folder as the search filter normalises it: no leading or trailing slashes; the empty string is the root. */
 const normaliseFolder = (value: string): string => value.trim().replace(/^\/+|\/+$/g, "");
 
+/**
+ * The folders for an error line, listed as the values in use are: each JSON-quoted and cut at 200 characters, so a
+ * comma stays inside one name and a long name cannot fill the error; the root by its label; the first 50, then the
+ * total (the fix pass's verification).
+ */
 function folderList(catalog: Catalog): string {
-  const names = [...catalog.folders.keys()]
-    .sort(byCodeUnit)
-    .map((f) => (f === "" ? "(root)" : safe(f)));
-  const shown = names.slice(0, LIST_CAP).join(", ");
+  const names = [...catalog.folders.keys()].sort(byCodeUnit);
+  const shown = names
+    .slice(0, LIST_CAP)
+    .map((f) => (f === "" ? "(root)" : listedValue(f)))
+    .join(", ");
   return names.length > LIST_CAP ? `${shown} … (${names.length} folders)` : shown;
 }
 

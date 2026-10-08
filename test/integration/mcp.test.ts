@@ -139,6 +139,43 @@ describe("search", () => {
     expect(text(unknown)).toMatch(/terms/);
   });
 
+  it("lists the folders on an unknown topic as it lists the values in use: JSON-quoted, cut at 200 characters, at most 50 (the fix pass's verification)", async () => {
+    const note = (path: string) => ({
+      path,
+      bytes: Buffer.from(`---\ntype: Note\ntitle: ${path}\n---\n\nquince\n`),
+    });
+    // A comma stays inside one folder name, and a long name is cut; the root keeps its server-voice label.
+    const odd = loadGeneration(
+      [note("finance, legal/a.md"), note(`${"d".repeat(300)}/b.md`)],
+      { integrity: "none" },
+      NOW,
+    );
+    const s = await session(fakeRuntime(odd));
+    const expected = `the folders are: (root), "${"d".repeat(200)}"…, "finance, legal"`;
+    const topic = await s.call("search", { question: "quince", topic: "nowhere" });
+    expect(topic.isError).toBe(true);
+    expect(text(topic)).toBe(`there is no folder "nowhere"; ${expected}`);
+    // catalog names the folders on a miss with the same list.
+    expect(text(await s.call("catalog", { folder: "nowhere" }))).toBe(
+      `there is no folder "nowhere"; ${expected}`,
+    );
+    // Fifty listed, then the total, and the whole error within the result budget however long the names are.
+    const many = loadGeneration(
+      Array.from({ length: 60 }, (_, i) =>
+        note(`f${String(i).padStart(2, "0")}${"z".repeat(1_000)}/p.md`),
+      ),
+      { integrity: "none" },
+      NOW,
+    );
+    const m = await session(fakeRuntime(many));
+    const listed = text(await m.call("search", { question: "quince", topic: "n".repeat(1_024) }));
+    expect(listed).toMatch(
+      /the folders are: \(root\), "f00z{197}"…, "f01z{197}"…, .*, "f48z{197}"… … \(61 folders\)$/,
+    );
+    expect(listed).not.toContain('"f49');
+    expect(listed.length).toBeLessThan(RESULT_BUDGET);
+  });
+
   it("includes overdue pages by default, flagged, and leaves them out for fresh or include_stale false", async () => {
     const s = await session(fakeRuntime(stable));
     const byDefault = await s.call("search", { question: "zeta" });
