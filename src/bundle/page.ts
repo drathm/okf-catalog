@@ -390,10 +390,12 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
 
   const resource = text("resource");
 
+  // Each link keeps its text and nearest heading (issue 5): the facts a mention is returned with.
   const links: Link[] = facts.links.map((l) => {
     const resolved = resolveLink(l.url, path, ctx.linkIndex);
-    const link: Link = { raw: l.url, kind: resolved.kind };
+    const link: Link = { raw: l.url, kind: resolved.kind, text: l.text };
     if (resolved.target !== undefined) link.target = resolved.target;
+    if (l.heading !== undefined) link.heading = l.heading;
     return link;
   });
 
@@ -402,7 +404,8 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
     sources.map((s) => s.id?.toLowerCase()).filter((id): id is string => id !== undefined),
   );
   const missing = new Set<string>();
-  for (const id of facts.footnoteReferences) if (!sourceIds.has(id.toLowerCase())) missing.add(id);
+  for (const { id } of facts.footnoteReferences)
+    if (!sourceIds.has(id.toLowerCase())) missing.add(id);
   for (const id of missing)
     degrade("footnote-without-source", "sources", `footnote ${id} has no matching sources entry`);
 

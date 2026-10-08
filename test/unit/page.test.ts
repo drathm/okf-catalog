@@ -93,11 +93,30 @@ describe("parsePage: the fully described page", () => {
 
   it("resolves the body's links by kind and keeps footnote references", () => {
     expect(alpha.links).toEqual([
-      { raw: "/terms/beta.md", kind: "page", target: "terms/beta.md" },
-      { raw: "./gamma.md", kind: "page", target: "terms/gamma.md" },
-      { raw: "/terms/missing.md", kind: "broken" },
+      {
+        raw: "/terms/beta.md",
+        kind: "page",
+        target: "terms/beta.md",
+        text: "beta",
+        heading: "Alpha",
+      },
+      {
+        raw: "./gamma.md",
+        kind: "page",
+        target: "terms/gamma.md",
+        text: "gamma",
+        heading: "Alpha",
+      },
+      { raw: "/terms/missing.md", kind: "broken", text: "missing", heading: "Alpha" },
     ]);
-    expect(alpha.footnoteReferences).toEqual(["alpha-handbook"]);
+    expect(alpha.footnoteReferences).toEqual([
+      {
+        id: "alpha-handbook",
+        block:
+          "Alpha is the first term. It links to beta by a bundle-absolute path, to gamma by a relative path, and to a page that does not exist: missing.",
+        heading: "Alpha",
+      },
+    ]);
     expect(alpha.degradations).toEqual([]);
     expect(alpha.folder).toBe("terms");
     expect(alpha.hash).toMatch(/^[0-9a-f]{64}$/);

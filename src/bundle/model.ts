@@ -81,6 +81,21 @@ export interface Link {
   kind: LinkKind;
   /** The bundle path the link resolved to, for page, folder, reserved and attachment links. */
   target?: string;
+  /** The link's text, whitespace collapsed: the words a mention is made with (issue 5). */
+  text: string;
+  /** The prose of the nearest heading at or before the link; absent before any heading. Never the page title. */
+  heading?: string;
+}
+
+/**
+ * A footnote reference in the body (issue 5): the identifier GFM records, lower-cased; the prose of the smallest
+ * paragraph, heading, list item, block quote or table cell holding it, cut at 500 characters, which is the
+ * sentence a joined source supports and never the footnote's definition; and the nearest heading.
+ */
+export interface FootnoteReference {
+  id: string;
+  block: string;
+  heading?: string;
 }
 
 export type DegradationCode =
@@ -185,7 +200,7 @@ export interface Page {
   resource?: string;
   replacement?: PagePath;
   links: Link[];
-  footnoteReferences: string[];
+  footnoteReferences: FootnoteReference[];
   frontmatter: Record<string, unknown>;
   body: string;
   /** The body's prose for snippets, captured once at load; absent when the body could not be analysed. */

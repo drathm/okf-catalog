@@ -5,11 +5,32 @@ import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import { gfmFootnote } from "micromark-extension-gfm-footnote";
 import { gfmTable } from "micromark-extension-gfm-table";
 
+/** A link as the body writes it: its URL, its text, and the nearest heading at or before it (issue 5). */
+export interface BodyLink {
+  url: string;
+  /** The link's prose, whitespace collapsed. */
+  text: string;
+  /** The prose of the last heading that starts at or before the link (the link's own heading when it sits in one); absent before any heading, or when that heading has no text. */
+  heading?: string;
+}
+
+/** A footnote reference: the identifier GFM records (lower-cased), the block holding it, and the nearest heading. */
+export interface BodyFootnoteReference {
+  id: string;
+  /**
+   * The prose of the smallest paragraph, heading, list item, block quote or table cell holding the reference,
+   * whitespace collapsed and cut at 500 characters: the sentence the footnote supports, never the footnote's
+   * definition.
+   */
+  block: string;
+  heading?: string;
+}
+
 export interface BodyFacts {
   firstHeading: string | undefined;
   firstSentence: string | undefined;
-  links: Array<{ url: string; text: string }>;
-  footnoteReferences: string[];
+  links: BodyLink[];
+  footnoteReferences: BodyFootnoteReference[];
   /**
    * The items of the lists under a level-one `Citations` heading, up to the next heading: the OKF 0.1 provenance
    * list (§13.1). An item with exactly one link carries its URL; the page decides whether they are sources (D63).
@@ -27,6 +48,8 @@ export interface BodyFacts {
 }
 
 const SENTENCE_CAP = 200;
+/** Characters of a claim's block kept (issue 5): the sentence a footnote supports, not the page around it. */
+const BLOCK_CAP = 500;
 export const ANALYSIS_BUDGET = 256 * 1024;
 const MAX_NESTING = 256;
 const MAX_EMPHASIS_RUNS = 2000;
@@ -130,6 +153,16 @@ function proseWithBlocks(tree: Nodes): string {
   return parts.join("").replace(/\s+/g, " ").trim();
 }
 
+/** The blocks a footnote reference's sentence is taken from; the innermost one holding it is the one used. */
+const CLAIM_BLOCKS = new Set(["paragraph", "heading", "listItem", "blockquote", "tableCell"]);
+
+/** The first `cap` characters of a text, one fewer when the cut would split a surrogate pair. */
+function cutAt(text: string, cap: number): string {
+  if (text.length <= cap) return text;
+  const code = text.charCodeAt(cap - 1);
+  return text.slice(0, code >= 0xd800 && code <= 0xdbff ? cap - 1 : cap);
+}
+
 function firstSentenceOf(text: string): string {
   const match = /^(.*?[.!?])(?=\s|$)/.exec(text);
   const sentence = match?.[1] ?? text;
@@ -181,6 +214,14 @@ function citationsOf(
   return items;
 }
 
+/** The value with its heading, or without the key when there is none. */
+function withHeading<T extends object>(
+  value: T,
+  heading: string | undefined,
+): T & { heading?: string } {
+  return heading === undefined ? value : { ...value, heading };
+}
+
 const EMPTY: Omit<BodyFacts, "unanalysed" | "truncated"> = {
   firstHeading: undefined,
   firstSentence: undefined,
@@ -223,22 +264,29 @@ export function readBody(body: string): BodyFacts {
   };
   const definitions = new Map<string, string>();
   const references: Array<{ identifier: string; slot: number }> = [];
-  const stack: Array<{ node: Nodes; parent: Nodes | undefined; skipped: boolean }> = [
-    { node: tree, parent: undefined, skipped: false },
-  ];
+  // The walk is in document order, so the heading seen last is the nearest one at or before what follows; a
+  // heading's own links and references see it, since a node is visited before its children.
+  let heading: string | undefined;
+  // One block's prose is taken once and shared by every reference it holds.
+  const blockProse = new Map<Nodes, string>();
+  const stack: Array<{
+    node: Nodes;
+    parent: Nodes | undefined;
+    skipped: boolean;
+    block: Nodes | undefined;
+  }> = [{ node: tree, parent: undefined, skipped: false, block: undefined }];
   while (stack.length > 0) {
-    const { node, parent, skipped } = stack.pop() as {
-      node: Nodes;
-      parent: Nodes | undefined;
-      skipped: boolean;
-    };
+    const { node, parent, skipped, block } = stack.pop() as (typeof stack)[number];
     switch (node.type) {
       case "definition":
         definitions.set(node.identifier, node.url);
         break;
-      case "heading":
-        if (facts.firstHeading === undefined) facts.firstHeading = proseOf(node);
+      case "heading": {
+        const prose = proseOf(node);
+        if (facts.firstHeading === undefined) facts.firstHeading = prose;
+        heading = prose.length > 0 ? prose : undefined;
         break;
+      }
       case "paragraph":
         if (!skipped && facts.firstSentence === undefined) {
           const sentence = firstSentenceOf(proseOf(node));
@@ -246,15 +294,21 @@ export function readBody(body: string): BodyFacts {
         }
         break;
       case "link":
-        facts.links.push({ url: node.url, text: proseOf(node) });
+        facts.links.push(withHeading({ url: node.url, text: proseOf(node) }, heading));
         break;
       case "linkReference":
         references.push({ identifier: node.identifier, slot: facts.links.length });
-        facts.links.push({ url: "", text: proseOf(node) });
+        facts.links.push(withHeading({ url: "", text: proseOf(node) }, heading));
         break;
-      case "footnoteReference":
-        facts.footnoteReferences.push(node.identifier);
+      case "footnoteReference": {
+        let prose = "";
+        if (block !== undefined) {
+          prose = blockProse.get(block) ?? cutAt(proseOf(block), BLOCK_CAP);
+          blockProse.set(block, prose);
+        }
+        facts.footnoteReferences.push(withHeading({ id: node.identifier, block: prose }, heading));
         break;
+      }
       case "html":
         if (parent !== undefined && parent.type === "paragraph") facts.inlineHtml += 1;
         else facts.htmlBlocks += 1;
@@ -265,8 +319,10 @@ export function readBody(body: string): BodyFacts {
     }
     if (isParent(node)) {
       const skip = skipped || node.type === "footnoteDefinition" || node.type === "table";
+      // A footnote definition is never a reference's block; the blocks inside it are, for a reference written there.
+      const inner = CLAIM_BLOCKS.has(node.type) ? node : block;
       for (let i = node.children.length - 1; i >= 0; i--)
-        stack.push({ node: node.children[i] as Nodes, parent: node, skipped: skip });
+        stack.push({ node: node.children[i] as Nodes, parent: node, skipped: skip, block: inner });
     }
   }
   for (const ref of references) {

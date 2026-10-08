@@ -37,10 +37,45 @@ describe("readBody", () => {
     ]);
   });
 
-  it("collects footnote reference identifiers and does not count them as links", () => {
+  it("records footnote references with their block and heading", () => {
     const facts = readBody("Claim.[^alpha-handbook]\n\n[^alpha-handbook]: The handbook\n");
-    expect(facts.footnoteReferences).toEqual(["alpha-handbook"]);
+    expect(facts.footnoteReferences).toEqual([{ id: "alpha-handbook", block: "Claim." }]);
     expect(facts.links).toEqual([]);
+    // Two references in one block are two entries with the same prose; GFM records the identifier lower-cased.
+    // The block is the smallest one holding the reference: a list item's or a quotation's paragraph, a table
+    // cell, a heading; never the list, the quotation or the table around it.
+    const body = [
+      "# Scope",
+      "",
+      "First claim.[^a] Second claim.[^Ga4-Schema]",
+      "",
+      "- an item claim[^c]",
+      "- another item",
+      "",
+      "> a quoted claim[^d]",
+      "",
+      "| column | other |",
+      "|---|---|",
+      "| a cell claim[^e] | beside |",
+      "",
+      "## A heading claim[^f]",
+      "",
+      "[^a]: A.",
+      "[^ga4-schema]: Schema.",
+      "[^c]: C.",
+      "[^d]: D.",
+      "[^e]: E.",
+      "[^f]: F.",
+      "",
+    ].join("\n");
+    expect(readBody(body).footnoteReferences).toEqual([
+      { id: "a", block: "First claim. Second claim.", heading: "Scope" },
+      { id: "ga4-schema", block: "First claim. Second claim.", heading: "Scope" },
+      { id: "c", block: "an item claim", heading: "Scope" },
+      { id: "d", block: "a quoted claim", heading: "Scope" },
+      { id: "e", block: "a cell claim", heading: "Scope" },
+      { id: "f", block: "A heading claim", heading: "A heading claim" },
+    ]);
   });
 
   it("counts block HTML and flags script-like elements", () => {
@@ -118,5 +153,56 @@ describe("readBody: the OKF 0.1 citations list (R6)", () => {
     ]);
     expect(readBody("# Citations\n\n## Sub\n\n- https://x.test/a\n").citations).toEqual([]);
     expect(readBody("Body with no such heading.\n").citations).toEqual([]);
+  });
+});
+
+// Issue 5: what citations needs from a body, stored at load (D69).
+describe("readBody: link text, headings and claim blocks (#5)", () => {
+  it("keeps link text and the nearest heading at or before the link", () => {
+    const body = [
+      "Before any [heading](/a.md) there is none.",
+      "",
+      "# Top with [a link](/b.md)",
+      "",
+      "Text with [**strong** words](/c.md) and [a reference][r].",
+      "",
+      "#",
+      "",
+      "After an empty heading, [no text](/e.md).",
+      "",
+      "## Sub",
+      "",
+      "- [listed](/f.md)",
+      "",
+      "[r]: /d.md",
+      "",
+    ].join("\n");
+    expect(readBody(body).links).toEqual([
+      { url: "/a.md", text: "heading" },
+      { url: "/b.md", text: "a link", heading: "Top with a link" },
+      { url: "/c.md", text: "strong words", heading: "Top with a link" },
+      { url: "/d.md", text: "a reference", heading: "Top with a link" },
+      { url: "/e.md", text: "no text" },
+      { url: "/f.md", text: "listed", heading: "Sub" },
+    ]);
+  });
+
+  it("takes the smallest block holding a reference, cut at 500, never the definition", () => {
+    const long = `${"word ".repeat(120)}claim.`;
+    const facts = readBody(
+      `# H\n\n${long}[^n]\n\nShort.[^m]\n\n${"a".repeat(499)}${"😀".repeat(3)}[^p]\n\n[^n]: See [d](/d.md).\n[^m]: The definition prose.\n[^p]: P.\n`,
+    );
+    const [first, second, third] = facts.footnoteReferences;
+    expect(first).toEqual({ id: "n", block: long.slice(0, 500), heading: "H" });
+    expect(second).toEqual({ id: "m", block: "Short.", heading: "H" });
+    // The cut never splits a surrogate pair.
+    expect(third?.block).toBe("a".repeat(499));
+    for (const reference of facts.footnoteReferences) {
+      expect(reference.block).not.toContain("See d");
+      expect(reference.block).not.toContain("definition prose");
+    }
+    // A link inside a definition is still a link, and the definition's prose is still the body's prose.
+    expect(facts.links.map((l) => l.url)).toEqual(["/d.md"]);
+    expect(facts.prose).toContain("The definition prose.");
   });
 });
