@@ -392,4 +392,27 @@ describe("okf-catalog pack: a network file (D76)", () => {
     );
     expect(PACK_USAGE).toContain("--bundle <id>");
   });
+
+  // The fold of bite c's build reviews, C-I-E3: a version 0 file whose company is vendor, dist or build still packs
+  // until 0.5.0, and pack says why it must change.
+  it("packs a company: file whose company is vendor, dist or build, noting it until 0.5.0", () => {
+    const work = temp();
+    const from = join(work, "kb");
+    mkdirSync(from);
+    writeFileSync(join(from, "kept.md"), PAGE("Kept"));
+    const noted = io();
+    expect(
+      runPack(
+        ["--config", config(work, "dist"), "--from", from, "--out", join(work, "out")],
+        noted.io,
+      ),
+    ).toBe(0);
+    expect(list(join(work, "out"))).toContain("kept.md");
+    expect(noted.stderr()).toContain(
+      "note: company: is read as a network of that name with one bundle of that id; write network: and bundles: before 0.5.0, which removes company:\n",
+    );
+    expect(noted.stderr()).toContain(
+      "note: company: dist stays the bundle's id until 0.5.0 removes company:; a network: file refuses vendor, dist and build as bundle ids (folder names the search engine skips), so give the bundle another id when you write network: and bundles:\n",
+    );
+  });
 });

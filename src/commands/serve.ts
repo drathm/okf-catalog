@@ -494,12 +494,8 @@ export async function runServe(argv: string[]): Promise<number> {
         configRule: found.rule,
         ...(root.note === undefined ? {} : { note: root.note }),
       });
-      if (network.form === "company") {
-        log.warn("serve.alias", {
-          detail:
-            "company: is read as a network of that name with one bundle of that id; write network: and bundles: before 0.5.0, which removes company:",
-        });
-      }
+      // The alias, and a company name a network: file refuses, each once at start (D-G; C-I-E3).
+      for (const note of network.notes) log.warn("serve.alias", { detail: note });
     }
   }
 

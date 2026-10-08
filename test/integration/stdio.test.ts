@@ -1069,6 +1069,44 @@ describe("okf-catalog serve over stdio: a network (D72, D73)", { timeout: 90_000
     }
   });
 
+  // The fold of bite c's build reviews, C-I-E3: a version 0 file whose company is vendor, dist or build still loads
+  // until 0.5.0 (one collection per bundle makes the name harmless, D73), and the log says why it must change.
+  it("serves a company: file whose company is vendor, noting at start that a network: file refuses the name", async () => {
+    const b = box(
+      "spec-example",
+      `company: vendor\nsource:\n  local: ${join(REPO, "test", "fixtures", "bundles", "spec-example")}\n`,
+    );
+    const run = rawServer(b);
+    run.send(INITIALIZE);
+    await run.waitFor(1);
+    run.send(INITIALIZED);
+    run.send({
+      jsonrpc: "2.0",
+      id: 2,
+      method: "tools/call",
+      params: { name: "search", arguments: { question: "revenue recognition" } },
+    });
+    const found = (await run.waitFor(2)).result as {
+      isError?: boolean;
+      structuredContent: { hits: Array<{ bundle: string; path: string }> };
+    };
+    expect(found.isError).not.toBe(true);
+    expect(found.structuredContent.hits.map((hit) => [hit.bundle, hit.path])).toContainEqual([
+      "vendor",
+      "policies/revenue-recognition.md",
+    ]);
+    expect((await run.end()).code).toBe(0);
+    expect(existsSync(join(b.cacheRoot, "okf-catalog", "vendor", "bundles", "vendor"))).toBe(true);
+    const notes = run
+      .stderr()
+      .split("\n")
+      .filter((line) => line.includes('"event":"serve.alias"'));
+    expect(notes).toHaveLength(2);
+    expect(notes[1]).toContain(
+      "company: vendor stays the bundle's id until 0.5.0 removes company:; a network: file refuses vendor, dist and build as bundle ids",
+    );
+  });
+
   it("removes a version 0 clone the bundle's own clone has replaced, and a link in its place, touching nothing it points at", async () => {
     const repo = packedRepo();
     try {

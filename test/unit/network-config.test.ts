@@ -419,12 +419,10 @@ bundles:
     expect(
       problems(`network: acme\nbundles:\n${bundle("kb", "./one")}${bundle("kb", "./two")}`),
     ).toEqual(['bundles[1].id: "kb" is the id of bundles[0] too; each bundle needs its own']);
+    // A company: file's company may still be one of them, until 0.5.0: see the alias's own test below.
     for (const id of ["vendor", "dist", "build"]) {
       expect(problems(`network: acme\nbundles:\n${bundle(id, "./kb")}`), id).toEqual([
         `bundles[0].id: must not be vendor, dist or build, the folder names the search engine skips`,
-      ]);
-      expect(problems(`company: ${id}\nsource:\n  local: ./kb\n`), id).toEqual([
-        `company: must not be vendor, dist or build, the folder names the search engine skips`,
       ]);
     }
     expect(problems(`network: acme\nbundles:\n${bundle("Big Kb", "./kb")}`)).toEqual([
@@ -582,5 +580,38 @@ describe("parseNetworkConfig: repository bundles that would serve one tree (D76)
     ).toEqual([]);
     expect(at(repo("a", KB), repo("b", "https://example.test/acme/kb-two.git"))).toEqual([]);
     expect(at(repo("a", KB), repo("b", "https://other.test/acme/kb.git"))).toEqual([]);
+  });
+});
+
+// The fold of bite c's build reviews, C-I-E3: "company: still loads" holds for a version 0 file whose company is one
+// of the names a network: file refuses as a bundle id; the alias takes it, with a note, until 0.5.0 removes company:.
+describe("parseNetworkConfig: the notes a configuration carries (D-G, D76)", () => {
+  const ALIAS =
+    "company: is read as a network of that name with one bundle of that id; write network: and bundles: before 0.5.0, which removes company:";
+
+  it("takes vendor, dist and build as a company: file's company until 0.5.0, with a note, and refuses them as a bundle id", () => {
+    for (const id of ["vendor", "dist", "build"]) {
+      const r = config(`company: ${id}\nsource:\n  local: ./kb\n`);
+      expect(r.network, id).toBe(id);
+      expect(
+        r.bundles.map((b) => b.id),
+        id,
+      ).toEqual([id]);
+      expect(r.notes, id).toEqual([
+        ALIAS,
+        `company: ${id} stays the bundle's id until 0.5.0 removes company:; a network: file refuses vendor, dist and build as bundle ids (folder names the search engine skips), so give the bundle another id when you write network: and bundles:`,
+      ]);
+      expect(
+        problems(`network: acme\nbundles:\n  - id: ${id}\n    source:\n      local: ./kb\n`),
+        id,
+      ).toEqual([
+        "bundles[0].id: must not be vendor, dist or build, the folder names the search engine skips",
+      ]);
+    }
+    // Any other company: file carries the alias's note alone, and a network: file none.
+    expect(config(base).notes).toEqual([ALIAS]);
+    expect(
+      config("network: acme\nbundles:\n  - id: kb\n    source:\n      local: ./kb\n").notes,
+    ).toEqual([]);
   });
 });

@@ -41,7 +41,21 @@ export interface NetworkConfig {
   bundles: BundleConfig[];
   /** How many hits a search returns when the caller names no limit; network-wide (D76). */
   limitDefault: number;
+  /**
+   * What the person is told without a refusal, a sentence each, which `serve` logs (`serve.alias`) and `pack` prints:
+   * that a `company:` file is the alias of a one-bundle network (D-G), and, until 0.5.0, that its company is a name a
+   * `network:` file refuses as a bundle id (C-I-E3). Empty for a `network:` file.
+   */
+  notes: string[];
 }
+
+/** The note every `company:` file carries until 0.5.0 removes the form (D-G). */
+const ALIAS_NOTE =
+  "company: is read as a network of that name with one bundle of that id; write network: and bundles: before 0.5.0, which removes company:";
+
+/** The note a `company:` file carries when its company is a name a `network:` file refuses as a bundle id (C-I-E3). */
+const reservedNote = (company: string): string =>
+  `company: ${company} stays the bundle's id until 0.5.0 removes company:; a network: file refuses vendor, dist and build as bundle ids (folder names the search engine skips), so give the bundle another id when you write network: and bundles:`;
 
 export type ConfigResult = { ok: true; config: NetworkConfig } | { ok: false; problems: string[] };
 
@@ -345,7 +359,10 @@ function resolveBundle(
   return bundle;
 }
 
-/** Why an id or a company name is refused, or undefined: one path segment, and not a name qmd skips. */
+/**
+ * Why a bundle id is refused, or undefined: one path segment, and not a name qmd skips. A `company:` file's company is
+ * held to the first rule alone until 0.5.0, with a note for the second (C-I-E3).
+ */
 function nameProblem(value: string, key: string): string | undefined {
   if (!NAME.test(value)) return `${key}: ${NAME_RULE}`;
   if (SKIPPED.has(value)) return `${key}: ${SKIPPED_RULE}`;
@@ -482,8 +499,9 @@ function parseCompanyForm(
   if (!parsed.success) return { ok: false, problems: parsed.error.issues.map(issueText) };
   const raw = parsed.data;
   const problems: string[] = [];
-  const name = nameProblem(raw.company, "company");
-  if (name !== undefined) problems.push(name);
+  // A version 0 file loads as it did (C-I-E3): its company may be vendor, dist or build, which one collection per
+  // bundle makes harmless (D73), noted until 0.5.0; a network: file refuses them as ids.
+  if (!NAME.test(raw.company)) problems.push(`company: ${NAME_RULE}`);
   const bundle = resolveBundle(raw.company, raw, {}, (k) => k, where, problems);
   if (bundle === undefined || problems.length > 0) return { ok: false, problems };
   problems.push(...folderProblems(raw.company, [{ bundle, key: (k) => k }], where.options));
@@ -495,6 +513,7 @@ function parseCompanyForm(
       form: "company",
       bundles: [bundle],
       limitDefault: raw.serve?.limit_default ?? 8,
+      notes: [ALIAS_NOTE, ...(SKIPPED.has(raw.company) ? [reservedNote(raw.company)] : [])],
     },
   };
 }
@@ -553,6 +572,7 @@ function parseNetworkForm(
       form: "network",
       bundles: resolved.map((r) => r.bundle),
       limitDefault: raw.serve?.limit_default ?? 8,
+      notes: [],
     },
   };
 }

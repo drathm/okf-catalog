@@ -131,11 +131,8 @@ export function runPack(argv: string[], io: CommandIo): number {
       `--bundle is required: the configuration lists ${bundles.length} bundles (${ids}); pack publishes one bundle, never a network`,
     );
   }
-  if (read.config.form === "company") {
-    io.stderr(
-      "note: company: is read as a network of that name with one bundle of that id; write network: and bundles: before 0.5.0, which removes company:\n",
-    );
-  }
+  // The alias, and a company name a network: file refuses (D-G; C-I-E3).
+  for (const note of read.config.notes) io.stderr(`note: ${note}\n`);
   const config = chosen;
 
   let now: Date;
