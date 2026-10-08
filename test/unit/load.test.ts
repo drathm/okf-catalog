@@ -115,7 +115,28 @@ describe("loadBundle on the behaviours bundle", () => {
   it("admits the draft and the unknown status under the development flag", () => {
     const dev = loadBundle("behaviours", files, options({ dev: true, integrity: "none" }), NOW);
     expect(dev.report.admitted).toBe(19);
-    expect(dev.catalog.pages.get("notes/unknown-status.md")?.status).toBe("draft");
+    expect(dev.catalog.pages.get("notes/unknown-status.md")?.status).toBe("archived");
+    expect(dev.catalog.pages.get("notes/draft.md")?.status).toBe("draft");
+  });
+
+  it("admits an unknown status the company lists, and its generated index lists it", () => {
+    const listed = loadBundle(
+      "behaviours",
+      files,
+      options({ admit: ["stable", "deprecated", "Archived"], types: ["Term", "Note"] }),
+      NOW,
+    );
+    expect(listed.report.admitted).toBe(18);
+    expect(listed.report.excludedByStatus).toBe(1);
+    expect(listed.catalog.pages.get("notes/unknown-status.md")?.status).toBe("archived");
+    expect(listed.catalog.pages.has("notes/draft.md")).toBe(false);
+    expect(listed.report.unknownStatuses).toEqual([
+      { path: "notes/unknown-status.md", value: "archived" },
+    ]);
+    const notes = listed.catalog.folders.get("notes");
+    expect(notes?.indexSource).toBe("generated");
+    expect(notes?.index?.body).toContain("(unknown-status.md)");
+    expect(notes?.index?.body).not.toContain("(draft.md)");
   });
 
   it("reports degradations for admitted pages only, and lists every type", () => {
@@ -123,6 +144,61 @@ describe("loadBundle on the behaviours bundle", () => {
       report.degradations.every((d) => catalog.pages.has(d.path) || d.path.endsWith("index.md")),
     ).toBe(true);
     expect([...catalog.byType.keys()].sort()).toEqual(["Note", "Term", "Widget"]);
+  });
+});
+
+describe("loadBundle: admitted words that match no page (D77, build review A-E1)", () => {
+  it("reports each admitted word outside the three known statuses that no page carries, once, as written", () => {
+    const { report } = loadBundle(
+      "b",
+      readFixture("behaviours"),
+      options({
+        admit: ["stable", " depreciated ", "Archived", "deprecated", "DEPRECIATED", "obsolete"],
+      }),
+      NOW,
+    );
+    // Archived is carried by notes/unknown-status.md, in any case; the known words are never typos.
+    expect(report.unmatchedAdmits).toEqual(["depreciated", "obsolete"]);
+    // A bundle with no deprecated page says nothing of deprecated, which the default list names.
+    const plain = loadBundle(
+      "x",
+      readFixture("no-manifest"),
+      options({ integrity: "none" }),
+      NOW,
+    ).report;
+    expect(plain.unmatchedAdmits).toEqual([]);
+    // A refused bundle's pages were never read: nothing is said of its words.
+    const refused = loadBundle(
+      "x",
+      readFixture("no-manifest"),
+      options({ admit: ["stable", "depreciated"] }),
+      NOW,
+    ).report;
+    expect(refused.fatal).toBeDefined();
+    expect(refused.unmatchedAdmits).toEqual([]);
+  });
+});
+
+// The readiness ledger (issue 2's "Holds", D59, row 31): an unknown okf_version degrades, it never refuses.
+describe("loadBundle: the readiness ledger (D59)", () => {
+  it("serves a bundle whose root index declares an unknown okf_version", () => {
+    const files = readFixture("behaviours").map((f) =>
+      f.path === "index.md"
+        ? {
+            path: f.path,
+            bytes: Buffer.from(Buffer.from(f.bytes).toString("utf8").replace('"0.2"', '"9.9"')),
+          }
+        : f,
+    );
+    const { catalog, report } = loadBundle("b", files, options({ integrity: "none" }), NOW);
+    expect(report.fatal).toBeUndefined();
+    expect(report.refusals).toEqual([]);
+    expect(report.admitted).toBe(17);
+    expect(catalog.okfVersion).toBe("9.9");
+    expect(
+      report.degradations.filter((d) => d.code === "okf-version-unknown").map((d) => d.path),
+    ).toEqual(["index.md"]);
+    expect(catalog.folders.get("")?.indexSource).toBe("file");
   });
 });
 

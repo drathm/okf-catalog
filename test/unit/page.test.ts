@@ -3,6 +3,7 @@ import type { LinkIndex } from "../../src/bundle/links.js";
 import type { BundleFile, Page, SpecText } from "../../src/bundle/model.js";
 import { decideReplacement, parsePage } from "../../src/bundle/page.js";
 import { reservedKind } from "../../src/bundle/reserved.js";
+import { APPENDIX_A_V01 } from "../helpers/appendix-a.js";
 import { readFixture } from "../helpers/fixtures.js";
 
 function indexOf(files: BundleFile[]): LinkIndex {
@@ -153,11 +154,36 @@ describe("parsePage: trust and lifecycle", () => {
     expect(codes(page("terms/zeta.md", "2026-08-15"))).toEqual([]);
   });
 
-  it("treats an unknown status as draft, keeps the raw value, and reports it", () => {
+  it("keeps an unknown status as written, trimmed, case kept, and reports it", () => {
     const p = page("notes/unknown-status.md");
-    expect(p.status).toBe("draft");
+    expect(p.status).toBe("archived");
     expect(p.statusRaw).toBe("archived");
     expect(codes(p)).toEqual(["status-unknown"]);
+    const status = (line: string): Page => {
+      const r = inline("x.md", `---\ntype: T\ntitle: T\ndescription: D\n${line}\n---\n`);
+      if (!r.ok) throw new Error(`${line}: ${r.refusal.rule}`);
+      return r.page;
+    };
+    const review = status('status: " In Review "');
+    expect(review.status).toBe("In Review");
+    expect(review.statusRaw).toBe(" In Review ");
+    expect(codes(review)).toEqual(["status-unknown"]);
+    // The three known values are read without regard to case, and kept as the specification spells them.
+    const known = status("status: Stable");
+    expect(known.status).toBe("stable");
+    expect(known.statusRaw).toBe("Stable");
+    expect(codes(known)).toEqual([]);
+    expect(status("status: ' DEPRECATED '").status).toBe("deprecated");
+    // A list or a mapping is no word: its JSON text stands in for one, and it counts as unknown.
+    const list = status("status: [a, b]");
+    expect(list.status).toBe('["a","b"]');
+    expect(codes(list)).toEqual(["status-unknown"]);
+    const mapping = status("status: { a: 1 }");
+    expect(mapping.status).toBe('{"a":1}');
+    expect(codes(mapping)).toEqual(["status-unknown"]);
+    // A number or a boolean is read as written.
+    expect(status("status: 2").status).toBe("2");
+    expect(status("status: True").status).toBe("True");
   });
 
   it("defaults an absent status to stable, and reads a draft as written", () => {
@@ -373,5 +399,282 @@ describe("parsePage: prose (bite 4)", () => {
       { linkIndex, specText: "2026-08-15" },
     );
     expect(result.ok && result.page.prose).toBe("One sentence here. Another one.");
+  });
+});
+
+// The readiness ledger (issue 2's "Holds", D59): sentences no test asserted before 0.2.0.
+describe("parsePage: the readiness ledger (D59)", () => {
+  it("refuses a type that is empty, a list or a mapping; reads a boolean type as its source text", () => {
+    const rule = (line: string): string => {
+      const r = inline("x.md", `---\n${line}\ntitle: T\n---\n`);
+      return r.ok ? `ok: ${r.page.type}` : `${r.refusal.rule}: ${r.refusal.detail}`;
+    };
+    expect(rule('type: ""')).toBe("no-type: type is empty");
+    expect(rule("type: '   '")).toBe("no-type: type is empty");
+    expect(rule("type:")).toBe("no-type: type is empty, not text");
+    expect(rule("type: [Term, Note]")).toBe("no-type: type is a list, not text");
+    expect(rule("type: { name: Term }")).toBe("no-type: type is a mapping, not text");
+    for (const [line, written] of [
+      ["type: true", "true"],
+      ["type: False", "False"],
+    ] as const) {
+      const r = inline("x.md", `---\n${line}\ntitle: T\n---\n`);
+      if (!r.ok) throw new Error(`${line}: ${r.refusal.rule}`);
+      expect(r.page.type, line).toBe(written);
+      expect(r.page.degradations, line).toContainEqual({
+        path: "x.md",
+        code: "scalar-coerced",
+        field: "type",
+        detail: `type is a boolean, read as "${written}"`,
+      });
+    }
+  });
+
+  it("reads an absent, null or blank status as stable", () => {
+    for (const line of ["", "status:", "status: null", "status: ''", "status: '   '"]) {
+      const r = inline("x.md", `---\ntype: T\ntitle: T\n${line}\n---\n`);
+      if (!r.ok) throw new Error(`${line}: ${r.refusal.rule}`);
+      expect(r.page.status, line).toBe("stable");
+      expect(r.page.statusSource, line).toBe("default");
+      expect(codes(r.page), line).not.toContain("status-unknown");
+    }
+  });
+
+  it("derives human-reviewed from a trimmed human: actor, case-sensitively, and names the latest verifier of any actor", () => {
+    const parse = (verified: string): Page => {
+      const r = inline("x.md", `---\ntype: T\ntitle: T\nverified:\n${verified}\n---\n`);
+      if (!r.ok) throw new Error(r.refusal.rule);
+      return r.page;
+    };
+    const padded = parse("  - { by: '  human:alice  ', at: 2026-01-01T00:00:00Z }");
+    expect(padded.verified[0]?.by).toBe("human:alice");
+    expect(padded.trust).toBe("human-reviewed");
+    // The prefix is matched as written: `Human:` is another actor, so the page is machine-confirmed.
+    const capital = parse("  - { by: 'Human:x', at: 2026-01-01T00:00:00Z }");
+    expect(capital.trust).toBe("machine-confirmed");
+    // A human verified first and a process later: the tier is the human's, the latest verification the process's.
+    const mixed = parse(
+      "  - { by: human:alice, at: 2026-01-01T00:00:00Z }\n  - { by: process:nightly, at: 2026-06-01T00:00:00Z }",
+    );
+    expect(mixed.trust).toBe("human-reviewed");
+    expect(mixed.latestVerification?.by).toBe("process:nightly");
+  });
+});
+
+// R2 and R3 (D62): the contract fields typed, the page window typed; malformed values degrade, never refuse.
+describe("parsePage: the contract fields and the page window (R2, R3)", () => {
+  const spec = readFixture("spec-example");
+
+  it("types the contract of the specification's attested computation", () => {
+    const revenue = page("computations/revenue-ytd.md", "2026-08-15", spec);
+    expect(revenue.contract).toEqual({
+      runtime: "bigquery",
+      parameters: [{ name: "year", type: "integer", required: true }],
+      executor: {
+        resource: "skills/run-on-bq.md",
+        receipt: ["job_id", "executed_sql", "result"],
+      },
+      attester: { resource: "attesters/sql_equality.py" },
+    });
+    expect(codes(revenue)).not.toContain("field-ignored");
+    // A page of any type carries the fields it has; one without any carries no contract.
+    const r = inline(
+      "x.md",
+      "---\ntype: Metric\ntitle: T\ndescription: D\ncomputation: lib/revenue.sql\n---\n",
+    );
+    if (!r.ok) throw new Error(r.refusal.rule);
+    expect(r.page.contract).toEqual({ computation: "lib/revenue.sql" });
+    expect(page("terms/alpha.md").contract).toBeUndefined();
+  });
+
+  it("drops malformed contract values with a degradation, never the page", () => {
+    const cases: Array<[string, Page["contract"]]> = [
+      ["parameters: x", undefined],
+      [
+        "parameters:\n  - { type: integer }\n  - { name: year, type: integer, required: true }",
+        { parameters: [{ name: "year", type: "integer", required: true }] },
+      ],
+      ["executor: text", undefined],
+      ["attester: { resource: 3 }", undefined],
+      ["runtime: [bigquery, dbt]", undefined],
+      // A parameter whose name is blank has no name (build review A-B7).
+      ['parameters:\n  - { name: "  ", type: integer }', { parameters: [] }],
+      // A mapping with none of the keys the specification gives it is reported too (build review I-A3).
+      ["attester: { path: attesters/check.py }", undefined],
+      ["attester: {}", undefined],
+      ["executor: { resources: run.md }", undefined],
+      ["executor: {}", undefined],
+    ];
+    for (const [yaml, contract] of cases) {
+      const r = inline("x.md", `---\ntype: T\ntitle: T\ndescription: D\n${yaml}\n---\n`);
+      if (!r.ok) throw new Error(`${yaml}: refused ${r.refusal.rule}`);
+      expect(r.page.contract, yaml).toEqual(contract);
+      expect(
+        r.page.degradations.filter((d) => d.code === "field-ignored"),
+        yaml,
+      ).toHaveLength(1);
+    }
+  });
+
+  it("reports a page usage_window that is not a from-to mapping", () => {
+    for (const yaml of [
+      "usage_window: 2026",
+      "usage_window: { from: 2026-01-01 }",
+      "usage_window: [a, b]",
+    ]) {
+      const r = inline("x.md", `---\ntype: T\ntitle: T\ndescription: D\n${yaml}\n---\n`);
+      if (!r.ok) throw new Error(`${yaml}: refused ${r.refusal.rule}`);
+      expect(r.page.usageWindow, yaml).toBeUndefined();
+      expect(r.page.degradations, yaml).toEqual([
+        expect.objectContaining({ code: "field-ignored", field: "usage_window" }),
+      ]);
+    }
+    expect(page("terms/alpha.md").usageWindow).toEqual({ from: "2000-01-01", to: "2000-01-31" });
+  });
+
+  it("reports a source's own usage_window that is not a from-to mapping, and the source takes no window (build review I-A1, A-A5)", () => {
+    const withSourceWindow = (value: string) =>
+      inline(
+        "x.md",
+        `---\ntype: T\ntitle: T\ndescription: D\nusage_window: { from: 2026-06-01, to: 2026-06-30 }\nsources:\n  - resource: https://x.test/own\n    usage_count: 7\n    usage_window: ${value}\n  - resource: https://x.test/none\n    usage_count: 3\n---\n`,
+      );
+    for (const value of ["{ from: 2025-01-01 }", "2025", "[a, b]", "{ from: 1, to: 2 }"]) {
+      const r = withSourceWindow(value);
+      if (!r.ok) throw new Error(`${value}: refused ${r.refusal.rule}`);
+      // The source wrote a window of its own: its count is not framed by the page's, which it did not ask for.
+      expect(r.page.sources, value).toEqual([
+        { resource: "https://x.test/own", usageCount: 7, usageWindowIgnored: true },
+        { resource: "https://x.test/none", usageCount: 3 },
+      ]);
+      expect(r.page.degradations, value).toEqual([
+        expect.objectContaining({
+          code: "source-malformed",
+          field: "sources",
+          detail: expect.stringContaining("sources[0].usage_window"),
+        }),
+      ]);
+    }
+    // A well-formed own window is kept; a key with no value is no window, and inherits as before.
+    const own = withSourceWindow("{ from: 2025-01-01, to: 2025-12-31 }");
+    if (!own.ok) throw new Error(own.refusal.rule);
+    expect(own.page.sources[0]).toEqual({
+      resource: "https://x.test/own",
+      usageCount: 7,
+      usageWindow: { from: "2025-01-01", to: "2025-12-31" },
+    });
+    expect(own.page.degradations).toEqual([]);
+    const none = withSourceWindow("null");
+    if (!none.ok) throw new Error(none.refusal.rule);
+    expect(none.page.sources[0]).toEqual({ resource: "https://x.test/own", usageCount: 7 });
+    expect(none.page.degradations).toEqual([]);
+  });
+});
+
+// R4, R5, R6: a usage count that is not a number, and the two OKF 0.1 fallbacks (§13.1; D63, D79).
+describe("parsePage: usage counts and the OKF 0.1 fallbacks (R4, R5, R6)", () => {
+  const parsed = (text: string): Page => {
+    const r = inline("metrics/income-statement.md", text);
+    if (!r.ok) throw new Error(r.refusal.rule);
+    return r.page;
+  };
+
+  it("reports a usage_count that is not a number and keeps the source", () => {
+    for (const value of ['"12"', "[1]", "{ n: 1 }", "true"]) {
+      const p = parsed(
+        `---\ntype: T\ntitle: T\ndescription: D\nsources:\n  - { resource: https://x.test/a, usage_count: ${value} }\n---\n`,
+      );
+      expect(p.sources, value).toEqual([{ resource: "https://x.test/a" }]);
+      expect(p.degradations, value).toEqual([
+        expect.objectContaining({
+          code: "source-malformed",
+          field: "sources",
+          detail: expect.stringContaining("sources[0].usage_count is"),
+        }),
+      ]);
+    }
+    const counted = parsed(
+      "---\ntype: T\ntitle: T\ndescription: D\nsources:\n  - { resource: https://x.test/a, usage_count: 7 }\n---\n",
+    );
+    expect(counted.sources).toEqual([{ resource: "https://x.test/a", usageCount: 7 }]);
+    expect(counted.degradations).toEqual([]);
+  });
+
+  it("keeps an OKF 0.1 timestamp as its own field only when generated is absent", () => {
+    const legacy = parsed(APPENDIX_A_V01);
+    expect(legacy.timestamp).toEqual({
+      raw: "2026-05-28T22:53:05+00:00",
+      at: new Date("2026-05-28T22:53:05Z"),
+    });
+    expect(legacy.generated).toBeUndefined();
+    expect(codes(legacy)).toContain("legacy-timestamp");
+    const both = parsed(
+      APPENDIX_A_V01.replace(
+        "timestamp:",
+        "generated: { by: human:x, at: 2026-06-01T00:00:00Z }\ntimestamp:",
+      ),
+    );
+    expect(both.timestamp).toBeUndefined();
+    expect(both.generated?.by).toBe("human:x");
+    expect(codes(both)).not.toContain("legacy-timestamp");
+    const unreadable = parsed("---\ntype: T\ntitle: T\ndescription: D\ntimestamp: soon\n---\n");
+    expect(unreadable.timestamp).toEqual({ raw: "soon" });
+    expect(codes(unreadable)).toEqual(["timestamp-invalid", "legacy-timestamp"]);
+  });
+
+  it("reads a level-one # Citations list as sources only on a page with no generated, verified or sources", () => {
+    const legacy = parsed(APPENDIX_A_V01);
+    expect(legacy.sources).toEqual([
+      { resource: "https://wiki.acme/finance/fpa-handbook" },
+      { resource: "https://wiki.acme/finance/revenue-recognition" },
+      { resource: "https://wiki.acme/finance/cost-allocation" },
+    ]);
+    expect(codes(legacy)).toContain("legacy-citations");
+    const linked = parsed(
+      "---\ntype: T\ntitle: T\ndescription: D\n---\n\n# Citations\n- [Policy](https://x.test/p)\n- plain words\n",
+    );
+    expect(linked.sources).toEqual([
+      { resource: "https://x.test/p", title: "Policy" },
+      { resource: "plain words" },
+    ]);
+    // Beside any of the three v0.2 keys, or under a lower heading, the list is body text only.
+    for (const key of [
+      "generated: { by: human:x }",
+      "verified: { by: human:x, at: 2026-01-01T00:00:00Z }",
+      "sources: []",
+    ]) {
+      const v02 = parsed(APPENDIX_A_V01.replace("timestamp:", `${key}\ntimestamp:`));
+      expect(v02.sources, key).toEqual([]);
+      expect(codes(v02), key).not.toContain("legacy-citations");
+    }
+    const subsection = parsed(
+      "---\ntype: T\ntitle: T\ndescription: D\n---\n\n# Notes\n\n## Citations\n- https://x.test/a\n",
+    );
+    expect(subsection.sources).toEqual([]);
+    expect(codes(subsection)).not.toContain("legacy-citations");
+  });
+
+  it("cuts each legacy citation item at 500 characters and says how many were cut (build review I-E2)", () => {
+    const words = "w".repeat(800);
+    const url = `https://x.test/${"u".repeat(700)}`;
+    const cut = parsed(
+      `---\ntype: T\ntitle: T\ndescription: D\n---\n\n# Citations\n- ${words}\n- [${"t".repeat(600)}](${url})\n- short\n`,
+    );
+    expect(cut.sources).toEqual([
+      { resource: `${"w".repeat(500)}…` },
+      { resource: `${url.slice(0, 500)}…`, title: `${"t".repeat(500)}…` },
+      { resource: "short" },
+    ]);
+    expect(cut.degradations).toEqual([
+      expect.objectContaining({
+        code: "legacy-citations",
+        detail: expect.stringContaining("2 cut at 500 characters"),
+      }),
+    ]);
+    // An item of exactly 500 characters is whole.
+    const whole = parsed(
+      `---\ntype: T\ntitle: T\ndescription: D\n---\n\n# Citations\n- ${"w".repeat(500)}\n`,
+    );
+    expect(whole.sources).toEqual([{ resource: "w".repeat(500) }]);
+    expect(whole.degradations[0]?.detail).not.toContain("cut");
   });
 });

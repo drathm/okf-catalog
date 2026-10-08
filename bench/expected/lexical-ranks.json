@@ -1,0 +1,2597 @@
+{
+  "okf_catalog_lexical_ranks": 1,
+  "about": "Written by `node bench/run.mjs --write-expect`; compared by `--expect` (decision D66). Per lexical configuration and question: the gold page's rank in the first five hits (null when absent), which must not move, and the five paths, which are a tripwire only.",
+  "pinned": {
+    "clock": "2026-10-06T12:00:00.000Z",
+    "qmd": "2.8.3",
+    "node": "v24.15.0",
+    "os": "darwin arm64",
+    "questionsSha256": "f91c26d634c3162e98c8279331ba5656402f348fab15042fa264519002221bde",
+    "corpus": {
+      "okf-skills": "8e3187875e66051bb52f91a5ed27342e2c3208da",
+      "okf-agent-memory": "533b63475d42a4796e4c81c25a8121e660e1e416",
+      "cole-medin": "eba5e31bc628280c546d4828491051c308d550dc",
+      "superops-okf": "88a751032e36300c57af291394ded61ae6db67eb"
+    },
+    "okfCatalogCommit": "95b635ad7be5351840e6bbe8af1fbf1177066001",
+    "okfCatalogDirty": false
+  },
+  "configurations": {
+    "question/relaxed": {
+      "B1": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/stop-hook.md",
+          "okf-skills/decisions/dormant-hooks.md",
+          "cole-medin/sources/this-is-hands-down-the-best-way-to-build-ai-agents.md",
+          "cole-medin/concepts/langgraph-nodes-edges-state.md",
+          "cole-medin/sources/the-best-tool-for-ai-agent-workflows-langgraph-full-guide.md"
+        ]
+      },
+      "B2": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/scale-guardrails.md",
+          "cole-medin/entities/tools/neo4j.md",
+          "cole-medin/entities/tools/graphrag.md",
+          "okf-docs/cli.md",
+          "okf-skills/skills/visualize.md"
+        ]
+      },
+      "B3": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/auto-release.md",
+          "okf-skills/components/ci-workflow.md",
+          "okf-skills/components/release-workflow.md",
+          "okf-skills/components/stop-hook.md",
+          "cole-medin/concepts/prompt-versioning.md"
+        ]
+      },
+      "B4": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/mcp-server.md",
+          "okf-docs/mcp-server.md",
+          "okf-docs/durable-capture.md",
+          "okf-skills/components/okf_init.md",
+          "okf-skills/components/backfill-events.md"
+        ]
+      },
+      "B5": {
+        "rank": null,
+        "top5": [
+          "cole-medin/concepts/ai-coding-limitations.md",
+          "okf-docs/core-types.md",
+          "okf-skills/reference/okf-spec.md",
+          "okf-docs/mcp-server.md",
+          "okf-skills/components/validator.md"
+        ]
+      },
+      "B6": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/map-phase-routing.md",
+          "okf-skills/skills/backfill.md",
+          "cole-medin/entities/tools/graphrag.md",
+          "cole-medin/entities/tools/lightrag.md",
+          "okf-skills/components/backfill-events.md"
+        ]
+      },
+      "B7": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/governance-model.md",
+          "cole-medin/sources/im-building-an-ai-dark-factory-that-ships-its-own-code-public-experiment.md",
+          "okf-agent-memory/architecture/layers.md",
+          "okf-agent-memory/roadmap/milestones.md",
+          "cole-medin/sources/context-engineering-101-the-simple-strategy-to-100x-ai-coding.md"
+        ]
+      },
+      "B8": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "okf-docs/durable-capture.md",
+          "cole-medin/sources/create-your-own-private-local-ai-cloud-stack-in-under-20-minutes.md",
+          "cole-medin/concepts/multi-tenant-agents.md",
+          "okf-docs/cli.md"
+        ]
+      },
+      "B9": {
+        "rank": 2,
+        "top5": [
+          "cole-medin/entities/people/cole-medin.md",
+          "okf-agent-memory/architecture/registry-and-vendor-layering.md",
+          "cole-medin/entities/organizations/codeium.md",
+          "okf-agent-memory/project/value-proposition.md",
+          "okf-agent-memory/architecture/layers.md"
+        ]
+      },
+      "B10": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/release-procedure.md",
+          "okf-agent-memory/convention/contributing.md",
+          "okf-skills/components/release-workflow.md",
+          "okf-skills/decisions/auto-release.md",
+          "okf-agent-memory/roadmap/milestones.md"
+        ]
+      },
+      "B11": {
+        "rank": null,
+        "top5": [
+          "cole-medin/concepts/cloud-gpu-hosting.md",
+          "cole-medin/sources/build-ai-agents-that-evolve-over-time.md",
+          "cole-medin/concepts/coding-agent-as-general-assistant.md",
+          "cole-medin/concepts/local-llm-hardware-requirements.md",
+          "cole-medin/concepts/local-vs-cloud-decision-framework.md"
+        ]
+      },
+      "B12": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/dual-memory-architecture.md",
+          "cole-medin/sources/my-complete-agentic-coding-workflow-to-build-anything-no-fluff-or-overengineering.md",
+          "cole-medin/sources/pydantic-ai-20-the-new-best-way-to-build-ai-agents-is-composing-capabilities.md",
+          "cole-medin/sources/code-100x-faster-with-ai-heres-how-no-hype-full-process.md",
+          "cole-medin/concepts/self-evolving-memory.md"
+        ]
+      },
+      "B13": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/lint.md",
+          "cole-medin/sources/harness-engineering-what-separates-top-agentic-engineers-right-now.md",
+          "cole-medin/sources/ai-fixes-my-code-better-than-me-now-heres-how.md",
+          "cole-medin/concepts/validation.md",
+          "okf-agent-memory/convention/command-mutation-checklist.md"
+        ]
+      },
+      "B14": {
+        "rank": null,
+        "top5": [
+          "cole-medin/concepts/commandify-everything.md",
+          "okf-skills/decisions/map-phase-routing.md",
+          "cole-medin/concepts/long-running-agents.md",
+          "cole-medin/sources/this-ai-agent-with-rag-manages-my-life.md",
+          "cole-medin/sources/are-you-building-real-ai-agents-or-just-using-llms.md"
+        ]
+      },
+      "B15": {
+        "rank": null,
+        "top5": [
+          "cole-medin/entities/tools/fastmcp.md",
+          "cole-medin/concepts/mcp-transports.md",
+          "okf-agent-memory/convention/lifecycle.md",
+          "okf-skills/components/okf_init.md",
+          "cole-medin/sources/is-gemini-3-really-the-best-ai-ever.md"
+        ]
+      },
+      "B16": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/lethal-trifecta.md",
+          "cole-medin/sources/full-guide-build-your-own-ai-second-brain-with-claude-code.md",
+          "cole-medin/concepts/llm-data-privacy-tiers.md",
+          "cole-medin/concepts/permission-management.md",
+          "cole-medin/concepts/agent-security.md"
+        ]
+      },
+      "B17": {
+        "rank": null,
+        "top5": [
+          "cole-medin/concepts/context-window-limits.md",
+          "cole-medin/concepts/conversation-checkpointing.md",
+          "okf-skills/skills/backfill.md",
+          "cole-medin/entities/tools/nomic-embed-text.md",
+          "okf-skills/components/backfill-events.md"
+        ]
+      },
+      "B18": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/delete-before-insert-reingestion.md",
+          "cole-medin/sources/effortless-rag-in-n8n-use-all-your-files-pdfs-excel-and-more.md",
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "cole-medin/concepts/database-branching.md",
+          "cole-medin/sources/is-gemini-3-really-the-best-ai-ever.md"
+        ]
+      },
+      "B19": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/self-hosting-cost-crossover.md",
+          "cole-medin/entities/organizations/together-ai.md",
+          "cole-medin/sources/the-hard-truth-about-hosting-your-own-llms.md",
+          "cole-medin/concepts/cloud-gpu-hosting.md",
+          "cole-medin/concepts/llm-cost-optimization.md"
+        ]
+      },
+      "B20": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/the-ralph-loop.md",
+          "cole-medin/sources/i-was-wrong-about-ralph-wiggum.md",
+          "cole-medin/sources/ralph-wiggum-is-the-final-evolution-of-vibe-coding-heres-what-comes-next.md",
+          "cole-medin/entities/people/geoffrey-huntley.md",
+          "cole-medin/entities/tools/clerk.md"
+        ]
+      },
+      "B21": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/dark-factory.md",
+          "cole-medin/entities/organizations/strongdm.md",
+          "cole-medin/sources/im-building-an-ai-dark-factory-that-ships-its-own-code-public-experiment.md",
+          "cole-medin/entities/tools/minimax-m2.md",
+          "cole-medin/entities/people/dan-shapiro.md"
+        ]
+      },
+      "B22": {
+        "rank": null,
+        "top5": [
+          "cole-medin/entities/organizations/aws.md",
+          "cole-medin/entities/tools/postman.md",
+          "cole-medin/sources/the-next-evolution-of-ai-coding-is-harnesses-heres-how-to-build-them.md",
+          "cole-medin/entities/people/cole-medin.md",
+          "cole-medin/concepts/validation.md"
+        ]
+      },
+      "B23": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/entities/tools/aqua-voice.md",
+          "cole-medin/entities/tools/elevenlabs.md",
+          "cole-medin/entities/tools/deepgram.md",
+          "cole-medin/entities/tools/whisper.md",
+          "cole-medin/entities/tools/vapi.md"
+        ]
+      },
+      "B24": {
+        "rank": 2,
+        "top5": [
+          "cole-medin/concepts/ai-tech-stack.md",
+          "cole-medin/concepts/late-chunking.md",
+          "cole-medin/concepts/agent-graphs.md",
+          "cole-medin/concepts/generative-ui.md",
+          "cole-medin/concepts/hybrid-no-code-and-code.md"
+        ]
+      },
+      "B25": {
+        "rank": null,
+        "top5": [
+          "cole-medin/sources/claude-skills-arent-just-for-claude-heres-how-to-build-them-for-any-agent.md",
+          "cole-medin/entities/tools/playwright.md",
+          "cole-medin/sources/ai-fixes-my-code-better-than-me-now-heres-how.md",
+          "cole-medin/sources/build-a-chatbot-for-your-website-in-4-minutes-no-code.md",
+          "cole-medin/sources/use-chatgpt-in-two-clicks-on-any-website-with-a-custom-chrome-extension.md"
+        ]
+      }
+    },
+    "question/strict": {
+      "B1": {
+        "rank": null,
+        "top5": []
+      },
+      "B2": {
+        "rank": null,
+        "top5": []
+      },
+      "B3": {
+        "rank": null,
+        "top5": []
+      },
+      "B4": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/mcp-server.md"
+        ]
+      },
+      "B5": {
+        "rank": null,
+        "top5": []
+      },
+      "B6": {
+        "rank": null,
+        "top5": []
+      },
+      "B7": {
+        "rank": null,
+        "top5": []
+      },
+      "B8": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md"
+        ]
+      },
+      "B9": {
+        "rank": null,
+        "top5": [
+          "cole-medin/entities/people/cole-medin.md"
+        ]
+      },
+      "B10": {
+        "rank": null,
+        "top5": []
+      },
+      "B11": {
+        "rank": null,
+        "top5": []
+      },
+      "B12": {
+        "rank": null,
+        "top5": []
+      },
+      "B13": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/lint.md"
+        ]
+      },
+      "B14": {
+        "rank": null,
+        "top5": []
+      },
+      "B15": {
+        "rank": null,
+        "top5": []
+      },
+      "B16": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/lethal-trifecta.md",
+          "cole-medin/sources/full-guide-build-your-own-ai-second-brain-with-claude-code.md",
+          "cole-medin/concepts/llm-data-privacy-tiers.md",
+          "cole-medin/concepts/permission-management.md",
+          "cole-medin/concepts/agent-security.md"
+        ]
+      },
+      "B17": {
+        "rank": null,
+        "top5": []
+      },
+      "B18": {
+        "rank": null,
+        "top5": []
+      },
+      "B19": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/self-hosting-cost-crossover.md"
+        ]
+      },
+      "B20": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/the-ralph-loop.md",
+          "cole-medin/sources/i-was-wrong-about-ralph-wiggum.md",
+          "cole-medin/sources/ralph-wiggum-is-the-final-evolution-of-vibe-coding-heres-what-comes-next.md",
+          "cole-medin/entities/people/geoffrey-huntley.md",
+          "cole-medin/entities/tools/clerk.md"
+        ]
+      },
+      "B21": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/dark-factory.md",
+          "cole-medin/entities/organizations/strongdm.md",
+          "cole-medin/sources/im-building-an-ai-dark-factory-that-ships-its-own-code-public-experiment.md",
+          "cole-medin/entities/tools/minimax-m2.md",
+          "cole-medin/entities/people/dan-shapiro.md"
+        ]
+      },
+      "B22": {
+        "rank": null,
+        "top5": [
+          "cole-medin/entities/organizations/aws.md",
+          "cole-medin/entities/tools/postman.md",
+          "cole-medin/sources/the-next-evolution-of-ai-coding-is-harnesses-heres-how-to-build-them.md",
+          "cole-medin/entities/people/cole-medin.md",
+          "cole-medin/concepts/validation.md"
+        ]
+      },
+      "B23": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/entities/tools/aqua-voice.md",
+          "cole-medin/entities/tools/elevenlabs.md"
+        ]
+      },
+      "B24": {
+        "rank": null,
+        "top5": []
+      },
+      "B25": {
+        "rank": null,
+        "top5": []
+      }
+    },
+    "keywords/relaxed": {
+      "B1": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/stop-hook.md",
+          "okf-skills/decisions/dormant-hooks.md",
+          "okf-skills/decisions/no-hooks.md",
+          "okf-skills/components/validator.md",
+          "okf-skills/skills/okf.md"
+        ]
+      },
+      "B2": {
+        "rank": 2,
+        "top5": [
+          "okf-skills/components/visualizer.md",
+          "okf-skills/decisions/scale-guardrails.md",
+          "cole-medin/concepts/spec-driven-development.md",
+          "cole-medin/concepts/initializer-and-task-agent.md",
+          "cole-medin/sources/ive-used-claude-code-for-2000-hours-heres-how-i-build-anything-with-it.md"
+        ]
+      },
+      "B3": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/auto-release.md",
+          "okf-skills/components/ci-workflow.md",
+          "okf-skills/components/release-workflow.md",
+          "okf-skills/components/stop-hook.md",
+          "okf-skills/components/mcp-server.md"
+        ]
+      },
+      "B4": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/mcp-server.md",
+          "okf-skills/components/okf_init.md",
+          "okf-skills/skills/okf.md",
+          "okf-skills/components/validator.md",
+          "okf-skills/reference/okf-spec.md"
+        ]
+      },
+      "B5": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/trust-benchmark.md",
+          "okf-skills/skills/okf.md",
+          "cole-medin/sources/build-an-army-of-ai-agents-on-autopilot-with-archon-heres-how.md",
+          "okf-skills/decisions/dormant-hooks.md",
+          "cole-medin/entities/tools/airtable.md"
+        ]
+      },
+      "B6": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/map-phase-routing.md",
+          "okf-skills/skills/backfill.md",
+          "cole-medin/sources/openais-o1-is-barely-usable-but-i-fixed-it.md",
+          "cole-medin/concepts/ai-agent-learning-roadmap.md",
+          "cole-medin/concepts/phases-of-work.md"
+        ]
+      },
+      "B7": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/governance-model.md",
+          "okf-agent-memory/roadmap/milestones.md",
+          "okf-docs/mcp-server.md",
+          "cole-medin/concepts/progressive-disclosure.md",
+          "cole-medin/concepts/agent-deployment.md"
+        ]
+      },
+      "B8": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "okf-agent-memory/roadmap/milestones.md",
+          "okf-agent-memory/convention/contributing.md",
+          "okf-agent-memory/convention/coding-standards.md",
+          "cole-medin/concepts/coding-agent-as-general-assistant.md"
+        ]
+      },
+      "B9": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/registry-and-vendor-layering.md",
+          "cole-medin/sources/this-boltnew-fork-is-exploding-dont-miss-out-on-whats-happening.md",
+          "cole-medin/sources/ottodev-is-becoming-the-best-open-source-ai-coding-assistant.md",
+          "cole-medin/concepts/role-prompting.md",
+          "okf-skills/reference/okf-spec.md"
+        ]
+      },
+      "B10": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/release-procedure.md",
+          "cole-medin/entities/organizations/databricks.md",
+          "okf-skills/components/release-workflow.md",
+          "okf-agent-memory/convention/contributing.md",
+          "okf-skills/decisions/auto-release.md"
+        ]
+      },
+      "B11": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/search-tokenization.md",
+          "cole-medin/concepts/delete-before-insert-reingestion.md",
+          "okf-agent-memory/roadmap/milestones.md",
+          "okf-agent-memory/project/overview.md",
+          "okf-agent-memory/convention/command-mutation-checklist.md"
+        ]
+      },
+      "B12": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/dual-memory-architecture.md",
+          "okf-agent-memory/roadmap/milestones.md",
+          "cole-medin/concepts/model-quantization.md",
+          "cole-medin/sources/brand-new-stealth-llm-released-on-openrouter-its-a-beast.md",
+          "okf-skills/components/backfill-events.md"
+        ]
+      },
+      "B13": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/lint.md",
+          "cole-medin/sources/harness-engineering-what-separates-top-agentic-engineers-right-now.md",
+          "okf-docs/cli.md",
+          "cole-medin/concepts/end-to-end-validation.md",
+          "cole-medin/sources/ai-fixes-my-code-better-than-me-now-heres-how.md"
+        ]
+      },
+      "B14": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/durable-capture.md",
+          "okf-docs/mcp-server.md",
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "okf-agent-memory/architecture/relationship-identity.md",
+          "okf-skills/components/release-workflow.md"
+        ]
+      },
+      "B15": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/mcp-server.md",
+          "cole-medin/entities/tools/gemini-cli.md",
+          "cole-medin/sources/the-subagent-era-is-officially-here-learn-this-now.md",
+          "cole-medin/entities/tools/gpt-5-4-mini-nano.md",
+          "cole-medin/entities/tools/oracle-ai-database.md"
+        ]
+      },
+      "B16": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/lethal-trifecta.md",
+          "cole-medin/sources/full-guide-build-your-own-ai-second-brain-with-claude-code.md",
+          "cole-medin/concepts/permission-management.md",
+          "cole-medin/concepts/llm-data-privacy-tiers.md",
+          "cole-medin/concepts/agent-security.md"
+        ]
+      },
+      "B17": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/ollama-context-window.md",
+          "cole-medin/sources/how-to-use-boltnew-for-free-with-local-llms-and-no-rate-limits.md",
+          "cole-medin/concepts/context-window-limits.md",
+          "cole-medin/entities/tools/ottodev.md",
+          "cole-medin/concepts/local-llms-as-agents.md"
+        ]
+      },
+      "B18": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/delete-before-insert-reingestion.md",
+          "cole-medin/sources/run-all-your-ai-locally-in-minutes-llms-rag-and-more.md",
+          "cole-medin/sources/this-rag-ai-agent-with-n8n-supabase-is-the-real-deal.md",
+          "cole-medin/concepts/vector-embeddings.md",
+          "cole-medin/entities/tools/n8n-self-hosted-ai-starter-kit.md"
+        ]
+      },
+      "B19": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/self-hosting-cost-crossover.md",
+          "cole-medin/entities/organizations/together-ai.md",
+          "cole-medin/concepts/cloud-gpu-hosting.md",
+          "cole-medin/concepts/local-vs-cloud-decision-framework.md",
+          "cole-medin/concepts/usage-based-pricing-trap.md"
+        ]
+      },
+      "B20": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/the-ralph-loop.md",
+          "cole-medin/sources/ralph-wiggum-is-the-final-evolution-of-vibe-coding-heres-what-comes-next.md",
+          "cole-medin/concepts/permission-management.md",
+          "cole-medin/entities/people/geoffrey-huntley.md",
+          "cole-medin/concepts/long-running-agents.md"
+        ]
+      },
+      "B21": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/dark-factory.md",
+          "cole-medin/entities/organizations/strongdm.md",
+          "cole-medin/sources/im-building-an-ai-dark-factory-that-ships-its-own-code-public-experiment.md",
+          "cole-medin/sources/the-best-ai-coding-setup-isnt-the-most-autonomous-one-heres-why.md",
+          "cole-medin/concepts/five-levels-of-ai-coding-autonomy.md"
+        ]
+      },
+      "B22": {
+        "rank": 2,
+        "top5": [
+          "cole-medin/entities/tools/stripe-minions.md",
+          "cole-medin/sources/stripes-coding-agents-ship-1300-prs-every-week-heres-how-they-do-it.md",
+          "cole-medin/entities/organizations/stripe.md",
+          "cole-medin/entities/tools/roast.md",
+          "cole-medin/concepts/disposable-agent-sandboxes.md"
+        ]
+      },
+      "B23": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/entities/tools/aqua-voice.md",
+          "cole-medin/entities/tools/elevenlabs.md",
+          "cole-medin/entities/tools/deepgram.md",
+          "cole-medin/entities/tools/vapi.md",
+          "cole-medin/entities/tools/remotion.md"
+        ]
+      },
+      "B24": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/late-chunking.md",
+          "cole-medin/sources/every-rag-strategy-explained-in-13-minutes-no-fluff.md",
+          "cole-medin/entities/tools/gpt-4-1-nano.md",
+          "cole-medin/sources/super-special-livestream-this-weekend-live-ai-agent-build.md",
+          "cole-medin/entities/tools/docling.md"
+        ]
+      },
+      "B25": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/sources/i-forced-claude-to-code-for-24-hours-nonstop-heres-what-happened.md",
+          "cole-medin/concepts/long-running-agents.md",
+          "cole-medin/concepts/memory-systems.md",
+          "cole-medin/sources/ive-used-claude-code-for-2000-hours-heres-how-i-build-anything-with-it.md",
+          "cole-medin/concepts/test-driven-development.md"
+        ]
+      }
+    },
+    "keywords/strict": {
+      "B1": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/stop-hook.md",
+          "okf-skills/decisions/dormant-hooks.md"
+        ]
+      },
+      "B2": {
+        "rank": 2,
+        "top5": [
+          "okf-skills/components/visualizer.md",
+          "okf-skills/decisions/scale-guardrails.md"
+        ]
+      },
+      "B3": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/auto-release.md",
+          "okf-skills/components/ci-workflow.md",
+          "okf-skills/components/release-workflow.md"
+        ]
+      },
+      "B4": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/mcp-server.md"
+        ]
+      },
+      "B5": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/trust-benchmark.md"
+        ]
+      },
+      "B6": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/map-phase-routing.md"
+        ]
+      },
+      "B7": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/governance-model.md",
+          "okf-agent-memory/roadmap/milestones.md",
+          "okf-docs/mcp-server.md",
+          "cole-medin/concepts/progressive-disclosure.md",
+          "cole-medin/concepts/agent-deployment.md"
+        ]
+      },
+      "B8": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "okf-agent-memory/roadmap/milestones.md"
+        ]
+      },
+      "B9": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/registry-and-vendor-layering.md"
+        ]
+      },
+      "B10": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/release-procedure.md",
+          "cole-medin/entities/organizations/databricks.md"
+        ]
+      },
+      "B11": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/search-tokenization.md"
+        ]
+      },
+      "B12": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/dual-memory-architecture.md"
+        ]
+      },
+      "B13": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/lint.md"
+        ]
+      },
+      "B14": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/durable-capture.md",
+          "okf-docs/mcp-server.md"
+        ]
+      },
+      "B15": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/mcp-server.md"
+        ]
+      },
+      "B16": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/lethal-trifecta.md",
+          "cole-medin/sources/full-guide-build-your-own-ai-second-brain-with-claude-code.md",
+          "cole-medin/concepts/permission-management.md"
+        ]
+      },
+      "B17": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/ollama-context-window.md",
+          "cole-medin/sources/how-to-use-boltnew-for-free-with-local-llms-and-no-rate-limits.md",
+          "cole-medin/concepts/context-window-limits.md",
+          "cole-medin/entities/tools/ottodev.md",
+          "cole-medin/concepts/local-llms-as-agents.md"
+        ]
+      },
+      "B18": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/delete-before-insert-reingestion.md",
+          "cole-medin/sources/run-all-your-ai-locally-in-minutes-llms-rag-and-more.md",
+          "cole-medin/sources/this-rag-ai-agent-with-n8n-supabase-is-the-real-deal.md",
+          "cole-medin/concepts/vector-embeddings.md",
+          "cole-medin/entities/tools/n8n-self-hosted-ai-starter-kit.md"
+        ]
+      },
+      "B19": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/self-hosting-cost-crossover.md",
+          "cole-medin/entities/organizations/together-ai.md",
+          "cole-medin/concepts/cloud-gpu-hosting.md",
+          "cole-medin/concepts/local-vs-cloud-decision-framework.md",
+          "cole-medin/concepts/usage-based-pricing-trap.md"
+        ]
+      },
+      "B20": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/the-ralph-loop.md",
+          "cole-medin/sources/ralph-wiggum-is-the-final-evolution-of-vibe-coding-heres-what-comes-next.md",
+          "cole-medin/concepts/permission-management.md",
+          "cole-medin/entities/people/geoffrey-huntley.md",
+          "cole-medin/concepts/long-running-agents.md"
+        ]
+      },
+      "B21": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/dark-factory.md",
+          "cole-medin/entities/organizations/strongdm.md",
+          "cole-medin/sources/im-building-an-ai-dark-factory-that-ships-its-own-code-public-experiment.md",
+          "cole-medin/sources/the-best-ai-coding-setup-isnt-the-most-autonomous-one-heres-why.md",
+          "cole-medin/concepts/five-levels-of-ai-coding-autonomy.md"
+        ]
+      },
+      "B22": {
+        "rank": 2,
+        "top5": [
+          "cole-medin/entities/tools/stripe-minions.md",
+          "cole-medin/sources/stripes-coding-agents-ship-1300-prs-every-week-heres-how-they-do-it.md",
+          "cole-medin/entities/organizations/stripe.md",
+          "cole-medin/entities/tools/roast.md",
+          "cole-medin/concepts/disposable-agent-sandboxes.md"
+        ]
+      },
+      "B23": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/entities/tools/aqua-voice.md",
+          "cole-medin/entities/tools/elevenlabs.md"
+        ]
+      },
+      "B24": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/late-chunking.md",
+          "cole-medin/sources/every-rag-strategy-explained-in-13-minutes-no-fluff.md",
+          "cole-medin/entities/tools/gpt-4-1-nano.md",
+          "cole-medin/sources/super-special-livestream-this-weekend-live-ai-agent-build.md",
+          "cole-medin/entities/tools/docling.md"
+        ]
+      },
+      "B25": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/sources/i-forced-claude-to-code-for-24-hours-nonstop-heres-what-happened.md",
+          "cole-medin/concepts/long-running-agents.md",
+          "cole-medin/concepts/memory-systems.md"
+        ]
+      }
+    },
+    "question/relaxed+topic": {
+      "B1": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/stop-hook.md"
+        ]
+      },
+      "B2": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/scale-guardrails.md",
+          "okf-skills/decisions/self-contained-skills.md",
+          "okf-skills/decisions/dual-distribution.md",
+          "okf-skills/decisions/okf-v02-dual-read.md",
+          "okf-skills/decisions/dormant-hooks.md"
+        ]
+      },
+      "B3": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/auto-release.md",
+          "okf-skills/decisions/mcp-server.md",
+          "okf-skills/decisions/dual-distribution.md",
+          "okf-skills/decisions/dormant-hooks.md",
+          "okf-skills/decisions/self-contained-skills.md"
+        ]
+      },
+      "B4": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/mcp-server.md",
+          "okf-skills/components/okf_init.md",
+          "okf-skills/components/backfill-events.md",
+          "okf-skills/components/validator.md",
+          "okf-skills/components/stop-hook.md"
+        ]
+      },
+      "B5": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/trust-benchmark.md",
+          "okf-skills/decisions/dormant-hooks.md",
+          "okf-skills/decisions/okf-v02-dual-read.md",
+          "okf-skills/decisions/auto-release.md",
+          "okf-skills/decisions/no-hooks.md"
+        ]
+      },
+      "B6": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/map-phase-routing.md",
+          "okf-skills/decisions/scale-guardrails.md",
+          "okf-skills/decisions/dual-distribution.md"
+        ]
+      },
+      "B7": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/governance-model.md",
+          "okf-agent-memory/architecture/layers.md",
+          "okf-agent-memory/architecture/tooling-decision.md",
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "okf-agent-memory/architecture/metadata-roundtrip.md"
+        ]
+      },
+      "B8": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "okf-agent-memory/architecture/governance-model.md",
+          "okf-agent-memory/architecture/layers.md",
+          "okf-agent-memory/architecture/registry-and-vendor-layering.md",
+          "okf-agent-memory/architecture/metadata-roundtrip.md"
+        ]
+      },
+      "B9": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/registry-and-vendor-layering.md",
+          "okf-agent-memory/architecture/layers.md",
+          "okf-agent-memory/architecture/tooling-decision.md",
+          "okf-agent-memory/architecture/governance-model.md",
+          "okf-agent-memory/architecture/relationship-identity.md"
+        ]
+      },
+      "B10": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/release-procedure.md",
+          "okf-agent-memory/convention/contributing.md",
+          "okf-agent-memory/convention/dual-memory-architecture.md",
+          "okf-agent-memory/convention/security-audit.md",
+          "okf-agent-memory/convention/command-mutation-checklist.md"
+        ]
+      },
+      "B11": {
+        "rank": 3,
+        "top5": [
+          "okf-agent-memory/architecture/layers.md",
+          "okf-agent-memory/architecture/governance-model.md",
+          "okf-agent-memory/architecture/search-tokenization.md"
+        ]
+      },
+      "B12": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/dual-memory-architecture.md",
+          "okf-agent-memory/convention/principles.md",
+          "okf-agent-memory/convention/mcp-agent-safety.md"
+        ]
+      },
+      "B13": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/lint.md",
+          "okf-docs/cli.md",
+          "okf-docs/mcp-server.md"
+        ]
+      },
+      "B14": {
+        "rank": 2,
+        "top5": [
+          "okf-docs/cli.md",
+          "okf-docs/durable-capture.md",
+          "okf-docs/mcp-server.md",
+          "okf-docs/parser.md"
+        ]
+      },
+      "B15": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/mcp-server.md",
+          "okf-docs/lint.md",
+          "okf-docs/durable-capture.md",
+          "okf-docs/parser.md",
+          "okf-docs/core-types.md"
+        ]
+      },
+      "B16": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/lethal-trifecta.md",
+          "cole-medin/concepts/llm-data-privacy-tiers.md",
+          "cole-medin/concepts/permission-management.md",
+          "cole-medin/concepts/agent-security.md",
+          "cole-medin/concepts/no-code-vs-code.md"
+        ]
+      },
+      "B17": {
+        "rank": 5,
+        "top5": [
+          "cole-medin/concepts/context-window-limits.md",
+          "cole-medin/concepts/conversation-checkpointing.md",
+          "cole-medin/concepts/firewall-configuration.md",
+          "cole-medin/concepts/five-levels-of-ai-coding-autonomy.md",
+          "cole-medin/concepts/ollama-context-window.md"
+        ]
+      },
+      "B18": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/delete-before-insert-reingestion.md",
+          "cole-medin/concepts/database-branching.md",
+          "cole-medin/concepts/ai-coding-limitations.md",
+          "cole-medin/concepts/vector-embeddings.md",
+          "cole-medin/concepts/document-extraction.md"
+        ]
+      },
+      "B19": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/self-hosting-cost-crossover.md",
+          "cole-medin/concepts/cloud-gpu-hosting.md",
+          "cole-medin/concepts/llm-cost-optimization.md",
+          "cole-medin/concepts/local-llm-hardware-requirements.md",
+          "cole-medin/concepts/local-ai.md"
+        ]
+      },
+      "B20": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/the-ralph-loop.md",
+          "cole-medin/concepts/long-running-agents.md",
+          "cole-medin/concepts/agent-graphs.md",
+          "cole-medin/concepts/loop-engineering.md",
+          "cole-medin/concepts/initializer-and-task-agent.md"
+        ]
+      },
+      "B21": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/dark-factory.md",
+          "cole-medin/concepts/five-levels-of-ai-coding-autonomy.md",
+          "cole-medin/concepts/sycophancy.md",
+          "cole-medin/concepts/the-evolution-of-ai-coding.md",
+          "cole-medin/concepts/separate-reviewer.md"
+        ]
+      },
+      "B22": {
+        "rank": 2,
+        "top5": [
+          "cole-medin/sources/the-next-evolution-of-ai-coding-is-harnesses-heres-how-to-build-them.md",
+          "cole-medin/sources/stripes-coding-agents-ship-1300-prs-every-week-heres-how-they-do-it.md",
+          "cole-medin/sources/ive-been-holding-back-on-youtube-but-not-anymore.md",
+          "cole-medin/sources/ai-youtube-is-only-claude-hype-now.md",
+          "cole-medin/sources/youre-hardly-using-what-claude-code-has-to-offer-its-insane.md"
+        ]
+      },
+      "B23": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/entities/tools/aqua-voice.md",
+          "cole-medin/entities/tools/elevenlabs.md",
+          "cole-medin/entities/tools/deepgram.md",
+          "cole-medin/entities/tools/whisper.md",
+          "cole-medin/entities/tools/vapi.md"
+        ]
+      },
+      "B24": {
+        "rank": 2,
+        "top5": [
+          "cole-medin/concepts/ai-tech-stack.md",
+          "cole-medin/concepts/late-chunking.md",
+          "cole-medin/concepts/agent-graphs.md",
+          "cole-medin/concepts/generative-ui.md",
+          "cole-medin/concepts/hybrid-no-code-and-code.md"
+        ]
+      },
+      "B25": {
+        "rank": 5,
+        "top5": [
+          "cole-medin/sources/claude-skills-arent-just-for-claude-heres-how-to-build-them-for-any-agent.md",
+          "cole-medin/sources/ai-fixes-my-code-better-than-me-now-heres-how.md",
+          "cole-medin/sources/build-a-chatbot-for-your-website-in-4-minutes-no-code.md",
+          "cole-medin/sources/use-chatgpt-in-two-clicks-on-any-website-with-a-custom-chrome-extension.md",
+          "cole-medin/sources/i-forced-claude-to-code-for-24-hours-nonstop-heres-what-happened.md"
+        ]
+      }
+    },
+    "question/relaxed+type": {
+      "B1": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/stop-hook.md"
+        ]
+      },
+      "B2": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/scale-guardrails.md",
+          "okf-skills/decisions/self-contained-skills.md",
+          "okf-skills/decisions/dual-distribution.md",
+          "okf-skills/decisions/okf-v02-dual-read.md",
+          "okf-skills/decisions/dormant-hooks.md"
+        ]
+      },
+      "B3": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/auto-release.md",
+          "okf-skills/decisions/mcp-server.md",
+          "okf-skills/decisions/dual-distribution.md",
+          "okf-skills/decisions/dormant-hooks.md",
+          "okf-skills/decisions/self-contained-skills.md"
+        ]
+      },
+      "B4": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/mcp-server.md",
+          "okf-skills/components/okf_init.md",
+          "okf-skills/components/backfill-events.md",
+          "okf-skills/components/validator.md",
+          "okf-skills/components/stop-hook.md"
+        ]
+      },
+      "B5": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/trust-benchmark.md",
+          "okf-agent-memory/architecture/tooling-decision.md",
+          "okf-agent-memory/architecture/metadata-roundtrip.md",
+          "okf-agent-memory/architecture/governance-model.md",
+          "okf-skills/decisions/dormant-hooks.md"
+        ]
+      },
+      "B6": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/map-phase-routing.md",
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "okf-skills/decisions/scale-guardrails.md",
+          "okf-skills/decisions/dual-distribution.md"
+        ]
+      },
+      "B7": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/governance-model.md",
+          "okf-agent-memory/architecture/tooling-decision.md",
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "okf-skills/decisions/dormant-hooks.md",
+          "okf-skills/decisions/okf-v02-dual-read.md"
+        ]
+      },
+      "B8": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "okf-agent-memory/architecture/governance-model.md",
+          "okf-skills/decisions/trust-benchmark.md",
+          "okf-agent-memory/architecture/registry-and-vendor-layering.md",
+          "okf-agent-memory/architecture/metadata-roundtrip.md"
+        ]
+      },
+      "B9": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/registry-and-vendor-layering.md",
+          "okf-agent-memory/architecture/tooling-decision.md",
+          "okf-skills/decisions/mcp-server.md",
+          "okf-skills/decisions/no-hooks.md",
+          "okf-agent-memory/architecture/governance-model.md"
+        ]
+      },
+      "B10": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/release-procedure.md",
+          "okf-agent-memory/convention/security-audit.md"
+        ]
+      },
+      "B11": {
+        "rank": 4,
+        "top5": [
+          "okf-skills/decisions/map-phase-routing.md",
+          "okf-agent-memory/architecture/governance-model.md",
+          "okf-skills/decisions/auto-release.md",
+          "okf-agent-memory/architecture/search-tokenization.md"
+        ]
+      },
+      "B12": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/dual-memory-architecture.md",
+          "okf-agent-memory/convention/principles.md",
+          "okf-agent-memory/convention/mcp-agent-safety.md"
+        ]
+      },
+      "B13": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/lint.md",
+          "okf-docs/cli.md",
+          "okf-docs/mcp-server.md"
+        ]
+      },
+      "B14": {
+        "rank": 2,
+        "top5": [
+          "okf-docs/cli.md",
+          "okf-docs/durable-capture.md",
+          "okf-docs/mcp-server.md",
+          "okf-docs/parser.md"
+        ]
+      },
+      "B15": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/mcp-server.md",
+          "okf-docs/lint.md",
+          "okf-docs/durable-capture.md",
+          "okf-docs/parser.md",
+          "okf-docs/core-types.md"
+        ]
+      },
+      "B16": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/lethal-trifecta.md",
+          "cole-medin/concepts/llm-data-privacy-tiers.md",
+          "cole-medin/concepts/permission-management.md",
+          "cole-medin/concepts/agent-security.md",
+          "cole-medin/concepts/no-code-vs-code.md"
+        ]
+      },
+      "B17": {
+        "rank": 5,
+        "top5": [
+          "cole-medin/concepts/context-window-limits.md",
+          "cole-medin/concepts/conversation-checkpointing.md",
+          "cole-medin/concepts/firewall-configuration.md",
+          "cole-medin/concepts/five-levels-of-ai-coding-autonomy.md",
+          "cole-medin/concepts/ollama-context-window.md"
+        ]
+      },
+      "B18": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/delete-before-insert-reingestion.md",
+          "cole-medin/concepts/database-branching.md",
+          "cole-medin/concepts/ai-coding-limitations.md",
+          "cole-medin/concepts/vector-embeddings.md",
+          "cole-medin/concepts/document-extraction.md"
+        ]
+      },
+      "B19": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/self-hosting-cost-crossover.md",
+          "cole-medin/concepts/cloud-gpu-hosting.md",
+          "cole-medin/concepts/llm-cost-optimization.md",
+          "cole-medin/concepts/local-llm-hardware-requirements.md",
+          "cole-medin/concepts/local-ai.md"
+        ]
+      },
+      "B20": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/the-ralph-loop.md",
+          "cole-medin/concepts/long-running-agents.md",
+          "cole-medin/concepts/agent-graphs.md",
+          "cole-medin/concepts/loop-engineering.md",
+          "cole-medin/concepts/initializer-and-task-agent.md"
+        ]
+      },
+      "B21": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/dark-factory.md",
+          "cole-medin/concepts/five-levels-of-ai-coding-autonomy.md",
+          "cole-medin/concepts/sycophancy.md",
+          "cole-medin/concepts/the-evolution-of-ai-coding.md",
+          "cole-medin/concepts/separate-reviewer.md"
+        ]
+      },
+      "B22": {
+        "rank": 2,
+        "top5": [
+          "cole-medin/sources/the-next-evolution-of-ai-coding-is-harnesses-heres-how-to-build-them.md",
+          "cole-medin/sources/stripes-coding-agents-ship-1300-prs-every-week-heres-how-they-do-it.md",
+          "cole-medin/sources/ive-been-holding-back-on-youtube-but-not-anymore.md",
+          "cole-medin/sources/ai-youtube-is-only-claude-hype-now.md",
+          "cole-medin/sources/youre-hardly-using-what-claude-code-has-to-offer-its-insane.md"
+        ]
+      },
+      "B23": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/entities/tools/aqua-voice.md",
+          "cole-medin/entities/tools/elevenlabs.md",
+          "cole-medin/entities/tools/deepgram.md",
+          "cole-medin/entities/tools/whisper.md",
+          "cole-medin/entities/tools/vapi.md"
+        ]
+      },
+      "B24": {
+        "rank": 2,
+        "top5": [
+          "cole-medin/concepts/ai-tech-stack.md",
+          "cole-medin/concepts/late-chunking.md",
+          "cole-medin/concepts/agent-graphs.md",
+          "cole-medin/concepts/generative-ui.md",
+          "cole-medin/concepts/hybrid-no-code-and-code.md"
+        ]
+      },
+      "B25": {
+        "rank": 5,
+        "top5": [
+          "cole-medin/sources/claude-skills-arent-just-for-claude-heres-how-to-build-them-for-any-agent.md",
+          "cole-medin/sources/ai-fixes-my-code-better-than-me-now-heres-how.md",
+          "cole-medin/sources/build-a-chatbot-for-your-website-in-4-minutes-no-code.md",
+          "cole-medin/sources/use-chatgpt-in-two-clicks-on-any-website-with-a-custom-chrome-extension.md",
+          "cole-medin/sources/i-forced-claude-to-code-for-24-hours-nonstop-heres-what-happened.md"
+        ]
+      }
+    },
+    "question/relaxed+pool100": {
+      "B1": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/stop-hook.md",
+          "cole-medin/concepts/validation.md",
+          "okf-skills/decisions/dormant-hooks.md",
+          "cole-medin/sources/this-is-hands-down-the-best-way-to-build-ai-agents.md",
+          "cole-medin/sources/i-was-wrong-about-ralph-wiggum.md"
+        ]
+      },
+      "B2": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/scale-guardrails.md",
+          "cole-medin/concepts/chunking.md",
+          "cole-medin/concepts/deterministic-workflows.md",
+          "cole-medin/concepts/document-extraction.md",
+          "cole-medin/concepts/structured-vs-unstructured-data.md"
+        ]
+      },
+      "B3": {
+        "rank": 2,
+        "top5": [
+          "okf-skills/components/ci-workflow.md",
+          "okf-skills/decisions/auto-release.md",
+          "okf-skills/components/release-workflow.md",
+          "okf-skills/components/stop-hook.md",
+          "cole-medin/sources/chatgpt-users-be-aware-of-this-major-weakness.md"
+        ]
+      },
+      "B4": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/mcp-server.md",
+          "okf-docs/mcp-server.md",
+          "okf-agent-memory/convention/command-mutation-checklist.md",
+          "cole-medin/sources/introducing-archon-an-ai-agent-that-builds-ai-agents.md",
+          "okf-docs/durable-capture.md"
+        ]
+      },
+      "B5": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/trust-benchmark.md",
+          "okf-docs/mcp-server.md",
+          "okf-skills/components/validator.md",
+          "okf-docs/durable-capture.md",
+          "cole-medin/concepts/self-evolving-memory.md"
+        ]
+      },
+      "B6": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/map-phase-routing.md",
+          "okf-skills/skills/backfill.md",
+          "okf-skills/components/backfill-events.md",
+          "cole-medin/entities/tools/graphrag.md",
+          "cole-medin/sources/are-you-building-real-ai-agents-or-just-using-llms.md"
+        ]
+      },
+      "B7": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/governance-model.md",
+          "cole-medin/sources/im-building-an-ai-dark-factory-that-ships-its-own-code-public-experiment.md",
+          "okf-agent-memory/roadmap/milestones.md",
+          "cole-medin/entities/tools/minimax-m2.md",
+          "cole-medin/sources/context-engineering-101-the-simple-strategy-to-100x-ai-coding.md"
+        ]
+      },
+      "B8": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "okf-docs/durable-capture.md",
+          "cole-medin/sources/create-your-own-private-local-ai-cloud-stack-in-under-20-minutes.md",
+          "okf-agent-memory/convention/coding-standards.md",
+          "cole-medin/sources/youre-hardly-using-what-claude-code-has-to-offer-its-insane.md"
+        ]
+      },
+      "B9": {
+        "rank": 3,
+        "top5": [
+          "cole-medin/entities/people/cole-medin.md",
+          "cole-medin/concepts/agentic-coding.md",
+          "okf-agent-memory/architecture/registry-and-vendor-layering.md",
+          "okf-agent-memory/architecture/layers.md",
+          "okf-agent-memory/convention/coding-standards.md"
+        ]
+      },
+      "B10": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/release-procedure.md",
+          "okf-agent-memory/convention/contributing.md",
+          "okf-skills/components/release-workflow.md",
+          "okf-skills/decisions/auto-release.md",
+          "okf-docs/cli.md"
+        ]
+      },
+      "B11": {
+        "rank": null,
+        "top5": [
+          "okf-agent-memory/architecture/layers.md",
+          "cole-medin/sources/the-proven-solution-for-unbelievable-rag-performance-lightrag-guide.md",
+          "cole-medin/sources/the-most-value-packed-rag-guide-on-youtube-feat-llama-31-405b.md",
+          "cole-medin/concepts/query-expansion.md",
+          "cole-medin/concepts/semantic-search.md"
+        ]
+      },
+      "B12": {
+        "rank": 3,
+        "top5": [
+          "cole-medin/concepts/self-evolving-memory.md",
+          "cole-medin/sources/my-complete-agentic-coding-workflow-to-build-anything-no-fluff-or-overengineering.md",
+          "okf-agent-memory/convention/dual-memory-architecture.md",
+          "cole-medin/concepts/agent-core-components.md",
+          "cole-medin/concepts/claude-code-hooks.md"
+        ]
+      },
+      "B13": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/lint.md",
+          "cole-medin/sources/harness-engineering-what-separates-top-agentic-engineers-right-now.md",
+          "cole-medin/concepts/claude-code-hooks.md",
+          "cole-medin/sources/i-built-self-evolving-claude-code-memory-w-karpathys-llm-knowledge-bases.md",
+          "cole-medin/sources/ai-fixes-my-code-better-than-me-now-heres-how.md"
+        ]
+      },
+      "B14": {
+        "rank": null,
+        "top5": [
+          "cole-medin/sources/no-code-rag-agents-you-have-to-check-out-n8n-langchain.md",
+          "cole-medin/entities/tools/graphrag.md",
+          "cole-medin/sources/this-ai-agent-with-rag-manages-my-life.md",
+          "cole-medin/sources/i-forced-claude-to-code-for-24-hours-nonstop-heres-what-happened.md",
+          "cole-medin/sources/introducing-rag-20-agentic-rag-knowledge-graphs-free-template.md"
+        ]
+      },
+      "B15": {
+        "rank": 2,
+        "top5": [
+          "cole-medin/entities/tools/windsurf.md",
+          "okf-docs/mcp-server.md",
+          "okf-skills/components/mcp-server.md",
+          "okf-agent-memory/convention/mcp-agent-safety.md",
+          "okf-skills/decisions/mcp-server.md"
+        ]
+      },
+      "B16": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/lethal-trifecta.md",
+          "cole-medin/sources/full-guide-build-your-own-ai-second-brain-with-claude-code.md",
+          "cole-medin/concepts/llm-data-privacy-tiers.md",
+          "cole-medin/concepts/permission-management.md",
+          "cole-medin/concepts/agent-security.md"
+        ]
+      },
+      "B17": {
+        "rank": null,
+        "top5": [
+          "cole-medin/concepts/context-window-limits.md",
+          "okf-skills/components/stop-hook.md",
+          "cole-medin/entities/tools/nomic-embed-text.md",
+          "okf-docs/cli.md",
+          "cole-medin/sources/the-only-ai-tech-stack-you-need-in-2026.md"
+        ]
+      },
+      "B18": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/delete-before-insert-reingestion.md",
+          "cole-medin/sources/effortless-rag-in-n8n-use-all-your-files-pdfs-excel-and-more.md",
+          "cole-medin/concepts/knowledge-bases.md",
+          "cole-medin/concepts/agentic-search.md",
+          "cole-medin/concepts/knowledge-graphs.md"
+        ]
+      },
+      "B19": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/self-hosting-cost-crossover.md",
+          "cole-medin/entities/organizations/together-ai.md",
+          "cole-medin/sources/the-hard-truth-about-hosting-your-own-llms.md",
+          "cole-medin/concepts/cloud-gpu-hosting.md",
+          "cole-medin/concepts/llm-cost-optimization.md"
+        ]
+      },
+      "B20": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/the-ralph-loop.md",
+          "cole-medin/sources/i-was-wrong-about-ralph-wiggum.md",
+          "cole-medin/sources/ralph-wiggum-is-the-final-evolution-of-vibe-coding-heres-what-comes-next.md",
+          "cole-medin/entities/people/geoffrey-huntley.md",
+          "cole-medin/entities/tools/clerk.md"
+        ]
+      },
+      "B21": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/dark-factory.md",
+          "cole-medin/entities/organizations/strongdm.md",
+          "cole-medin/sources/im-building-an-ai-dark-factory-that-ships-its-own-code-public-experiment.md",
+          "cole-medin/entities/tools/minimax-m2.md",
+          "cole-medin/entities/people/dan-shapiro.md"
+        ]
+      },
+      "B22": {
+        "rank": null,
+        "top5": [
+          "cole-medin/entities/organizations/aws.md",
+          "cole-medin/entities/tools/postman.md",
+          "cole-medin/sources/the-next-evolution-of-ai-coding-is-harnesses-heres-how-to-build-them.md",
+          "cole-medin/entities/people/cole-medin.md",
+          "cole-medin/concepts/validation.md"
+        ]
+      },
+      "B23": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/entities/tools/aqua-voice.md",
+          "cole-medin/entities/tools/elevenlabs.md",
+          "cole-medin/entities/tools/deepgram.md",
+          "cole-medin/entities/tools/whisper.md",
+          "cole-medin/concepts/voice-agents.md"
+        ]
+      },
+      "B24": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/late-chunking.md",
+          "cole-medin/concepts/chunking.md",
+          "cole-medin/concepts/llms-txt.md",
+          "cole-medin/entities/tools/vercel-ai-sdk.md",
+          "cole-medin/entities/tools/gradio.md"
+        ]
+      },
+      "B25": {
+        "rank": null,
+        "top5": [
+          "cole-medin/concepts/chat-interfaces.md",
+          "cole-medin/entities/tools/confluence.md",
+          "cole-medin/entities/tools/gradio.md",
+          "cole-medin/entities/tools/telegram.md",
+          "cole-medin/sources/stop-paying-for-gpt-claude-other-llms-get-them-all-in-one-place.md"
+        ]
+      }
+    },
+    "question/relaxed@20": {
+      "B1": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/stop-hook.md",
+          "cole-medin/concepts/validation.md",
+          "okf-skills/decisions/dormant-hooks.md",
+          "cole-medin/sources/this-is-hands-down-the-best-way-to-build-ai-agents.md",
+          "cole-medin/sources/i-was-wrong-about-ralph-wiggum.md"
+        ]
+      },
+      "B2": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/scale-guardrails.md",
+          "cole-medin/concepts/document-extraction.md",
+          "cole-medin/concepts/structured-vs-unstructured-data.md",
+          "cole-medin/concepts/agentic-rag.md",
+          "cole-medin/concepts/chunking.md"
+        ]
+      },
+      "B3": {
+        "rank": 2,
+        "top5": [
+          "okf-skills/components/ci-workflow.md",
+          "okf-skills/decisions/auto-release.md",
+          "okf-skills/components/release-workflow.md",
+          "okf-skills/components/stop-hook.md",
+          "okf-skills/components/mcp-server.md"
+        ]
+      },
+      "B4": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/mcp-server.md",
+          "okf-docs/mcp-server.md",
+          "okf-agent-memory/convention/command-mutation-checklist.md",
+          "okf-docs/durable-capture.md",
+          "okf-docs/core-types.md"
+        ]
+      },
+      "B5": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/trust-benchmark.md",
+          "okf-skills/components/validator.md",
+          "okf-docs/durable-capture.md",
+          "cole-medin/concepts/self-evolving-memory.md",
+          "cole-medin/sources/build-any-ai-agent-with-this-context-engineering-blueprint.md"
+        ]
+      },
+      "B6": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/map-phase-routing.md",
+          "okf-skills/skills/backfill.md",
+          "okf-skills/components/backfill-events.md",
+          "cole-medin/entities/tools/graphrag.md",
+          "cole-medin/sources/are-you-building-real-ai-agents-or-just-using-llms.md"
+        ]
+      },
+      "B7": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/governance-model.md",
+          "cole-medin/sources/im-building-an-ai-dark-factory-that-ships-its-own-code-public-experiment.md",
+          "okf-agent-memory/roadmap/milestones.md",
+          "cole-medin/entities/tools/minimax-m2.md",
+          "cole-medin/sources/context-engineering-101-the-simple-strategy-to-100x-ai-coding.md"
+        ]
+      },
+      "B8": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "okf-docs/durable-capture.md",
+          "cole-medin/sources/create-your-own-private-local-ai-cloud-stack-in-under-20-minutes.md",
+          "okf-agent-memory/convention/coding-standards.md",
+          "cole-medin/concepts/multi-tenant-agents.md"
+        ]
+      },
+      "B9": {
+        "rank": 2,
+        "top5": [
+          "cole-medin/entities/people/cole-medin.md",
+          "okf-agent-memory/architecture/registry-and-vendor-layering.md",
+          "okf-agent-memory/architecture/layers.md",
+          "okf-agent-memory/convention/coding-standards.md",
+          "okf-agent-memory/project/value-proposition.md"
+        ]
+      },
+      "B10": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/release-procedure.md",
+          "okf-skills/components/release-workflow.md",
+          "okf-skills/decisions/auto-release.md",
+          "okf-agent-memory/convention/contributing.md",
+          "okf-docs/cli.md"
+        ]
+      },
+      "B11": {
+        "rank": null,
+        "top5": [
+          "cole-medin/sources/the-most-value-packed-rag-guide-on-youtube-feat-llama-31-405b.md",
+          "okf-agent-memory/architecture/layers.md",
+          "cole-medin/concepts/query-expansion.md",
+          "cole-medin/sources/build-ai-agents-that-evolve-over-time.md",
+          "cole-medin/entities/tools/mongodb.md"
+        ]
+      },
+      "B12": {
+        "rank": 3,
+        "top5": [
+          "cole-medin/concepts/self-evolving-memory.md",
+          "cole-medin/sources/my-complete-agentic-coding-workflow-to-build-anything-no-fluff-or-overengineering.md",
+          "okf-agent-memory/convention/dual-memory-architecture.md",
+          "cole-medin/concepts/claude-code-hooks.md",
+          "okf-agent-memory/convention/mcp-agent-safety.md"
+        ]
+      },
+      "B13": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/lint.md",
+          "cole-medin/sources/harness-engineering-what-separates-top-agentic-engineers-right-now.md",
+          "cole-medin/sources/i-built-self-evolving-claude-code-memory-w-karpathys-llm-knowledge-bases.md",
+          "cole-medin/sources/ai-fixes-my-code-better-than-me-now-heres-how.md",
+          "cole-medin/concepts/end-to-end-validation.md"
+        ]
+      },
+      "B14": {
+        "rank": null,
+        "top5": [
+          "cole-medin/sources/no-code-rag-agents-you-have-to-check-out-n8n-langchain.md",
+          "cole-medin/sources/i-forced-claude-to-code-for-24-hours-nonstop-heres-what-happened.md",
+          "cole-medin/sources/make-rag-100x-better-with-real-time-knowledge-graphs.md",
+          "cole-medin/sources/weve-been-building-ai-agents-wrong-until-now.md",
+          "cole-medin/entities/tools/graphrag.md"
+        ]
+      },
+      "B15": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/mcp-server.md",
+          "okf-skills/components/mcp-server.md",
+          "okf-agent-memory/convention/mcp-agent-safety.md",
+          "okf-skills/decisions/mcp-server.md",
+          "cole-medin/entities/tools/windsurf.md"
+        ]
+      },
+      "B16": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/lethal-trifecta.md",
+          "cole-medin/sources/full-guide-build-your-own-ai-second-brain-with-claude-code.md",
+          "cole-medin/concepts/llm-data-privacy-tiers.md",
+          "cole-medin/concepts/permission-management.md",
+          "cole-medin/concepts/agent-security.md"
+        ]
+      },
+      "B17": {
+        "rank": null,
+        "top5": [
+          "cole-medin/concepts/context-window-limits.md",
+          "cole-medin/entities/tools/nomic-embed-text.md",
+          "cole-medin/sources/flowise-n8n-the-best-no-code-local-ai-agent-combo.md",
+          "cole-medin/entities/tools/n8n-self-hosted-ai-starter-kit.md",
+          "cole-medin/concepts/local-llm-hardware-requirements.md"
+        ]
+      },
+      "B18": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/delete-before-insert-reingestion.md",
+          "cole-medin/sources/effortless-rag-in-n8n-use-all-your-files-pdfs-excel-and-more.md",
+          "cole-medin/concepts/knowledge-bases.md",
+          "cole-medin/concepts/knowledge-graphs.md",
+          "cole-medin/sources/this-rag-ai-agent-with-n8n-supabase-is-the-real-deal.md"
+        ]
+      },
+      "B19": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/self-hosting-cost-crossover.md",
+          "cole-medin/entities/organizations/together-ai.md",
+          "cole-medin/sources/the-hard-truth-about-hosting-your-own-llms.md",
+          "cole-medin/concepts/cloud-gpu-hosting.md",
+          "cole-medin/concepts/llm-cost-optimization.md"
+        ]
+      },
+      "B20": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/the-ralph-loop.md",
+          "cole-medin/sources/i-was-wrong-about-ralph-wiggum.md",
+          "cole-medin/sources/ralph-wiggum-is-the-final-evolution-of-vibe-coding-heres-what-comes-next.md",
+          "cole-medin/entities/people/geoffrey-huntley.md",
+          "cole-medin/entities/tools/clerk.md"
+        ]
+      },
+      "B21": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/dark-factory.md",
+          "cole-medin/entities/organizations/strongdm.md",
+          "cole-medin/sources/im-building-an-ai-dark-factory-that-ships-its-own-code-public-experiment.md",
+          "cole-medin/entities/tools/minimax-m2.md",
+          "cole-medin/entities/people/dan-shapiro.md"
+        ]
+      },
+      "B22": {
+        "rank": null,
+        "top5": [
+          "cole-medin/entities/organizations/aws.md",
+          "cole-medin/entities/tools/postman.md",
+          "cole-medin/sources/the-next-evolution-of-ai-coding-is-harnesses-heres-how-to-build-them.md",
+          "cole-medin/entities/people/cole-medin.md",
+          "cole-medin/concepts/validation.md"
+        ]
+      },
+      "B23": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/entities/tools/aqua-voice.md",
+          "cole-medin/entities/tools/elevenlabs.md",
+          "cole-medin/entities/tools/deepgram.md",
+          "cole-medin/entities/tools/whisper.md",
+          "cole-medin/entities/tools/vapi.md"
+        ]
+      },
+      "B24": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/late-chunking.md",
+          "cole-medin/concepts/chunking.md",
+          "cole-medin/concepts/knowledge-bases.md",
+          "cole-medin/concepts/subagents-pattern.md",
+          "cole-medin/concepts/llms-txt.md"
+        ]
+      },
+      "B25": {
+        "rank": null,
+        "top5": [
+          "cole-medin/entities/tools/confluence.md",
+          "cole-medin/concepts/chat-interfaces.md",
+          "cole-medin/sources/stop-paying-for-gpt-claude-other-llms-get-them-all-in-one-place.md",
+          "cole-medin/entities/people/geoffrey-huntley.md",
+          "cole-medin/entities/tools/local-ai-package.md"
+        ]
+      }
+    },
+    "keywords/relaxed@20": {
+      "B1": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/stop-hook.md",
+          "okf-skills/decisions/dormant-hooks.md",
+          "okf-skills/decisions/no-hooks.md",
+          "okf-skills/components/validator.md",
+          "okf-skills/skills/okf.md"
+        ]
+      },
+      "B2": {
+        "rank": 2,
+        "top5": [
+          "okf-skills/components/visualizer.md",
+          "okf-skills/decisions/scale-guardrails.md",
+          "cole-medin/concepts/spec-driven-development.md",
+          "cole-medin/concepts/initializer-and-task-agent.md",
+          "cole-medin/sources/ive-used-claude-code-for-2000-hours-heres-how-i-build-anything-with-it.md"
+        ]
+      },
+      "B3": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/auto-release.md",
+          "okf-skills/components/ci-workflow.md",
+          "okf-skills/components/release-workflow.md",
+          "okf-skills/components/stop-hook.md",
+          "okf-skills/components/mcp-server.md"
+        ]
+      },
+      "B4": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/mcp-server.md",
+          "okf-skills/decisions/okf-v02-dual-read.md",
+          "okf-skills/skills/validate.md",
+          "okf-skills/components/validator.md",
+          "okf-docs/core-types.md"
+        ]
+      },
+      "B5": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/trust-benchmark.md",
+          "okf-skills/decisions/okf-v02-dual-read.md",
+          "cole-medin/entities/tools/whisper.md",
+          "cole-medin/entities/tools/github.md",
+          "cole-medin/concepts/claude-code-hooks.md"
+        ]
+      },
+      "B6": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/map-phase-routing.md",
+          "okf-skills/skills/backfill.md",
+          "cole-medin/sources/openais-o1-is-barely-usable-but-i-fixed-it.md",
+          "cole-medin/concepts/ai-agent-learning-roadmap.md",
+          "cole-medin/concepts/phases-of-work.md"
+        ]
+      },
+      "B7": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/governance-model.md",
+          "okf-agent-memory/roadmap/milestones.md",
+          "okf-docs/mcp-server.md",
+          "cole-medin/concepts/progressive-disclosure.md",
+          "cole-medin/concepts/agent-deployment.md"
+        ]
+      },
+      "B8": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "okf-agent-memory/roadmap/milestones.md",
+          "okf-agent-memory/convention/contributing.md",
+          "okf-agent-memory/convention/coding-standards.md",
+          "cole-medin/concepts/coding-agent-as-general-assistant.md"
+        ]
+      },
+      "B9": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/registry-and-vendor-layering.md",
+          "cole-medin/concepts/capabilities-over-tools.md",
+          "cole-medin/sources/this-boltnew-fork-is-exploding-dont-miss-out-on-whats-happening.md",
+          "cole-medin/sources/ottodev-is-becoming-the-best-open-source-ai-coding-assistant.md",
+          "cole-medin/concepts/role-prompting.md"
+        ]
+      },
+      "B10": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/release-procedure.md",
+          "cole-medin/entities/organizations/databricks.md",
+          "okf-skills/components/release-workflow.md",
+          "okf-skills/decisions/auto-release.md",
+          "okf-agent-memory/convention/security-audit.md"
+        ]
+      },
+      "B11": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/search-tokenization.md",
+          "cole-medin/concepts/delete-before-insert-reingestion.md",
+          "okf-agent-memory/architecture/security-boundaries.md",
+          "okf-agent-memory/convention/coding-standards.md",
+          "cole-medin/entities/tools/v0.md"
+        ]
+      },
+      "B12": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/dual-memory-architecture.md",
+          "cole-medin/sources/brand-new-stealth-llm-released-on-openrouter-its-a-beast.md",
+          "cole-medin/sources/the-ultimate-n8n-rag-ai-agent-template-local-ai-edition.md",
+          "cole-medin/sources/deepseek-r1-just-revolutionized-ai-forever.md",
+          "okf-agent-memory/roadmap/milestones.md"
+        ]
+      },
+      "B13": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/lint.md",
+          "cole-medin/sources/harness-engineering-what-separates-top-agentic-engineers-right-now.md",
+          "okf-docs/cli.md",
+          "cole-medin/concepts/end-to-end-validation.md",
+          "cole-medin/sources/ai-fixes-my-code-better-than-me-now-heres-how.md"
+        ]
+      },
+      "B14": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/durable-capture.md",
+          "okf-docs/mcp-server.md",
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "cole-medin/sources/build-ai-agents-that-evolve-over-time.md",
+          "cole-medin/sources/github-is-the-future-of-ai-coding-heres-why.md"
+        ]
+      },
+      "B15": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/mcp-server.md",
+          "cole-medin/entities/tools/gemini-cli.md",
+          "cole-medin/concepts/mcp-oauth.md",
+          "cole-medin/entities/tools/react.md",
+          "cole-medin/concepts/parallel-agentic-coding.md"
+        ]
+      },
+      "B16": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/lethal-trifecta.md",
+          "cole-medin/sources/full-guide-build-your-own-ai-second-brain-with-claude-code.md",
+          "cole-medin/concepts/permission-management.md",
+          "cole-medin/concepts/llm-data-privacy-tiers.md",
+          "cole-medin/concepts/agent-security.md"
+        ]
+      },
+      "B17": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/ollama-context-window.md",
+          "cole-medin/sources/how-to-use-boltnew-for-free-with-local-llms-and-no-rate-limits.md",
+          "cole-medin/concepts/context-window-limits.md",
+          "cole-medin/entities/tools/ottodev.md",
+          "cole-medin/concepts/local-llms-as-agents.md"
+        ]
+      },
+      "B18": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/delete-before-insert-reingestion.md",
+          "cole-medin/sources/run-all-your-ai-locally-in-minutes-llms-rag-and-more.md",
+          "cole-medin/sources/this-rag-ai-agent-with-n8n-supabase-is-the-real-deal.md",
+          "cole-medin/concepts/vector-embeddings.md",
+          "cole-medin/entities/tools/n8n-self-hosted-ai-starter-kit.md"
+        ]
+      },
+      "B19": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/self-hosting-cost-crossover.md",
+          "cole-medin/entities/organizations/together-ai.md",
+          "cole-medin/concepts/cloud-gpu-hosting.md",
+          "cole-medin/concepts/local-vs-cloud-decision-framework.md",
+          "cole-medin/concepts/usage-based-pricing-trap.md"
+        ]
+      },
+      "B20": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/the-ralph-loop.md",
+          "cole-medin/sources/ralph-wiggum-is-the-final-evolution-of-vibe-coding-heres-what-comes-next.md",
+          "cole-medin/concepts/permission-management.md",
+          "cole-medin/entities/people/geoffrey-huntley.md",
+          "cole-medin/concepts/long-running-agents.md"
+        ]
+      },
+      "B21": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/dark-factory.md",
+          "cole-medin/entities/organizations/strongdm.md",
+          "cole-medin/sources/im-building-an-ai-dark-factory-that-ships-its-own-code-public-experiment.md",
+          "cole-medin/sources/the-best-ai-coding-setup-isnt-the-most-autonomous-one-heres-why.md",
+          "cole-medin/concepts/five-levels-of-ai-coding-autonomy.md"
+        ]
+      },
+      "B22": {
+        "rank": 2,
+        "top5": [
+          "cole-medin/entities/tools/stripe-minions.md",
+          "cole-medin/sources/stripes-coding-agents-ship-1300-prs-every-week-heres-how-they-do-it.md",
+          "cole-medin/entities/organizations/stripe.md",
+          "cole-medin/entities/tools/roast.md",
+          "cole-medin/concepts/disposable-agent-sandboxes.md"
+        ]
+      },
+      "B23": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/entities/tools/aqua-voice.md",
+          "cole-medin/entities/tools/elevenlabs.md",
+          "cole-medin/entities/tools/deepgram.md",
+          "cole-medin/entities/tools/whisper.md",
+          "cole-medin/entities/tools/vapi.md"
+        ]
+      },
+      "B24": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/late-chunking.md",
+          "cole-medin/sources/every-rag-strategy-explained-in-13-minutes-no-fluff.md",
+          "cole-medin/entities/tools/gpt-4-1-nano.md",
+          "cole-medin/sources/super-special-livestream-this-weekend-live-ai-agent-build.md",
+          "cole-medin/entities/tools/docling.md"
+        ]
+      },
+      "B25": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/sources/i-forced-claude-to-code-for-24-hours-nonstop-heres-what-happened.md",
+          "cole-medin/concepts/long-running-agents.md",
+          "cole-medin/concepts/memory-systems.md",
+          "cole-medin/concepts/git-as-long-term-memory.md",
+          "cole-medin/sources/ive-been-holding-back-on-youtube-but-not-anymore.md"
+        ]
+      }
+    },
+    "question/relaxed@8": {
+      "B1": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/stop-hook.md",
+          "okf-skills/decisions/dormant-hooks.md",
+          "cole-medin/sources/this-is-hands-down-the-best-way-to-build-ai-agents.md",
+          "cole-medin/sources/i-was-wrong-about-ralph-wiggum.md",
+          "cole-medin/concepts/langgraph-nodes-edges-state.md"
+        ]
+      },
+      "B2": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/scale-guardrails.md",
+          "cole-medin/entities/tools/neo4j.md",
+          "cole-medin/entities/tools/graphrag.md",
+          "okf-docs/cli.md",
+          "okf-skills/skills/visualize.md"
+        ]
+      },
+      "B3": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/auto-release.md",
+          "okf-skills/components/ci-workflow.md",
+          "okf-skills/components/release-workflow.md",
+          "okf-skills/components/stop-hook.md",
+          "cole-medin/sources/chatgpt-users-be-aware-of-this-major-weakness.md"
+        ]
+      },
+      "B4": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/mcp-server.md",
+          "okf-docs/mcp-server.md",
+          "okf-skills/decisions/mcp-server.md",
+          "okf-skills/components/validator.md",
+          "okf-skills/components/backfill-events.md"
+        ]
+      },
+      "B5": {
+        "rank": 5,
+        "top5": [
+          "cole-medin/concepts/ai-coding-limitations.md",
+          "okf-docs/core-types.md",
+          "okf-skills/reference/okf-spec.md",
+          "okf-docs/mcp-server.md",
+          "okf-skills/decisions/trust-benchmark.md"
+        ]
+      },
+      "B6": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/map-phase-routing.md",
+          "okf-skills/skills/backfill.md",
+          "cole-medin/entities/tools/graphrag.md",
+          "cole-medin/entities/tools/lightrag.md",
+          "cole-medin/entities/tools/git.md"
+        ]
+      },
+      "B7": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/governance-model.md",
+          "cole-medin/sources/im-building-an-ai-dark-factory-that-ships-its-own-code-public-experiment.md",
+          "okf-agent-memory/roadmap/milestones.md",
+          "cole-medin/concepts/compounding-error-rates.md",
+          "okf-agent-memory/architecture/layers.md"
+        ]
+      },
+      "B8": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "okf-docs/durable-capture.md",
+          "cole-medin/sources/create-your-own-private-local-ai-cloud-stack-in-under-20-minutes.md",
+          "cole-medin/concepts/multi-tenant-agents.md",
+          "okf-docs/mcp-server.md"
+        ]
+      },
+      "B9": {
+        "rank": 2,
+        "top5": [
+          "cole-medin/entities/people/cole-medin.md",
+          "okf-agent-memory/architecture/registry-and-vendor-layering.md",
+          "okf-agent-memory/architecture/layers.md",
+          "okf-agent-memory/project/value-proposition.md",
+          "okf-docs/durable-capture.md"
+        ]
+      },
+      "B10": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/release-procedure.md",
+          "okf-skills/decisions/auto-release.md",
+          "okf-agent-memory/convention/contributing.md",
+          "okf-skills/components/release-workflow.md",
+          "okf-agent-memory/roadmap/milestones.md"
+        ]
+      },
+      "B11": {
+        "rank": null,
+        "top5": [
+          "okf-agent-memory/architecture/layers.md",
+          "cole-medin/concepts/cloud-gpu-hosting.md",
+          "cole-medin/concepts/semantic-search.md",
+          "cole-medin/sources/build-ai-agents-that-evolve-over-time.md",
+          "cole-medin/concepts/coding-agent-as-general-assistant.md"
+        ]
+      },
+      "B12": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/dual-memory-architecture.md",
+          "cole-medin/sources/my-complete-agentic-coding-workflow-to-build-anything-no-fluff-or-overengineering.md",
+          "cole-medin/sources/pydantic-ai-20-the-new-best-way-to-build-ai-agents-is-composing-capabilities.md",
+          "cole-medin/sources/code-100x-faster-with-ai-heres-how-no-hype-full-process.md",
+          "cole-medin/concepts/self-evolving-memory.md"
+        ]
+      },
+      "B13": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/lint.md",
+          "cole-medin/sources/harness-engineering-what-separates-top-agentic-engineers-right-now.md",
+          "cole-medin/sources/i-built-self-evolving-claude-code-memory-w-karpathys-llm-knowledge-bases.md",
+          "cole-medin/sources/ai-fixes-my-code-better-than-me-now-heres-how.md",
+          "cole-medin/concepts/end-to-end-validation.md"
+        ]
+      },
+      "B14": {
+        "rank": null,
+        "top5": [
+          "cole-medin/sources/i-forced-claude-to-code-for-24-hours-nonstop-heres-what-happened.md",
+          "cole-medin/sources/this-ai-agent-with-rag-manages-my-life.md",
+          "cole-medin/sources/no-code-rag-agents-you-have-to-check-out-n8n-langchain.md",
+          "cole-medin/concepts/commandify-everything.md",
+          "okf-skills/decisions/map-phase-routing.md"
+        ]
+      },
+      "B15": {
+        "rank": null,
+        "top5": [
+          "okf-skills/components/mcp-server.md",
+          "okf-skills/decisions/mcp-server.md",
+          "cole-medin/entities/tools/ask-gordon.md",
+          "cole-medin/entities/tools/fastmcp.md",
+          "cole-medin/concepts/tool-standardization.md"
+        ]
+      },
+      "B16": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/lethal-trifecta.md",
+          "cole-medin/sources/full-guide-build-your-own-ai-second-brain-with-claude-code.md",
+          "cole-medin/concepts/llm-data-privacy-tiers.md",
+          "cole-medin/concepts/permission-management.md",
+          "cole-medin/concepts/agent-security.md"
+        ]
+      },
+      "B17": {
+        "rank": null,
+        "top5": [
+          "cole-medin/concepts/context-window-limits.md",
+          "cole-medin/entities/tools/nomic-embed-text.md",
+          "okf-skills/components/stop-hook.md",
+          "okf-docs/cli.md",
+          "cole-medin/entities/tools/n8n-self-hosted-ai-starter-kit.md"
+        ]
+      },
+      "B18": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/delete-before-insert-reingestion.md",
+          "cole-medin/sources/effortless-rag-in-n8n-use-all-your-files-pdfs-excel-and-more.md",
+          "cole-medin/sources/our-boltnew-forks-most-requested-feature-is-finally-here.md",
+          "cole-medin/sources/this-rag-ai-agent-with-n8n-supabase-is-the-real-deal.md",
+          "okf-docs/cli.md"
+        ]
+      },
+      "B19": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/self-hosting-cost-crossover.md",
+          "cole-medin/entities/organizations/together-ai.md",
+          "cole-medin/sources/the-hard-truth-about-hosting-your-own-llms.md",
+          "cole-medin/concepts/cloud-gpu-hosting.md",
+          "cole-medin/concepts/llm-cost-optimization.md"
+        ]
+      },
+      "B20": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/the-ralph-loop.md",
+          "cole-medin/sources/i-was-wrong-about-ralph-wiggum.md",
+          "cole-medin/sources/ralph-wiggum-is-the-final-evolution-of-vibe-coding-heres-what-comes-next.md",
+          "cole-medin/entities/people/geoffrey-huntley.md",
+          "cole-medin/entities/tools/clerk.md"
+        ]
+      },
+      "B21": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/dark-factory.md",
+          "cole-medin/entities/organizations/strongdm.md",
+          "cole-medin/sources/im-building-an-ai-dark-factory-that-ships-its-own-code-public-experiment.md",
+          "cole-medin/entities/tools/minimax-m2.md",
+          "cole-medin/entities/people/dan-shapiro.md"
+        ]
+      },
+      "B22": {
+        "rank": null,
+        "top5": [
+          "cole-medin/entities/organizations/aws.md",
+          "cole-medin/entities/tools/postman.md",
+          "cole-medin/sources/the-next-evolution-of-ai-coding-is-harnesses-heres-how-to-build-them.md",
+          "cole-medin/entities/people/cole-medin.md",
+          "cole-medin/concepts/validation.md"
+        ]
+      },
+      "B23": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/entities/tools/aqua-voice.md",
+          "cole-medin/entities/tools/elevenlabs.md",
+          "cole-medin/entities/tools/deepgram.md",
+          "cole-medin/entities/tools/whisper.md",
+          "cole-medin/entities/tools/vapi.md"
+        ]
+      },
+      "B24": {
+        "rank": 2,
+        "top5": [
+          "cole-medin/concepts/ai-tech-stack.md",
+          "cole-medin/concepts/late-chunking.md",
+          "cole-medin/sources/i-built-a-full-rag-ai-agent-with-no-code-in-4-minutes-with-vectorshift.md",
+          "cole-medin/concepts/zero-shot-prompting.md",
+          "cole-medin/concepts/production-vs-personal-agents.md"
+        ]
+      },
+      "B25": {
+        "rank": null,
+        "top5": [
+          "cole-medin/concepts/chat-interfaces.md",
+          "cole-medin/sources/the-ultimate-guide-to-building-your-own-mcp-servers-free-template.md",
+          "cole-medin/sources/claude-skills-arent-just-for-claude-heres-how-to-build-them-for-any-agent.md",
+          "cole-medin/entities/tools/playwright.md",
+          "cole-medin/sources/ai-fixes-my-code-better-than-me-now-heres-how.md"
+        ]
+      }
+    },
+    "keywords/relaxed@8": {
+      "B1": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/stop-hook.md",
+          "okf-skills/decisions/dormant-hooks.md",
+          "okf-skills/decisions/no-hooks.md",
+          "okf-skills/components/validator.md",
+          "okf-skills/skills/okf.md"
+        ]
+      },
+      "B2": {
+        "rank": 2,
+        "top5": [
+          "okf-skills/components/visualizer.md",
+          "okf-skills/decisions/scale-guardrails.md",
+          "cole-medin/concepts/spec-driven-development.md",
+          "cole-medin/concepts/initializer-and-task-agent.md",
+          "cole-medin/sources/ive-used-claude-code-for-2000-hours-heres-how-i-build-anything-with-it.md"
+        ]
+      },
+      "B3": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/auto-release.md",
+          "okf-skills/components/ci-workflow.md",
+          "okf-skills/components/release-workflow.md",
+          "okf-skills/components/stop-hook.md",
+          "okf-skills/components/mcp-server.md"
+        ]
+      },
+      "B4": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/components/mcp-server.md",
+          "okf-skills/components/validator.md",
+          "okf-docs/core-types.md",
+          "okf-docs/parser.md",
+          "okf-skills/components/okf_init.md"
+        ]
+      },
+      "B5": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/trust-benchmark.md",
+          "okf-skills/skills/okf.md",
+          "cole-medin/sources/build-an-army-of-ai-agents-on-autopilot-with-archon-heres-how.md",
+          "okf-skills/decisions/dormant-hooks.md",
+          "cole-medin/entities/tools/airtable.md"
+        ]
+      },
+      "B6": {
+        "rank": 1,
+        "top5": [
+          "okf-skills/decisions/map-phase-routing.md",
+          "okf-skills/skills/backfill.md",
+          "cole-medin/sources/openais-o1-is-barely-usable-but-i-fixed-it.md",
+          "cole-medin/concepts/ai-agent-learning-roadmap.md",
+          "cole-medin/concepts/phases-of-work.md"
+        ]
+      },
+      "B7": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/governance-model.md",
+          "okf-agent-memory/roadmap/milestones.md",
+          "okf-docs/mcp-server.md",
+          "cole-medin/concepts/progressive-disclosure.md",
+          "cole-medin/concepts/agent-deployment.md"
+        ]
+      },
+      "B8": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "okf-agent-memory/roadmap/milestones.md",
+          "okf-agent-memory/convention/contributing.md",
+          "okf-agent-memory/convention/coding-standards.md",
+          "cole-medin/concepts/coding-agent-as-general-assistant.md"
+        ]
+      },
+      "B9": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/registry-and-vendor-layering.md",
+          "cole-medin/sources/this-boltnew-fork-is-exploding-dont-miss-out-on-whats-happening.md",
+          "cole-medin/sources/ottodev-is-becoming-the-best-open-source-ai-coding-assistant.md",
+          "cole-medin/concepts/role-prompting.md",
+          "okf-skills/reference/okf-spec.md"
+        ]
+      },
+      "B10": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/release-procedure.md",
+          "cole-medin/entities/organizations/databricks.md",
+          "okf-skills/decisions/auto-release.md",
+          "okf-skills/components/release-workflow.md",
+          "okf-agent-memory/convention/contributing.md"
+        ]
+      },
+      "B11": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/architecture/search-tokenization.md",
+          "cole-medin/concepts/delete-before-insert-reingestion.md",
+          "okf-agent-memory/roadmap/milestones.md",
+          "okf-agent-memory/project/overview.md",
+          "okf-agent-memory/convention/command-mutation-checklist.md"
+        ]
+      },
+      "B12": {
+        "rank": 1,
+        "top5": [
+          "okf-agent-memory/convention/dual-memory-architecture.md",
+          "okf-agent-memory/roadmap/milestones.md",
+          "cole-medin/concepts/model-quantization.md",
+          "cole-medin/sources/brand-new-stealth-llm-released-on-openrouter-its-a-beast.md",
+          "okf-skills/components/backfill-events.md"
+        ]
+      },
+      "B13": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/lint.md",
+          "cole-medin/sources/harness-engineering-what-separates-top-agentic-engineers-right-now.md",
+          "okf-docs/cli.md",
+          "cole-medin/concepts/end-to-end-validation.md",
+          "cole-medin/sources/ai-fixes-my-code-better-than-me-now-heres-how.md"
+        ]
+      },
+      "B14": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/durable-capture.md",
+          "okf-docs/mcp-server.md",
+          "okf-agent-memory/architecture/zero-knowledge-vault-sync.md",
+          "cole-medin/sources/build-ai-agents-that-evolve-over-time.md",
+          "okf-agent-memory/architecture/relationship-identity.md"
+        ]
+      },
+      "B15": {
+        "rank": 1,
+        "top5": [
+          "okf-docs/mcp-server.md",
+          "cole-medin/entities/tools/gemini-cli.md",
+          "cole-medin/concepts/mcp-oauth.md",
+          "cole-medin/entities/tools/react.md",
+          "cole-medin/sources/the-subagent-era-is-officially-here-learn-this-now.md"
+        ]
+      },
+      "B16": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/lethal-trifecta.md",
+          "cole-medin/sources/full-guide-build-your-own-ai-second-brain-with-claude-code.md",
+          "cole-medin/concepts/permission-management.md",
+          "cole-medin/concepts/llm-data-privacy-tiers.md",
+          "cole-medin/concepts/agent-security.md"
+        ]
+      },
+      "B17": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/ollama-context-window.md",
+          "cole-medin/sources/how-to-use-boltnew-for-free-with-local-llms-and-no-rate-limits.md",
+          "cole-medin/concepts/context-window-limits.md",
+          "cole-medin/entities/tools/ottodev.md",
+          "cole-medin/concepts/local-llms-as-agents.md"
+        ]
+      },
+      "B18": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/delete-before-insert-reingestion.md",
+          "cole-medin/sources/run-all-your-ai-locally-in-minutes-llms-rag-and-more.md",
+          "cole-medin/sources/this-rag-ai-agent-with-n8n-supabase-is-the-real-deal.md",
+          "cole-medin/concepts/vector-embeddings.md",
+          "cole-medin/entities/tools/n8n-self-hosted-ai-starter-kit.md"
+        ]
+      },
+      "B19": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/self-hosting-cost-crossover.md",
+          "cole-medin/entities/organizations/together-ai.md",
+          "cole-medin/concepts/cloud-gpu-hosting.md",
+          "cole-medin/concepts/local-vs-cloud-decision-framework.md",
+          "cole-medin/concepts/usage-based-pricing-trap.md"
+        ]
+      },
+      "B20": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/the-ralph-loop.md",
+          "cole-medin/sources/ralph-wiggum-is-the-final-evolution-of-vibe-coding-heres-what-comes-next.md",
+          "cole-medin/concepts/permission-management.md",
+          "cole-medin/entities/people/geoffrey-huntley.md",
+          "cole-medin/concepts/long-running-agents.md"
+        ]
+      },
+      "B21": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/dark-factory.md",
+          "cole-medin/entities/organizations/strongdm.md",
+          "cole-medin/sources/im-building-an-ai-dark-factory-that-ships-its-own-code-public-experiment.md",
+          "cole-medin/sources/the-best-ai-coding-setup-isnt-the-most-autonomous-one-heres-why.md",
+          "cole-medin/concepts/five-levels-of-ai-coding-autonomy.md"
+        ]
+      },
+      "B22": {
+        "rank": 2,
+        "top5": [
+          "cole-medin/entities/tools/stripe-minions.md",
+          "cole-medin/sources/stripes-coding-agents-ship-1300-prs-every-week-heres-how-they-do-it.md",
+          "cole-medin/entities/organizations/stripe.md",
+          "cole-medin/entities/tools/roast.md",
+          "cole-medin/concepts/disposable-agent-sandboxes.md"
+        ]
+      },
+      "B23": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/entities/tools/aqua-voice.md",
+          "cole-medin/entities/tools/elevenlabs.md",
+          "cole-medin/entities/tools/deepgram.md",
+          "cole-medin/entities/tools/vapi.md",
+          "cole-medin/entities/tools/remotion.md"
+        ]
+      },
+      "B24": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/concepts/late-chunking.md",
+          "cole-medin/sources/every-rag-strategy-explained-in-13-minutes-no-fluff.md",
+          "cole-medin/entities/tools/gpt-4-1-nano.md",
+          "cole-medin/sources/super-special-livestream-this-weekend-live-ai-agent-build.md",
+          "cole-medin/entities/tools/docling.md"
+        ]
+      },
+      "B25": {
+        "rank": 1,
+        "top5": [
+          "cole-medin/sources/i-forced-claude-to-code-for-24-hours-nonstop-heres-what-happened.md",
+          "cole-medin/concepts/long-running-agents.md",
+          "cole-medin/concepts/memory-systems.md",
+          "cole-medin/sources/ive-used-claude-code-for-2000-hours-heres-how-i-build-anything-with-it.md",
+          "cole-medin/concepts/test-driven-development.md"
+        ]
+      }
+    }
+  }
+}

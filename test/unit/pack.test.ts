@@ -125,6 +125,104 @@ describe("okf-catalog pack", () => {
     );
   });
 
+  it("packs an unknown-status page only when the configuration or --admit names it", () => {
+    const work = temp();
+    const cfg = config(work);
+    const from = join(FIXTURES, "behaviours");
+    const packed = (args: string[], configPath = cfg): string[] => {
+      const out = join(work, `out-${Math.random().toString(36).slice(2)}`);
+      const run = io();
+      expect(runPack(["--config", configPath, "--from", from, "--out", out, ...args], run.io)).toBe(
+        0,
+      );
+      return list(out);
+    };
+    const byDefault = packed([]);
+    expect(byDefault).toContain("terms/alpha.md");
+    expect(byDefault).not.toContain("notes/unknown-status.md");
+    expect(byDefault).not.toContain("notes/draft.md");
+    const flagged = packed(["--admit", "archived"]);
+    expect(flagged).toContain("notes/unknown-status.md");
+    expect(flagged).not.toContain("terms/alpha.md");
+    expect(flagged).not.toContain("notes/draft.md");
+    const listing = join(work, "listing.yaml");
+    writeFileSync(
+      listing,
+      "company: acme\nsource:\n  local: ./kb\nserve:\n  admit: [stable, deprecated, Archived]\n",
+    );
+    const configured = packed([], listing);
+    expect(configured).toContain("notes/unknown-status.md");
+    expect(configured).toContain("terms/alpha.md");
+    expect(configured).not.toContain("notes/draft.md");
+    const draft = io();
+    expect(
+      runPack(
+        ["--config", cfg, "--from", from, "--out", join(work, "never"), "--admit", "Draft"],
+        draft.io,
+      ),
+    ).toBe(2);
+    expect(draft.stderr()).toMatch(/--admit/);
+    expect(existsSync(join(work, "never"))).toBe(false);
+  });
+
+  it("refuses an output with no admitted page unless --allow-empty, and names the words that match no page (D77, build review A-E1)", () => {
+    const work = temp();
+    const cfg = config(work);
+    const from = join(FIXTURES, "behaviours");
+    // A one-letter typo in --admit replaces the configuration's list and admits nothing: nothing is written.
+    const typo = io();
+    expect(
+      runPack(
+        ["--config", cfg, "--from", from, "--out", join(work, "typo"), "--admit", "stabel"],
+        typo.io,
+      ),
+    ).toBe(2);
+    expect(existsSync(join(work, "typo"))).toBe(false);
+    expect(typo.stdout()).toBe("");
+    expect(typo.stderr()).toContain('Admitted statuses that match no page: "stabel"');
+    expect(typo.stderr()).toMatch(/no page is admitted/);
+    expect(typo.stderr()).toContain("--allow-empty");
+    // Asked for, the empty bundle is written: reserved files and attachments, no page.
+    const allowed = io();
+    expect(
+      runPack(
+        [
+          "--config",
+          cfg,
+          "--from",
+          from,
+          "--out",
+          join(work, "allowed"),
+          "--admit",
+          "stabel",
+          "--allow-empty",
+        ],
+        allowed.io,
+      ),
+    ).toBe(0);
+    const written = list(join(work, "allowed"));
+    expect(written).toContain("manifest.json");
+    expect(written.filter((f) => f.endsWith(".md") && !/(^|\/)(index|log)\.md$/.test(f))).toEqual(
+      [],
+    );
+    expect(allowed.stdout()).toContain('Admitted statuses that match no page: "stabel"');
+    // A typo beside a real word packs what the real word admits, and pack's output names the word that matched nothing.
+    const listing = join(work, "typo.yaml");
+    writeFileSync(
+      listing,
+      "company: acme\nsource:\n  local: ./kb\nserve:\n  admit: [stable, depreciated]\n",
+    );
+    const partial = io();
+    expect(
+      runPack(["--config", listing, "--from", from, "--out", join(work, "partial")], partial.io),
+    ).toBe(0);
+    expect(partial.stdout()).toContain('Admitted statuses that match no page: "depreciated"');
+    const packed = list(join(work, "partial"));
+    expect(packed).toContain("terms/alpha.md");
+    expect(packed).not.toContain("terms/delta.md");
+    expect(PACK_USAGE).toContain("--allow-empty");
+  });
+
   it("writes nothing and exits 1 when the loader refuses a file, as check does", () => {
     const work = temp();
     const cfg = config(work);

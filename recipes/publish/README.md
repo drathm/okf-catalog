@@ -27,6 +27,6 @@ OKF_CATALOG_BIN="node /path/to/okf-catalog/dist/cli.js" \
 sh recipes/publish/push.sh --repo . --bundle /tmp/bundle --commit "$(git rev-parse HEAD)"
 ```
 
-`pack.sh` fails, and nothing is pushed, when a checker fails on the source or on the packed folder, or when `okf-catalog pack` refuses a file (the report says which and why).
+`pack.sh` fails, and nothing is pushed, when a checker fails on the source or on the packed folder, or when `okf-catalog pack` refuses a file (the report says which and why). It also fails when no page is admitted, since `pack` refuses to write such a bundle unless given `--allow-empty`, which the recipe never passes: a typo in `serve.admit` that empties the bundle fails the run instead of publishing a branch with no page, and the report names the word that matched nothing.
 
 Optional: `actionlint` on `publish.yml` before committing it.

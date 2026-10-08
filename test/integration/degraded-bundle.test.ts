@@ -72,7 +72,8 @@ describe("a degraded bundle over stdio", { timeout: 60_000 }, () => {
     expect(hits[0]?.type).toBe("Recipe");
 
     const page = await call("get_page", { path: "terms/beta.md" });
-    expect(page.content[0]?.text).toContain("terms/beta.md [Recipe, stable, unverified");
+    // An undeclared type is the company's own text, quoted in the header (P13).
+    expect(page.content[0]?.text).toContain('terms/beta.md ["Recipe", stable, unverified');
     expect(page.content[0]?.text).toContain("never declared");
 
     const catalog = await call("catalog", { folder: "terms" });

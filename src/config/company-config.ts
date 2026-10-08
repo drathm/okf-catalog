@@ -2,7 +2,7 @@ import { readFileSync, statSync } from "node:fs";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod/v4";
-import { type Caps, DEFAULT_CAPS, type SpecText, type Status } from "../bundle/model.js";
+import { type Caps, DEFAULT_CAPS, type SpecText } from "../bundle/model.js";
 import { isSafeRelativePath } from "../bundle/paths.js";
 import { safe } from "../catalog/text.js";
 
@@ -12,7 +12,8 @@ export interface CompanyConfig {
   source:
     | { kind: "local"; path: string; configured: string }
     | { kind: "git"; repository: string; branch: string; bundlePath: string };
-  serve: { admit: Status[]; dev: boolean; pullIntervalMs: number; limitDefault: number };
+  /** `admit`: the statuses served, any word but `draft`, trimmed; compared without regard to case (D77). */
+  serve: { admit: string[]; dev: boolean; pullIntervalMs: number; limitDefault: number };
   integrity: "require-manifest" | "none";
   caps: Caps;
   types?: string[];
@@ -177,13 +178,13 @@ export function parseCompanyConfig(
     const bundle = bundlePathProblem(raw.source.bundle_path ?? ".");
     if (bundle !== undefined) problems.push(`source.bundle_path: ${bundle}`);
   }
-  const admit = raw.serve?.admit ?? ["stable", "deprecated"];
+  // Any status word but draft (D77): a company may serve a word of its own, such as `archived`, by listing it.
+  const admit = (raw.serve?.admit ?? ["stable", "deprecated"]).map((status) => status.trim());
   if (admit.length === 0) problems.push("serve.admit: at least one status is required");
-  for (const status of admit) {
-    if (status === "draft") problems.push("serve.admit: draft is admitted only through serve.dev");
-    else if (status !== "stable" && status !== "deprecated")
-      problems.push(`serve.admit: ${JSON.stringify(status)} is not a status`);
-  }
+  if (admit.some((status) => status.toLowerCase() === "draft"))
+    problems.push("serve.admit: draft is admitted only through serve.dev");
+  if (admit.some((status) => status.length === 0))
+    problems.push("serve.admit: a status cannot be blank");
   const dev = raw.serve?.dev ?? false;
   if (dev && !hasLocal) problems.push("serve.dev: allowed only with source.local");
   let pullIntervalMs = 600_000;
@@ -217,7 +218,7 @@ export function parseCompanyConfig(
             bundlePath: raw.source.bundle_path ?? ".",
           },
     serve: {
-      admit: admit as Status[],
+      admit,
       dev,
       pullIntervalMs,
       limitDefault: raw.serve?.limit_default ?? 8,

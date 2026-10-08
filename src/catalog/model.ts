@@ -58,3 +58,15 @@ export function getFolder(catalog: Catalog, folder: string): Folder | undefined 
 export function listTypes(catalog: Catalog): string[] {
   return [...catalog.byType.keys()].sort();
 }
+
+/** Every distinct tag spelling stored on an admitted page, sorted as the types are (issue 4). */
+export function listTags(catalog: Catalog): string[] {
+  const tags = new Set<string>();
+  for (const page of catalog.pages.values()) for (const tag of page.tags) tags.add(tag);
+  return [...tags].sort();
+}
+
+/** Every status an admitted page is served with, sorted as the types are (issue 4). */
+export function listStatuses(catalog: Catalog): string[] {
+  return [...new Set([...catalog.pages.values()].map((page) => page.status))].sort();
+}

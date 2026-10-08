@@ -1,8 +1,39 @@
 import type { BundleFile, Caps, Page, Refusal, Status } from "./model.js";
 
-/** The company's admission rule. The development flag admits drafts, and so the unknown statuses read as draft. */
-export function admit(page: Page, admitStatuses: Status[], dev: boolean): boolean {
-  return admitStatuses.includes(page.status) || (dev && page.status === "draft");
+const KNOWN: ReadonlySet<string> = new Set<Status>(["draft", "stable", "deprecated"]);
+
+/**
+ * The company's admission rule (D77): a page whose status the company lists, compared trimmed and without regard to
+ * case; under the development flag, also a draft and a status outside the three the specification names, each
+ * labelled with its own word. An unknown status is never admitted by default: the list bounds what is served.
+ */
+export function admit(page: Page, admitStatuses: readonly string[], dev: boolean): boolean {
+  const status = page.status.toLowerCase();
+  if (admitStatuses.some((listed) => listed.trim().toLowerCase() === status)) return true;
+  return dev && (status === "draft" || !KNOWN.has(status));
+}
+
+/**
+ * The admitted words no page carries, compared as admission compares them (trimmed, case ignored), each listed once
+ * as written. The three known statuses are left out: they are never typos, and a bundle with no deprecated page is
+ * ordinary, so the default list would say so of most bundles. A company's own word that matches nothing is what a
+ * typo looks like since D77 lets the list take any word but draft.
+ */
+export function unmatchedAdmits(
+  pages: readonly Page[],
+  admitStatuses: readonly string[],
+): string[] {
+  const carried = new Set(pages.map((page) => page.status.toLowerCase()));
+  const seen = new Set<string>();
+  const unmatched: string[] = [];
+  for (const listed of admitStatuses) {
+    const word = listed.trim();
+    const key = word.toLowerCase();
+    if (word.length === 0 || KNOWN.has(key) || carried.has(key) || seen.has(key)) continue;
+    seen.add(key);
+    unmatched.push(word);
+  }
+  return unmatched;
 }
 
 /** Type values the company did not declare. Nothing is unknown when nothing is declared. */

@@ -9,6 +9,12 @@ export function folderOf(path: string): string {
 
 export const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
+/**
+ * The two files a name can mean (§2): the path as written, and the file whose concept id it is, the path with
+ * `.md` removed. The one two-name rule: `get_page`'s resolver uses it, and the path-field classifier will (D60).
+ */
+export const conceptNames = (name: string): [string, string] => [name, `${name}.md`];
+
 // biome-ignore lint/suspicious/noControlCharactersInRegex: a path holding one is refused
 const PATH_CONTROLS = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/;
 

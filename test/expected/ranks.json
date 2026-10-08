@@ -1,0 +1,124 @@
+{
+  "relaxed: alpha glossary": [
+    "terms/alpha.md",
+    "terms/beta.md",
+    "terms/delta.md"
+  ],
+  "relaxed: beta term": [
+    "terms/beta.md",
+    "terms/alpha.md",
+    "terms/epsilon.md",
+    "terms/theta.md",
+    "terms/gamma.md",
+    "terms/zeta.md",
+    "terms/eta.md",
+    "terms/delta.md"
+  ],
+  "relaxed: gamma generator": [
+    "terms/gamma.md",
+    "terms/alpha.md"
+  ],
+  "relaxed: delta legacy": [
+    "terms/delta.md",
+    "terms/epsilon.md"
+  ],
+  "relaxed: epsilon retired successor": [
+    "terms/epsilon.md",
+    "terms/delta.md"
+  ],
+  "relaxed: eta bare mapping": [
+    "terms/eta.md"
+  ],
+  "relaxed: theta offset": [
+    "terms/theta.md"
+  ],
+  "relaxed: skipped folder codec": [
+    "dist/page.md"
+  ],
+  "relaxed: tags one two three-four": [
+    "notes/tags-only.md",
+    "terms/eta.md",
+    "terms/beta.md"
+  ],
+  "relaxed: orders agent instructions": [
+    "notes/injection.md"
+  ],
+  "relaxed: Which term is the fully described page every happy-path test starts from?": [
+    "terms/alpha.md",
+    "terms/zeta.md",
+    "notes/tags-only.md",
+    "notes/injection.md",
+    "terms/epsilon.md",
+    "terms/theta.md",
+    "terms/gamma.md",
+    "terms/eta.md"
+  ],
+  "relaxed: What happens to a page whose recheck datetime carries no offset?": [
+    "terms/theta.md",
+    "notes/tags-only.md",
+    "terms/eta.md",
+    "terms/gamma.md",
+    "terms/zeta.md",
+    "terms/beta.md"
+  ],
+  "relaxed: Why would a search engine skip a folder named dist?": [
+    "dist/page.md",
+    "notes/no-title-no-heading.md"
+  ],
+  "relaxed: Which page addresses the reader as if it were an agent and gives it orders?": [
+    "notes/injection.md"
+  ],
+  "relaxed: How does a retired term without a successor look?": [
+    "terms/epsilon.md",
+    "terms/delta.md",
+    "terms/theta.md",
+    "terms/gamma.md",
+    "terms/zeta.md",
+    "terms/alpha.md",
+    "terms/eta.md",
+    "terms/beta.md"
+  ],
+  "strict: alpha glossary": [
+    "terms/alpha.md",
+    "terms/beta.md"
+  ],
+  "strict: beta term": [
+    "terms/beta.md",
+    "terms/alpha.md"
+  ],
+  "strict: gamma generator": [
+    "terms/gamma.md"
+  ],
+  "strict: delta legacy": [
+    "terms/delta.md"
+  ],
+  "strict: epsilon retired successor": [
+    "terms/epsilon.md"
+  ],
+  "strict: eta bare mapping": [
+    "terms/eta.md"
+  ],
+  "strict: theta offset": [
+    "terms/theta.md"
+  ],
+  "strict: skipped folder codec": [
+    "dist/page.md"
+  ],
+  "strict: tags one two three-four": [
+    "notes/tags-only.md"
+  ],
+  "strict: orders agent instructions": [
+    "notes/injection.md"
+  ],
+  "strict: Which term is the fully described page every happy-path test starts from?": [
+    "terms/alpha.md"
+  ],
+  "strict: What happens to a page whose recheck datetime carries no offset?": [],
+  "strict: Why would a search engine skip a folder named dist?": [
+    "dist/page.md"
+  ],
+  "strict: Which page addresses the reader as if it were an agent and gives it orders?": [
+    "notes/injection.md"
+  ],
+  "strict: How does a retired term without a successor look?": []
+}

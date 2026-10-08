@@ -303,7 +303,7 @@ Every row of the field table in intent §6 maps to one function and one test. Th
 | Tags and type as rendered lines | `derived-document.ts`, `qmd-render.ts render` | render golden |
 | Status admission rule; default stable; development flag admits drafts and labels them, local source only | `contract.ts admit`, `search.ts shape`, `company-config.ts` | `contract.test.ts admission/*`; `company-config.test.ts dev-needs-local` |
 | Replacement link on deprecated pages: the first body link that is not an anchor decides; a replacement only when it resolves to an admitted page other than itself, else a coded degradation, never a later link | `page.ts deriveReplacement`, `markdown.ts links`, `links.ts` | `page.test.ts deprecated/*` |
-| `stale_after`: date form compared by UTC calendar day, datetime form by instant; the form the pinned text does not expect is reported; excluded unless `include_stale`; always served by `get_page`, flagged | `page.ts parseStaleAfter`, `search.ts filterStale`, `provenance.ts` | `page.test.ts stale/date`, `stale/datetime`, `stale/unexpected-form`; `search.test.ts stale/*` |
+| `stale_after`: date form compared by UTC calendar day, datetime form by instant; the form the pinned text does not expect is reported; excluded unless `include_stale` (from 0.2.0 included and flagged unless the caller asks for `freshness: "fresh"`: D65 in the decision record); always served by `get_page`, flagged | `page.ts parseStaleAfter`, `search.ts filterStale`, `provenance.ts` | `page.test.ts stale/date`, `stale/datetime`, `stale/unexpected-form`; `search.test.ts stale/*` |
 | `generated` in provenance | `provenance.ts` | `provenance.test.ts` |
 | Trust tier per §5.3; bare mapping as a one-element list; tie-break | `page.ts deriveTrust`, `search.ts rank` | `page.test.ts trust/*`, `search.test.ts tiebreak` |
 | Sources with ids and credibility signals; footnote resolution | `page.ts parseSources`, `provenance.ts` | `provenance.test.ts sources` |
@@ -458,6 +458,8 @@ catalog:  { folder?: string } → content: the index text; structuredContent: { 
 status:   {} → structuredContent: Report & { commit, pulledAt, engine, overdue, lock, lastAttempt, refusing }; content: one line of counts
           (admitted, excluded, overdue, refusals, degradations, integrity, engine, lock, loaded, last attempt, the lists as counts)
 ```
+
+From 0.2.0 `search` also takes `tag`, `status`, `min_trust` and `freshness`, `include_stale` is the alias of `freshness` until 0.5.0, and with both omitted overdue pages are included and flagged (D64, D65 and D68 in the decision record).
 
 All four carry `annotations: { readOnlyHint: true }` and an `outputSchema`. The provenance header names the verifier and date when `verified` is non-empty and says `unverified` otherwise.
 

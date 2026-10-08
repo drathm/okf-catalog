@@ -63,6 +63,7 @@ describe("readBody", () => {
       firstSentence: undefined,
       links: [],
       footnoteReferences: [],
+      citations: [],
       htmlBlocks: 0,
       inlineHtml: 0,
       hasScriptLike: false,
@@ -97,5 +98,25 @@ describe("readBody: prose for snippets (bite 4)", () => {
   });
   it("has no prose for an unanalysed body", () => {
     expect(readBody(`${">".repeat(10_000)} deep\n`).prose).toBeUndefined();
+  });
+});
+
+// R6 (D63): the OKF 0.1 `# Citations` list, level one only, up to the next heading.
+describe("readBody: the OKF 0.1 citations list (R6)", () => {
+  it("collects the lists under a level-one Citations heading, up to the next heading", () => {
+    const facts = readBody(
+      "Intro.\n\n# citations\n\n- https://x.test/a\n- [B](https://x.test/b) and words\n\nA paragraph between.\n\n- two [links](https://x.test/c) [here](https://x.test/d)\n\n# Next\n\n- https://x.test/e\n",
+    );
+    expect(facts.citations).toEqual([
+      { text: "https://x.test/a" },
+      { text: "B and words", url: "https://x.test/b" },
+      { text: "two links here" },
+    ]);
+    expect(readBody("# Notes\n\n## Citations\n\n- https://x.test/a\n").citations).toEqual([]);
+    expect(readBody("# CITATIONS\n\n- https://x.test/a\n").citations).toEqual([
+      { text: "https://x.test/a" },
+    ]);
+    expect(readBody("# Citations\n\n## Sub\n\n- https://x.test/a\n").citations).toEqual([]);
+    expect(readBody("Body with no such heading.\n").citations).toEqual([]);
   });
 });

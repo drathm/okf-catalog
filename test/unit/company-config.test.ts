@@ -90,6 +90,19 @@ describe("parseCompanyConfig", () => {
     expect(problems(`${base}serve:\n  admit: []\n`).join(" ")).toMatch(/admit/);
   });
 
+  it("takes any status word in serve.admit but draft", () => {
+    const r = parse(`${base}serve:\n  admit: [stable, deprecated, archived, ' In Review ']\n`);
+    expect(r.ok && r.config.serve.admit).toEqual(["stable", "deprecated", "archived", "In Review"]);
+    for (const list of ["[draft, stable]", "[stable, Draft]", "[' draft ']"]) {
+      expect(problems(`${base}serve:\n  admit: ${list}\n`), list).toEqual([
+        "serve.admit: draft is admitted only through serve.dev",
+      ]);
+    }
+    expect(problems(`${base}serve:\n  admit: [stable, '  ']\n`)).toEqual([
+      "serve.admit: a status cannot be blank",
+    ]);
+  });
+
   it("checks the duration grammar and bounds, the caps, the limit and the spec text", () => {
     expect(parse(`${base}serve:\n  pull_interval: 30s\n`).ok).toBe(true);
     expect(parse(`${base}serve:\n  pull_interval: 2h\n`).ok).toBe(true);

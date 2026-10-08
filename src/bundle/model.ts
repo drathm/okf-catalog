@@ -8,6 +8,7 @@ export interface BundleFile {
   bytes: Uint8Array;
 }
 
+/** The three statuses the specification names (§5.4). A page's own status may be any word (D61). */
 export type Status = "draft" | "stable" | "deprecated";
 export type Trust = "unverified" | "machine-confirmed" | "human-reviewed";
 export type SpecText = "2026-08-15" | "2026-08-21";
@@ -25,6 +26,12 @@ export interface StaleAfter {
   at?: Date;
 }
 
+/** The `{ from, to }` range that frames a `usage_count` (§5.1), as written. */
+export interface UsageWindow {
+  from: string;
+  to: string;
+}
+
 export interface Source {
   resource: string;
   id?: string;
@@ -32,7 +39,32 @@ export interface Source {
   author?: string;
   usageCount?: number;
   lastModified?: string;
-  usageWindow?: { from: string; to: string };
+  /** The entry's own window, which overrides the page's shared one (§5.1); never a copy of the page's. */
+  usageWindow?: UsageWindow;
+  /**
+   * Set when the entry wrote a `usage_window` that is not a `from`/`to` mapping: it is reported, and the entry takes
+   * no window, not the page's, since its producer framed its count otherwise (D62). Never part of a result.
+   */
+  usageWindowIgnored?: true;
+}
+
+/** One typed, named hole of an attested computation (§10.2): `{ name, type, required }`. */
+export interface ContractParameter {
+  name: string;
+  type?: string;
+  required?: boolean;
+}
+
+/**
+ * The contract fields of an attested computation (§10.2), typed on a page of any type (D62): what is well formed
+ * is kept as written, anything else is reported and left out. Nothing runs them; the paths are not opened.
+ */
+export interface Contract {
+  runtime?: string;
+  parameters?: ContractParameter[];
+  computation?: string;
+  executor?: { resource?: string; receipt?: string[] };
+  attester?: { resource?: string };
 }
 
 export interface Verification {
@@ -77,6 +109,8 @@ export type DegradationCode =
   | "body-html"
   | "body-unanalysed"
   | "body-truncated"
+  | "legacy-timestamp"
+  | "legacy-citations"
   | "index-lists-unserved"
   | "replacement-missing"
   | "replacement-broken"
@@ -134,17 +168,25 @@ export interface Page {
   description?: string;
   descriptionSource: "frontmatter" | "body" | "none";
   tags: string[];
-  status: Status;
+  /**
+   * `draft`, `stable` or `deprecated`, read without regard to case and kept as the specification spells them; any
+   * other word kept as written, trimmed, with its case (D61); a list or mapping as its JSON text.
+   */
+  status: string;
   statusSource: "frontmatter" | "default";
   statusRaw?: string;
   staleAfter?: StaleAfter;
   generated?: { by: string; at?: Timestamp };
+  /** The OKF 0.1 top-level `timestamp`, kept only when `generated` is absent (§13.1, D79); never a generator. */
+  timestamp?: Timestamp;
   verified: Verification[];
   /** The verification with the latest instant; among entries without one, the last listed. */
   latestVerification?: Verification;
   trust: Trust;
   sources: Source[];
-  usageWindow?: { from: string; to: string };
+  /** The shared window, the `usage_window` sibling of `sources` (§5.1). */
+  usageWindow?: UsageWindow;
+  contract?: Contract;
   resource?: string;
   replacement?: PagePath;
   links: Link[];
@@ -180,7 +222,8 @@ export const DEFAULT_CAPS: Caps = {
 };
 
 export interface LoadOptions {
-  admit: Status[];
+  /** The statuses the company admits, compared trimmed and without regard to case (D77). */
+  admit: string[];
   dev: boolean;
   integrity: "require-manifest" | "none";
   specText: SpecText;
@@ -216,4 +259,9 @@ export interface Report {
   missingOnDisk: string[];
   foldersWithoutIndex: string[];
   encodedFolders: string[];
+  /**
+   * The words of the admission list, other than the three known statuses, that no page carries, as listed and
+   * trimmed, each once: a typo such as `depreciated` admits nothing, and says so (D77, amended after the build review).
+   */
+  unmatchedAdmits: string[];
 }

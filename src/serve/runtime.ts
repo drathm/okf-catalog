@@ -119,6 +119,12 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
     degraded: report.degradations.length,
   });
 
+  /** Each admitted word no page carries, from a load just served (D77): a typo in serve.admit admits nothing. */
+  const warnUnmatched = (report: Report): void => {
+    for (const word of report.unmatchedAdmits)
+      deps.log.warn("serve.admit", { word, detail: "matches no page" });
+  };
+
   /** `prepare()` once, kept once it succeeds; a failure is forgotten so the next attempt runs it again. */
   function prepare(): Promise<PrepareResult> {
     if (prepared === undefined) {
@@ -275,6 +281,7 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
             commit: generation.published?.commit,
             refused: next.published?.commit,
           });
+          warnUnmatched(generation.report);
           return generation;
         }
       }
@@ -284,6 +291,7 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
     const generation = await commit(next);
     lastAttempt = { at: deps.clock(), outcome: "swapped" };
     deps.log.info("load.done", counts(generation.report, generation.index));
+    warnUnmatched(generation.report);
     return generation;
   }
 
@@ -392,6 +400,7 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
         refusing = undefined;
         lastAttempt = { at: deps.clock(), outcome: "swapped" };
         deps.log.info("refresh.done", counts(generation.report, generation.index));
+        warnUnmatched(generation.report);
         return { outcome: "swapped", generation };
       } catch (error) {
         const message = (error as Error).message;

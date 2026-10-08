@@ -335,3 +335,82 @@ describe("QmdEngine: collisions, odd names and housekeeping (bite 3 build review
     rmSync(dir, { recursive: true, force: true });
   });
 });
+
+describe("QmdEngine: the exhausted flags (build review A-A4)", () => {
+  it("says the pool is full only when the real engine had more matches past the cap", async () => {
+    // The adversarial reviewer's probe: n pages hold kiwi; one more, without it, carries the tag; limit 8.
+    for (const [n, exhausted] of [
+      [300, false],
+      [700, true],
+    ] as const) {
+      const files = Array.from({ length: n }, (_, i) => ({
+        path: `p/p${String(i).padStart(4, "0")}.md`,
+        bytes: Buffer.from(
+          `---\ntype: Note\ntitle: P${i}\ndescription: A page.\n---\n\n${"kiwi ".repeat((i % 7) + 1)} filler${i}\n`,
+        ),
+      }));
+      files.push({
+        path: "q/tagged.md",
+        bytes: Buffer.from(
+          "---\ntype: Note\ntitle: T\ndescription: A page.\ntags: [rare]\n---\n\nunrelated words\n",
+        ),
+      });
+      const loaded = loadBundle(
+        "x",
+        files,
+        {
+          admit: ["stable", "deprecated"],
+          dev: false,
+          integrity: "none",
+          specText: "2026-08-15",
+          caps: DEFAULT_CAPS,
+        },
+        NOW,
+      ).catalog;
+      const dir = mkdtempSync(join(tmpdir(), "okf-catalog-qmd-exhausted-"));
+      const own = await QmdEngine.open({ company: "x", dir });
+      try {
+        await own.index([...loaded.pages.values()].map(deriveDocument));
+        const r = await search(
+          loaded,
+          own,
+          { question: "kiwi", tags: ["rare"], includeStale: true, limit: 8 },
+          NOW,
+        );
+        expect(r.pool, String(n)).toBe(500);
+        expect(r.considered, String(n)).toBe(Math.min(n, 500));
+        expect(r.hits, String(n)).toEqual([]);
+        expect(r.filtersExhausted, String(n)).toBe(exhausted);
+      } finally {
+        await own.close();
+        rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  });
+});
+
+// The readiness ledger (issue 2's "Holds", D59, row 27): index.md and log.md are reserved, served, never indexed.
+describe("QmdEngine: the readiness ledger (D59)", () => {
+  it("keeps reserved files out of the index", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "okf-catalog-qmd-reserved-"));
+    const own = await QmdEngine.open({ company: "behaviours", dir });
+    try {
+      const result = await own.index(docs);
+      expect(result.documents).toBe(catalog.pages.size);
+      expect(catalog.folders.get("")?.log).toBeDefined();
+      expect(catalog.folders.get("")?.index?.body).toContain("Material that is not Markdown");
+      // "initialization" and "history" are written in the fixture's log.md, "material" and "lifecycle" in its root
+      // index.md, and none of them in a page.
+      for (const word of ["initialization", "history", "material", "lifecycle"])
+        expect(await own.lex([word], 5), word).toEqual([]);
+      const written = (readdirSync(join(dir, "derived"), { recursive: true }) as string[]).map(
+        (p) => p.split("\\").join("/"),
+      );
+      expect(written.filter((p) => p.endsWith(".md")).length).toBe(catalog.pages.size);
+      expect(written.filter((p) => /(^|\/)(index|log)\.md$/.test(p))).toEqual([]);
+    } finally {
+      await own.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

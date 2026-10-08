@@ -1,4 +1,4 @@
-import type { Nodes, Parent } from "mdast";
+import type { Nodes, Parent, Root } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFootnoteFromMarkdown } from "mdast-util-gfm-footnote";
 import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
@@ -10,6 +10,11 @@ export interface BodyFacts {
   firstSentence: string | undefined;
   links: Array<{ url: string; text: string }>;
   footnoteReferences: string[];
+  /**
+   * The items of the lists under a level-one `Citations` heading, up to the next heading: the OKF 0.1 provenance
+   * list (§13.1). An item with exactly one link carries its URL; the page decides whether they are sources (D63).
+   */
+  citations: Array<{ text: string; url?: string }>;
   htmlBlocks: number;
   inlineHtml: number;
   hasScriptLike: boolean;
@@ -131,11 +136,57 @@ function firstSentenceOf(text: string): string {
   return sentence.length > SENTENCE_CAP ? sentence.slice(0, SENTENCE_CAP).trimEnd() : sentence;
 }
 
+/** The URLs of the links inside a node, reference links resolved against the body's definitions. */
+function urlsIn(node: Nodes, definitions: ReadonlyMap<string, string>): string[] {
+  const urls: string[] = [];
+  const stack: Nodes[] = [node];
+  while (stack.length > 0) {
+    const current = stack.pop() as Nodes;
+    if (current.type === "link") urls.push(current.url);
+    else if (current.type === "linkReference") {
+      const url = definitions.get(current.identifier);
+      if (url !== undefined) urls.push(url);
+    }
+    if (isParent(current))
+      for (let i = current.children.length - 1; i >= 0; i--)
+        stack.push(current.children[i] as Nodes);
+  }
+  return urls;
+}
+
+/**
+ * The OKF 0.1 `# Citations` list (§13.1, D63): the items of every list that follows a level-one heading reading
+ * `Citations` (case ignored) at the top of the body, up to the next heading of any level. A `## Citations`
+ * subsection is a v0.2 page's own prose and is never read.
+ */
+function citationsOf(
+  tree: Root,
+  definitions: ReadonlyMap<string, string>,
+): Array<{ text: string; url?: string }> {
+  const items: Array<{ text: string; url?: string }> = [];
+  let inside = false;
+  for (const node of tree.children) {
+    if (node.type === "heading") {
+      inside = node.depth === 1 && proseOf(node).toLowerCase() === "citations";
+      continue;
+    }
+    if (!inside || node.type !== "list") continue;
+    for (const item of node.children) {
+      const text = proseWithBlocks(item);
+      if (text.length === 0) continue;
+      const urls = urlsIn(item, definitions);
+      items.push(urls.length === 1 ? { text, url: urls[0] as string } : { text });
+    }
+  }
+  return items;
+}
+
 const EMPTY: Omit<BodyFacts, "unanalysed" | "truncated"> = {
   firstHeading: undefined,
   firstSentence: undefined,
   links: [],
   footnoteReferences: [],
+  citations: [],
   htmlBlocks: 0,
   inlineHtml: 0,
   hasScriptLike: false,
@@ -150,7 +201,14 @@ export function readBody(body: string): BodyFacts {
   const truncated = body.length > ANALYSIS_BUDGET;
   const text = truncated ? body.slice(0, ANALYSIS_BUDGET) : body;
   if (analysisBounds(text) !== undefined)
-    return { ...EMPTY, links: [], footnoteReferences: [], unanalysed: true, truncated };
+    return {
+      ...EMPTY,
+      links: [],
+      footnoteReferences: [],
+      citations: [],
+      unanalysed: true,
+      truncated,
+    };
   const tree = fromMarkdown(text, {
     extensions: [gfmFootnote(), gfmTable()],
     mdastExtensions: [gfmFootnoteFromMarkdown(), gfmTableFromMarkdown()],
@@ -159,6 +217,7 @@ export function readBody(body: string): BodyFacts {
     ...EMPTY,
     links: [],
     footnoteReferences: [],
+    citations: [],
     unanalysed: false,
     truncated,
   };
@@ -215,6 +274,7 @@ export function readBody(body: string): BodyFacts {
     if (slot !== undefined) slot.url = definitions.get(ref.identifier) ?? "";
   }
   facts.links = facts.links.filter((l) => l.url !== "");
+  facts.citations = citationsOf(tree, definitions);
   facts.prose = proseWithBlocks(tree);
   return facts;
 }

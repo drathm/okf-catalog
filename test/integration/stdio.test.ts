@@ -85,6 +85,29 @@ describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
     expect(stderr).not.toMatch(/Acme Retail is a/);
   });
 
+  // The readiness ledger (issue 2's "Holds", D59, row 40): serve renders no `qmd: metadata:` block.
+  it("writes no qmd metadata block into the copies it indexes", async () => {
+    const b = box("behaviours");
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [CLI, "serve", "--config", b.configPath],
+      env: b.env,
+      cwd: b.cwd,
+      stderr: "pipe",
+    });
+    const client = new Client({ name: "test", version: "0.0.0" });
+    await client.connect(transport);
+    const status = (await client.callTool({ name: "status", arguments: {} })) as {
+      structuredContent: { admitted: number };
+    };
+    expect(status.structuredContent.admitted).toBe(17);
+    const copy = readFileSync(join(companyDir(b), "derived", "terms", "alpha.md"), "utf8");
+    expect(copy.startsWith("# Alpha\n")).toBe(true);
+    expect(copy).not.toContain("qmd:");
+    expect(copy).not.toContain("metadata:");
+    await client.close();
+  });
+
   it("writes nothing but JSON-RPC to stdout, loads only after initialize, and cleans up when stdin closes", async () => {
     const b = box();
     const run = rawServer(b);

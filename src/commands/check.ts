@@ -6,7 +6,6 @@ import {
   type LoadOptions,
   type Report,
   type SpecText,
-  type Status,
 } from "../bundle/model.js";
 import { byCodeUnit } from "../bundle/paths.js";
 import { encodePath } from "../engine/qmd-render.js";
@@ -20,7 +19,8 @@ Applies the intake contract to a folder and prints the report.
 options:
   --integrity <require-manifest|none>   default require-manifest; a source checkout needs none
   --dev                                 admit drafts and label them
-  --admit <stable,deprecated>           statuses to serve (default stable,deprecated)
+  --admit <stable,deprecated>           statuses to serve, any word but draft, which only --dev admits
+                                        (default stable,deprecated)
   --types <a,b>                         the company's declared types; others are reported
   --spec-text <2026-08-15|2026-08-21>   which OKF 0.2 text's date form is expected (default 2026-08-15)
   --json                                print the report as JSON
@@ -33,8 +33,6 @@ export interface CommandIo {
   stderr: (text: string) => void;
   env: NodeJS.ProcessEnv;
 }
-
-const STATUSES = new Set<Status>(["draft", "stable", "deprecated"]);
 
 const CLOCK = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
 
@@ -100,12 +98,21 @@ export function runCheck(argv: string[], io: CommandIo): number {
   const folder = parsed.positionals[0];
   const integrity = parsed.values.integrity;
   const specText = parsed.values["spec-text"];
+  // The statuses served: any word but draft, each trimmed and none blank, the rule of serve.admit and pack --admit
+  // (D77); case is ignored when pages are admitted.
   const admit = String(parsed.values.admit)
     .split(",")
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
-  if (admit.length === 0) {
+    .map((s) => s.trim());
+  if (admit.every((s) => s.length === 0)) {
     io.stderr(`--admit needs at least one status\n${CHECK_USAGE}`);
+    return 2;
+  }
+  if (admit.some((s) => s.length === 0)) {
+    io.stderr(`--admit lists a blank status\n${CHECK_USAGE}`);
+    return 2;
+  }
+  if (admit.some((s) => s.toLowerCase() === "draft")) {
+    io.stderr(`--admit takes statuses other than draft; --dev admits drafts\n${CHECK_USAGE}`);
     return 2;
   }
   const types =
@@ -131,10 +138,6 @@ export function runCheck(argv: string[], io: CommandIo): number {
     io.stderr(`--spec-text must be 2026-08-15 or 2026-08-21\n${CHECK_USAGE}`);
     return 2;
   }
-  if (!admit.every((s): s is Status => STATUSES.has(s as Status))) {
-    io.stderr(`--admit lists statuses other than draft, stable and deprecated\n${CHECK_USAGE}`);
-    return 2;
-  }
   let now: Date;
   try {
     now = clockFrom(io.env);
@@ -150,7 +153,7 @@ export function runCheck(argv: string[], io: CommandIo): number {
     return 2;
   }
   const options: LoadOptions = {
-    admit: admit as Status[],
+    admit,
     dev: parsed.values.dev === true,
     integrity,
     specText: specText as SpecText,

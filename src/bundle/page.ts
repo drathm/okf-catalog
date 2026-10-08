@@ -4,6 +4,8 @@ import { sha256Hex } from "./manifest.js";
 import { readBody } from "./markdown.js";
 import type {
   BundleFile,
+  Contract,
+  ContractParameter,
   Degradation,
   DegradationCode,
   Link,
@@ -30,6 +32,17 @@ export interface PageContext {
 export type ParsePageResult = { ok: true; page: Page } | { ok: false; refusal: Refusal };
 
 const STATUSES: ReadonlySet<string> = new Set<Status>(["draft", "stable", "deprecated"]);
+
+/** Characters kept of a legacy citation item's text, and of its link, as a source's resource or title (D63). */
+const CITATION_CAP = 500;
+
+/** A legacy citation item's text or link, cut at the cap with an ellipsis, never inside a surrogate pair. */
+function capCitation(text: string): string {
+  if (text.length <= CITATION_CAP) return text;
+  const code = text.charCodeAt(CITATION_CAP - 1);
+  const end = code >= 0xd800 && code <= 0xdbff ? CITATION_CAP - 1 : CITATION_CAP;
+  return `${text.slice(0, end)}…`;
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -193,7 +206,12 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
     degrade("tags-not-list", "tags", `tags is ${kindOf(rawTags)}, not a list; ignored`);
   }
 
-  const statusResult = normaliseStatus(data.status, Object.hasOwn(data, "status"), degrade);
+  const statusResult = normaliseStatus(
+    data.status,
+    Object.hasOwn(data, "status"),
+    scalarText.status,
+    degrade,
+  );
 
   let staleAfter: StaleAfter | undefined;
   if (
@@ -226,6 +244,9 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
     }
   }
 
+  /** A key written with no value is absent, as for every optional field. */
+  const absent = (key: string): boolean => data[key] === undefined || data[key] === null;
+
   const timestamp = (value: unknown, field: string): Timestamp => {
     const raw = typeof value === "string" ? value : JSON.stringify(value);
     const ts = parseTimestamp(raw);
@@ -249,6 +270,18 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
         `generated is ${kindOf(g)} without a by actor; ignored`,
       );
     }
+  }
+
+  // The OKF 0.1 `timestamp` (§13.1, D79): the page's last change when `generated` is absent, kept as its own field
+  // and reported. No generator is made from it, since `generated` needs a `by` (§5.2).
+  let legacyTimestamp: Timestamp | undefined;
+  if (absent("generated") && !absent("timestamp")) {
+    legacyTimestamp = timestamp(data.timestamp, "timestamp");
+    degrade(
+      "legacy-timestamp",
+      "timestamp",
+      "the OKF 0.1 timestamp is kept as the page's last change, since generated is absent; no generator is assumed",
+    );
   }
 
   const verified: Verification[] = [];
@@ -298,19 +331,37 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
             source.id = String(entry.id);
           if (typeof entry.title === "string") source.title = entry.title;
           if (typeof entry.author === "string") source.author = entry.author;
-          if (typeof entry.usage_count === "number") {
-            if (Number.isFinite(entry.usage_count)) source.usageCount = entry.usage_count;
-            else
-              degrade(
-                "source-malformed",
-                "sources",
-                `sources[${i}].usage_count is not a finite number; ignored`,
-              );
-          }
+          // A count that is not a finite number is dropped and reported, whatever it is (R4).
+          const count = entry.usage_count;
+          if (typeof count === "number" && Number.isFinite(count)) source.usageCount = count;
+          else if (typeof count === "number")
+            degrade(
+              "source-malformed",
+              "sources",
+              `sources[${i}].usage_count is not a finite number; ignored`,
+            );
+          else if (count !== undefined && count !== null)
+            degrade(
+              "source-malformed",
+              "sources",
+              `sources[${i}].usage_count is ${kindOf(count)}, not a number; ignored`,
+            );
           if (typeof entry.last_modified === "string") source.lastModified = entry.last_modified;
+          // An own window that is not a from-to mapping is reported, and the source then takes no window at all: the
+          // page's would frame a count its producer framed otherwise (§5.1, D62).
           const w = entry.usage_window;
           if (isRecord(w) && typeof w.from === "string" && typeof w.to === "string")
             source.usageWindow = { from: w.from, to: w.to };
+          else if (w !== undefined && w !== null) {
+            source.usageWindowIgnored = true;
+            degrade(
+              "source-malformed",
+              "sources",
+              isRecord(w)
+                ? `sources[${i}].usage_window lacks a from or a to written as a date; ignored, and the source does not take the page's window`
+                : `sources[${i}].usage_window is ${kindOf(w)}, not a mapping of from and to; ignored, and the source does not take the page's window`,
+            );
+          }
           sources.push(source);
         } else {
           degrade("source-malformed", "sources", `sources[${i}] has no resource; ignored`);
@@ -320,11 +371,53 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
       degrade("source-malformed", "sources", `sources is ${kindOf(s)}, not a list; ignored`);
     }
   }
+  // The OKF 0.1 `# Citations` list (§13.1, D63): sources only on a page that carries none of the v0.2 fields that
+  // replaced it, so a v0.2 page's own list of citations stays body text. One link gives a resource and a title;
+  // anything else, a bare URL included (autolinks are not parsed), gives its text as the resource.
+  // Each item is body text of any length, so its text and its link are cut at 500 characters, the bound bite b
+  // gives a reference block (build review I-E2).
+  if (
+    absent("generated") &&
+    absent("verified") &&
+    absent("sources") &&
+    facts.citations.length > 0
+  ) {
+    let cut = 0;
+    for (const citation of facts.citations) {
+      const long =
+        citation.text.length > CITATION_CAP || (citation.url?.length ?? 0) > CITATION_CAP;
+      if (long) cut += 1;
+      const text = capCitation(citation.text);
+      sources.push(
+        citation.url === undefined
+          ? { resource: text }
+          : { resource: capCitation(citation.url), title: text },
+      );
+    }
+    const items = facts.citations.length;
+    degrade(
+      "legacy-citations",
+      "sources",
+      `${items} item${items === 1 ? "" : "s"} of an OKF 0.1 # Citations list read as sources, since the page has no generated, verified or sources${cut > 0 ? `; ${cut} cut at ${CITATION_CAP} characters` : ""}`,
+    );
+  }
 
   let usageWindow: Page["usageWindow"];
   const w = data.usage_window;
-  if (isRecord(w) && typeof w.from === "string" && typeof w.to === "string")
-    usageWindow = { from: w.from, to: w.to };
+  if (w !== undefined && w !== null) {
+    if (isRecord(w) && typeof w.from === "string" && typeof w.to === "string")
+      usageWindow = { from: w.from, to: w.to };
+    else
+      degrade(
+        "field-ignored",
+        "usage_window",
+        isRecord(w)
+          ? "usage_window lacks a from or a to written as a date; ignored"
+          : `usage_window is ${kindOf(w)}, not a mapping of from and to; ignored`,
+      );
+  }
+
+  const contract = readContract(data, degrade);
 
   const resource = text("resource");
 
@@ -383,30 +476,148 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
   if (statusResult.raw !== undefined) page.statusRaw = statusResult.raw;
   if (staleAfter !== undefined) page.staleAfter = staleAfter;
   if (generated !== undefined) page.generated = generated;
+  if (legacyTimestamp !== undefined) page.timestamp = legacyTimestamp;
   const latest = latestVerification(verified);
   if (latest !== undefined) page.latestVerification = latest;
   if (usageWindow !== undefined) page.usageWindow = usageWindow;
+  if (contract !== undefined) page.contract = contract;
   if (resource !== undefined) page.resource = resource;
   return { ok: true, page };
 }
 
+/** A list of names as written: strings kept, numbers and booleans by their text, anything else reported. */
+function nameList(
+  value: unknown[],
+  field: string,
+  degrade: (code: DegradationCode, field: string, detail: string) => void,
+): string[] {
+  const names: string[] = [];
+  value.forEach((item, i) => {
+    if (typeof item === "string") names.push(item);
+    else if (typeof item === "number" || typeof item === "boolean") names.push(String(item));
+    else degrade("field-ignored", field, `${field}[${i}] is ${kindOf(item)}, not text; ignored`);
+  });
+  return names;
+}
+
+/**
+ * The contract fields of §10.2 on a page of any type (D62). Each is kept as written when it has the shape the text
+ * gives it, and otherwise reported `field-ignored` and left out, never refusing the page: `runtime` and
+ * `computation` are text, `parameters` a list of `{ name, type, required }`, `executor` a mapping of a `resource`
+ * and a `receipt` list, `attester` a mapping of a `resource`. An empty key is absent. Nothing is run or opened.
+ */
+function readContract(
+  data: Record<string, unknown>,
+  degrade: (code: DegradationCode, field: string, detail: string) => void,
+): Contract | undefined {
+  const contract: Contract = {};
+  const present = (value: unknown): boolean => value !== undefined && value !== null;
+  const ignored = (field: string, value: unknown, wanted: string): void =>
+    degrade("field-ignored", field, `${field} is ${kindOf(value)}, not ${wanted}; ignored`);
+
+  for (const key of ["runtime", "computation"] as const) {
+    const value = data[key];
+    if (!present(value)) continue;
+    if (typeof value === "string") contract[key] = value;
+    else ignored(key, value, "text");
+  }
+
+  const parameters = data.parameters;
+  if (present(parameters)) {
+    if (!Array.isArray(parameters)) ignored("parameters", parameters, "a list");
+    else {
+      const kept: ContractParameter[] = [];
+      parameters.forEach((entry, i) => {
+        if (!isRecord(entry) || typeof entry.name !== "string" || entry.name.trim().length === 0) {
+          degrade("field-ignored", "parameters", `parameters[${i}] has no name; ignored`);
+          return;
+        }
+        const parameter: ContractParameter = { name: entry.name };
+        if (present(entry.type)) {
+          if (typeof entry.type === "string") parameter.type = entry.type;
+          else ignored(`parameters[${i}].type`, entry.type, "text");
+        }
+        if (present(entry.required)) {
+          if (typeof entry.required === "boolean") parameter.required = entry.required;
+          else ignored(`parameters[${i}].required`, entry.required, "true or false");
+        }
+        kept.push(parameter);
+      });
+      contract.parameters = kept;
+    }
+  }
+
+  const executor = data.executor;
+  if (present(executor)) {
+    if (!isRecord(executor)) ignored("executor", executor, "a mapping");
+    else {
+      const kept: NonNullable<Contract["executor"]> = {};
+      if (present(executor.resource)) {
+        if (typeof executor.resource === "string") kept.resource = executor.resource;
+        else ignored("executor.resource", executor.resource, "text");
+      }
+      if (present(executor.receipt)) {
+        if (Array.isArray(executor.receipt))
+          kept.receipt = nameList(executor.receipt, "executor.receipt", degrade);
+        else ignored("executor.receipt", executor.receipt, "a list");
+      }
+      if (Object.keys(kept).length > 0) contract.executor = kept;
+      // A mapping with neither key the text gives it is ignored, and says so (build review I-A3).
+      if (!present(executor.resource) && !present(executor.receipt))
+        degrade(
+          "field-ignored",
+          "executor",
+          "executor has neither a resource nor a receipt; ignored",
+        );
+    }
+  }
+
+  const attester = data.attester;
+  if (present(attester)) {
+    if (!isRecord(attester)) ignored("attester", attester, "a mapping");
+    else if (present(attester.resource)) {
+      if (typeof attester.resource === "string")
+        contract.attester = { resource: attester.resource };
+      else ignored("attester.resource", attester.resource, "text");
+    } else degrade("field-ignored", "attester", "attester has no resource; ignored");
+  }
+
+  return Object.keys(contract).length > 0 ? contract : undefined;
+}
+
+/**
+ * The page's status (D61). Absent, null or blank is `stable`, as §5.4 says. The three known values are read without
+ * regard to case. Any other word is the producer's own and is kept, trimmed, with its case, and reported: it is
+ * never rewritten, and admission decides whether it is served (D77). A number or boolean is read as written; a list
+ * or mapping is no word, so its JSON text stands in for one and it counts as unknown. `raw` is the value as written.
+ */
 function normaliseStatus(
   value: unknown,
   present: boolean,
+  sourceText: string | undefined,
   degrade: (code: DegradationCode, field: string, detail: string) => void,
-): { status: Status; source: Page["statusSource"]; raw?: string } {
+): { status: string; source: Page["statusSource"]; raw?: string } {
   if (!present || value === undefined || value === null)
     return { status: "stable", source: "default" };
-  const raw = typeof value === "string" ? value : JSON.stringify(value);
-  const normalised = raw.trim().toLowerCase();
-  if (normalised.length === 0) return { status: "stable", source: "default" };
-  if (STATUSES.has(normalised)) return { status: normalised as Status, source: "frontmatter", raw };
+  const raw =
+    typeof value === "string"
+      ? value
+      : typeof value === "number" || typeof value === "boolean"
+        ? (sourceText ?? String(value))
+        : JSON.stringify(value);
+  const word = raw.trim();
+  if (word.length === 0) return { status: "stable", source: "default" };
+  const known = word.toLowerCase();
+  if (typeof value !== "object" && STATUSES.has(known))
+    return { status: known, source: "frontmatter", raw };
   degrade(
     "status-unknown",
     "status",
-    `status "${raw}" is not draft, stable or deprecated; treated as draft`,
+    typeof value === "object"
+      ? `status is ${kindOf(value)}, not draft, stable or deprecated; kept as its text ${word}`
+      : `status "${word}" is not draft, stable or deprecated; kept as written`,
   );
-  return { status: "draft", source: "frontmatter", raw };
+  return { status: word, source: "frontmatter", raw };
 }
 
 const ARTICLE: Record<string, string> = {

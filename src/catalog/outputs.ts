@@ -9,6 +9,7 @@ import type { Generation, RuntimeStatus, ToolOptions } from "./runtime.js";
 import {
   DATA_SENTENCE,
   hitLine,
+  type LineOptions,
   MARKER,
   pageHeader,
   reservedHeader,
@@ -57,14 +58,25 @@ export function cutText(text: string, offset: number, budget: number): Cut {
 
 /** Characters a provenance's frontmatter may take in a result before it is replaced by a note. */
 export const FRONTMATTER_BUDGET = 8_000;
+/**
+ * Characters each typed field rescued from the frontmatter (the contract's five, the usage windows, the v0.1
+ * timestamp) may take, serialised, before it is replaced by a note of its own (D78), so no field is a second
+ * unbounded channel and one long field never hides the rest.
+ */
+export const TYPED_FIELD_BUDGET = 2_000;
 /** Characters of a catalog entry's description kept in a result. */
 const ENTRY_DESCRIPTION_CAP = 200;
 
-const Status = z.enum(["draft", "stable", "deprecated"]);
+/** Any word: the three known values, or the company's own word for a page it admits (D61, D77). */
+const Status = z.string();
 const Trust = z.enum(["unverified", "machine-confirmed", "human-reviewed"]);
 const Rung = z.enum(["all-terms", "relaxed"]);
 const Form = z.enum(["date", "datetime", "unparseable"]);
 const Verification = z.strictObject({ by: z.string(), at: z.string().optional() });
+/** The note a typed field over its budget is replaced by (D78), the frontmatter note's form. */
+const Omitted = z.strictObject({ omitted: z.string() });
+const orOmitted = <T extends z.ZodTypeAny>(schema: T) => z.union([schema, Omitted]);
+const Window = z.strictObject({ from: z.string(), to: z.string() });
 const SourceSchema = z.strictObject({
   resource: z.string(),
   id: z.string().optional(),
@@ -72,7 +84,31 @@ const SourceSchema = z.strictObject({
   author: z.string().optional(),
   usageCount: z.number().optional(),
   lastModified: z.string().optional(),
-  usageWindow: z.strictObject({ from: z.string(), to: z.string() }).optional(),
+  usageWindow: Window.optional(),
+  // The source's own window with its dates, or the page's named: its dates are the provenance's usageWindow (D62).
+  effectiveWindow: orOmitted(
+    z.union([
+      z.strictObject({ from: z.string(), to: z.string(), inherited: z.literal(false) }),
+      z.strictObject({ inherited: z.literal(true) }),
+    ]),
+  ).optional(),
+});
+const ContractSchema = z.strictObject({
+  runtime: orOmitted(z.string()).optional(),
+  parameters: orOmitted(
+    z.array(
+      z.strictObject({
+        name: z.string(),
+        type: z.string().optional(),
+        required: z.boolean().optional(),
+      }),
+    ),
+  ).optional(),
+  computation: orOmitted(z.string()).optional(),
+  executor: orOmitted(
+    z.strictObject({ resource: z.string().optional(), receipt: z.array(z.string()).optional() }),
+  ).optional(),
+  attester: orOmitted(z.strictObject({ resource: z.string().optional() })).optional(),
 });
 
 export const ProvenanceSchema = z.strictObject({
@@ -86,10 +122,14 @@ export const ProvenanceSchema = z.strictObject({
   latestVerification: Verification.optional(),
   staleAfter: z.strictObject({ raw: z.string(), form: Form, overdue: z.boolean() }).optional(),
   sources: z.array(SourceSchema),
+  usageWindow: orOmitted(Window).optional(),
+  contract: ContractSchema.optional(),
+  timestamp: orOmitted(z.string()).optional(),
   resource: z.string().optional(),
   replacement: z.string().optional(),
   frontmatter: z.record(z.string(), z.unknown()),
 });
+type ProjectedProvenance = z.infer<typeof ProvenanceSchema>;
 
 export const SearchOutputSchema = z.strictObject({
   hits: z.array(
@@ -122,10 +162,14 @@ export const SearchOutputSchema = z.strictObject({
   filteredOut: z.strictObject({
     type: z.number(),
     topic: z.number(),
+    tag: z.number(),
+    status: z.number(),
+    trust: z.number(),
     stale: z.number(),
     unknown: z.number(),
   }),
   topicExhausted: z.boolean(),
+  filtersExhausted: z.boolean(),
 });
 export type SearchOutput = z.infer<typeof SearchOutputSchema>;
 
@@ -224,7 +268,7 @@ export function projectSearch(
   response: SearchResponse,
   catalog: Catalog,
   now: Date,
-  options: { dev: boolean },
+  options: { dev: boolean } & LineOptions,
 ): SearchOutput {
   void now;
   const hits = response.hits.map((hit) => {
@@ -247,7 +291,7 @@ export function projectSearch(
       rung: hit.rung,
       termsMatched: hit.termsMatched ?? null,
       snippet: text,
-      citation: hitLine(hit, text, page?.staleAfter?.form),
+      citation: hitLine(hit, text, page?.staleAfter?.form, options),
     };
   });
   return SearchOutputSchema.parse({
@@ -260,26 +304,71 @@ export function projectSearch(
     considered: response.considered,
     filteredOut: response.filteredOut,
     topicExhausted: response.topicExhausted,
+    filtersExhausted: response.filtersExhausted,
   });
+}
+
+/** A typed field as a result carries it: whole within its budget, else its own note (D78). */
+function typedField<T>(field: string, value: T): T | { omitted: string } {
+  return JSON.stringify(value).length > TYPED_FIELD_BUDGET
+    ? {
+        omitted: `the ${field} field is over ${TYPED_FIELD_BUDGET} characters and is not returned here`,
+      }
+    : value;
+}
+
+/**
+ * The provenance as `get_page` returns it: the frontmatter replaced by its note past its budget, and every typed
+ * field held to its own budget, so a page's typed fields survive the frontmatter's omission (D62, D78).
+ */
+function projectProvenance(page: Page, now: Date): ProjectedProvenance {
+  const { sources, usageWindow, contract, timestamp, ...rest } = provenanceOf(page, now);
+  const projected: ProjectedProvenance = {
+    ...rest,
+    sources: sources.map(({ effectiveWindow, ...source }) =>
+      effectiveWindow === undefined
+        ? source
+        : { ...source, effectiveWindow: typedField("effectiveWindow", effectiveWindow) },
+    ),
+  };
+  if (JSON.stringify(projected.frontmatter).length > FRONTMATTER_BUDGET) {
+    projected.frontmatter = {
+      omitted: `the frontmatter is over ${FRONTMATTER_BUDGET} characters and is not returned here`,
+    };
+  }
+  if (usageWindow !== undefined) projected.usageWindow = typedField("usageWindow", usageWindow);
+  if (timestamp !== undefined) projected.timestamp = typedField("timestamp", timestamp);
+  if (contract !== undefined) {
+    const typed: NonNullable<ProjectedProvenance["contract"]> = {};
+    if (contract.runtime !== undefined) typed.runtime = typedField("runtime", contract.runtime);
+    if (contract.parameters !== undefined)
+      typed.parameters = typedField("parameters", contract.parameters);
+    if (contract.computation !== undefined)
+      typed.computation = typedField("computation", contract.computation);
+    if (contract.executor !== undefined) typed.executor = typedField("executor", contract.executor);
+    if (contract.attester !== undefined) typed.attester = typedField("attester", contract.attester);
+    projected.contract = typed;
+  }
+  return projected;
 }
 
 /** Room left for a body once the citation, the notice and a truncation tail are counted inside the budget. */
 const bodyRoom = (budget: number, citation: string): number =>
   Math.max(1, budget - citation.length - NOTICE.length - 80);
 
-export function projectPage(page: Page, now: Date, offset: number, budget: number): PageOutput {
-  const citation = pageHeader(page, now);
+export function projectPage(
+  page: Page,
+  now: Date,
+  offset: number,
+  budget: number,
+  options: LineOptions = {},
+): PageOutput {
+  const citation = pageHeader(page, now, options);
   const cut = cutText(page.body, offset, bodyRoom(budget, citation));
-  const provenance = provenanceOf(page, now);
-  if (JSON.stringify(provenance.frontmatter).length > FRONTMATTER_BUDGET) {
-    provenance.frontmatter = {
-      omitted: `the frontmatter is over ${FRONTMATTER_BUDGET} characters and is not returned here`,
-    };
-  }
   const output: PageOutput = {
     path: page.path,
     kind: "page",
-    provenance,
+    provenance: projectProvenance(page, now),
     citation,
     notice: NOTICE,
     body: cut.slice,
@@ -470,7 +559,9 @@ export function projectStatus(
 
 /** One line for the `status` text block: the counts, the engine, the lock, the last attempt, and the report's lists as counts. */
 export function statusSummary(out: StatusOutput): string {
-  const n = (count: number, word: string): string => `${count} ${word}${count === 1 ? "" : "s"}`;
+  // One and many, the irregular ones written out (build review A-D8).
+  const n = (count: number, one: string, many = `${one}s`): string =>
+    `${count} ${count === 1 ? one : many}`;
   const parts = [
     `${out.company}: ${out.admitted} pages admitted, ${out.excludedByStatus} excluded by status, ${n(out.overdue, "overdue page")}, ${n(out.refusals.count, "refusal")}, ${n(out.degradations.count, "degradation")}`,
     `integrity ${out.integrity}`,
@@ -492,7 +583,7 @@ export function statusSummary(out: StatusOutput): string {
     ...(out.engine.resetOnOpen === null
       ? []
       : [`engine store rebuilt at open: ${out.engine.resetOnOpen}`]),
-    `${n(out.unknownTypes.count, "unknown type")}, ${n(out.unknownStatuses.count, "unknown status")}, ${n(out.brokenLinks.count, "broken link")}, ${n(out.linksToUnserved.count, "link to an unserved page")}, ${n(out.foldersWithoutIndex.count, "folder without an index")}, ${n(out.missingOnDisk.count, "manifest entry missing on disk")}`,
+    `${n(out.unknownTypes.count, "unknown type")}, ${n(out.unknownStatuses.count, "unknown status", "unknown statuses")}, ${n(out.brokenLinks.count, "broken link")}, ${n(out.linksToUnserved.count, "link to an unserved page", "links to an unserved page")}, ${n(out.foldersWithoutIndex.count, "folder without an index", "folders without an index")}, ${n(out.missingOnDisk.count, "manifest entry missing on disk", "manifest entries missing on disk")}`,
   ];
   if (out.lastAttempt !== null)
     parts.push(`last attempt ${out.lastAttempt.outcome} at ${out.lastAttempt.at}`);

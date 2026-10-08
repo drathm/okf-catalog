@@ -249,6 +249,29 @@ describe("createRuntime", () => {
   });
 });
 
+// The readiness ledger (issue 2's "Holds", D59, row 37): only admitted pages are written for the engine.
+describe("createRuntime: the readiness ledger (D59)", () => {
+  it("hands the engine the admitted pages only", async () => {
+    const engine = countingEngine();
+    const { runtime } = build(memorySource(readFixture("behaviours")), engine);
+    runtime.start();
+    const generation = await runtime.ready();
+    expect(engine.docs).toEqual([...generation.catalog.pages.keys()].sort());
+    expect(engine.docs).toHaveLength(17);
+    for (const path of [
+      "notes/draft.md",
+      "notes/unknown-status.md",
+      "index.md",
+      "log.md",
+      "terms/index.md",
+      "references/attachment.txt",
+      "manifest.json",
+    ])
+      expect(engine.docs, path).not.toContain(path);
+    await runtime.shutdown();
+  });
+});
+
 describe("createRuntime: a re-index that fails too (bite 4 build review)", () => {
   it("refuses until a refresh succeeds when the index cannot be re-aligned after a failed refresh", async () => {
     const files = readFixture("behaviours");
@@ -467,6 +490,35 @@ describe("createRuntime (bite 5: a source that fails, falls back and reports)", 
       lockOwner: { pid: 4242, alive: true },
       poller: { intervalMs: 60_000, lastOutcome: "unchanged" },
     });
+    await runtime.shutdown();
+  });
+
+  it("warns at each load of every admitted word that matches no page (D77, build review A-E1)", async () => {
+    const records: Array<{ event: string; fields: Record<string, unknown> }> = [];
+    const log = {
+      error() {},
+      warn: (event: string, fields: Record<string, unknown> = {}) =>
+        void records.push({ event, fields }),
+      info() {},
+      debug() {},
+    };
+    const runtime = createRuntime({
+      company: "b",
+      source: memorySource(readFixture("behaviours")),
+      prepare: async () => ({ engine: countingEngine(), lock: "exclusive" as const }),
+      load: { ...options, admit: ["stable", "deprecated", "depreciated"] },
+      clock: () => NOW,
+      log,
+    });
+    runtime.start();
+    const generation = await runtime.ready();
+    expect(generation.report.unmatchedAdmits).toEqual(["depreciated"]);
+    expect(records).toEqual([
+      { event: "serve.admit", fields: { word: "depreciated", detail: "matches no page" } },
+    ]);
+    // A refresh that swaps loads again and says so again; the configuration has not changed.
+    expect((await runtime.refresh()).outcome).toBe("swapped");
+    expect(records.filter((r) => r.event === "serve.admit")).toHaveLength(2);
     await runtime.shutdown();
   });
 

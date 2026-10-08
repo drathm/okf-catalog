@@ -13,6 +13,7 @@
       "!!bench/clones",
       "!!bench/corpus",
       "!!bench/results",
+      "!!bench/expected",
       "!!bench/.work"
     ]
   },

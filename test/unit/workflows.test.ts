@@ -2,6 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 const WORKFLOWS = join(dirname(fileURLToPath(import.meta.url)), "..", "..", ".github", "workflows");
 const files = readdirSync(WORKFLOWS).filter((f) => f.endsWith(".yml"));
@@ -30,6 +31,40 @@ describe("the repository's own workflows", () => {
     );
     expect(cla).toContain('branch: "cla-signatures"');
     expect(cla).toContain("I have read the CLA Document and I hereby sign the CLA");
+  });
+
+  it("runs the lexical guard over the public corpus on Linux on every push", () => {
+    type Step = { uses?: string; run?: string; with?: Record<string, unknown> };
+    const ci = parseYaml(readFileSync(join(WORKFLOWS, "ci.yml"), "utf8"), { version: "1.2" }) as {
+      on: { push: { branches: string[] } };
+      jobs: Record<string, { "runs-on": string; steps: Step[] }>;
+    };
+    expect(ci.on.push.branches).toEqual(["**"]);
+    const guard = Object.values(ci.jobs).find((job) =>
+      job.steps.some((step) => step.run?.includes("bench/run.mjs --expect")),
+    );
+    expect(guard).toBeDefined();
+    expect(guard?.["runs-on"]).toBe("ubuntu-latest");
+    const setup = guard?.steps.find((step) => step.uses?.startsWith("actions/setup-node@"));
+    expect(setup?.with?.["node-version"]).toBe(24);
+    const runs = (guard?.steps ?? []).flatMap((step) => (step.run === undefined ? [] : [step.run]));
+    const order = [
+      "npm ci",
+      "npm run build",
+      "sh bench/fetch-corpus.sh",
+      "node bench/run.mjs --expect bench/expected/lexical-ranks.json",
+    ].map((command) => runs.findIndex((run) => run.startsWith(command)));
+    expect(order.every((i) => i >= 0)).toBe(true);
+    expect([...order].sort((a, b) => a - b)).toEqual(order);
+    // Lexical only: no model is fetched or loaded in CI.
+    expect(runs.join("\n")).not.toMatch(/--modes|pull-models/);
+    // A guard that may fail quietly, or not run, is no guard (build review A-B9): no continue-on-error and no
+    // condition, on the job or on any of its steps.
+    const job = guard as Record<string, unknown> & { steps: Array<Record<string, unknown>> };
+    for (const holder of [job, ...job.steps]) {
+      expect(Object.keys(holder)).not.toContain("continue-on-error");
+      expect(Object.keys(holder)).not.toContain("if");
+    }
   });
 
   it("keep the CI workflow on read-only permissions", () => {

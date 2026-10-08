@@ -39,11 +39,16 @@ describe("admit", () => {
     expect(admit(page({ status: "stable" }), ["deprecated"], false)).toBe(false);
   });
 
-  it("admits drafts, and so unknown statuses read as draft, only under the development flag", () => {
+  it("admits an unknown status only when the company lists it, in any case, or under the development flag", () => {
+    const archived = page({ status: "archived", statusRaw: "archived" });
+    expect(admit(archived, ["stable", "deprecated"], false)).toBe(false);
+    expect(admit(archived, ["stable", "deprecated", "Archived"], false)).toBe(true);
+    expect(admit(archived, [" ARCHIVED "], false)).toBe(true);
+    expect(admit(page({ status: "In Review" }), ["in review"], false)).toBe(true);
+    expect(admit(page({ status: "In Review" }), ["review"], false)).toBe(false);
+    expect(admit(archived, ["stable", "deprecated"], true)).toBe(true);
     expect(admit(page({ status: "draft" }), ["stable", "deprecated"], true)).toBe(true);
-    expect(
-      admit(page({ status: "draft", statusRaw: "archived" }), ["stable", "deprecated"], true),
-    ).toBe(true);
+    expect(admit(page({ status: "draft" }), ["stable", "deprecated"], false)).toBe(false);
   });
 });
 
