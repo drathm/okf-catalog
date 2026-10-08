@@ -96,12 +96,19 @@ export interface RuntimeStatus {
   bundles: BundleRuntimeStatus[];
 }
 
+/** One bundle as the configuration names it, for `status`: its id, its source as written (never a cache path), its kind. */
+export interface BundleOption {
+  id: string;
+  source: string;
+  sourceKind: "local" | "git";
+}
+
 /** Plain values the tools need from the configuration, so the adapter never imports the configuration module. */
 export interface ToolOptions {
-  company: string;
-  /** The source as written in the configuration, never a cache path. */
-  source: string;
-  dev: boolean;
+  /** The network's name: a `company:` file's company (D-G). */
+  network: string;
+  /** Every bundle of the network, in the configuration's order. */
+  bundles: readonly BundleOption[];
   limitDefault: number;
   resultBudget: number;
 }

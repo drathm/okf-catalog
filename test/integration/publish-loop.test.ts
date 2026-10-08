@@ -72,7 +72,7 @@ function engine(): Engine {
           bm25 += n;
         }
         if (all && terms.length > 0)
-          hits.push({ bundle: "b", path, bm25, score: bm25 / (1 + bm25) });
+          hits.push({ bundle: indexed, path, bm25, score: bm25 / (1 + bm25) });
       }
       return hits.sort((a, b) => b.bm25 - a.bm25 || (a.path < b.path ? -1 : 1)).slice(0, limit);
     },

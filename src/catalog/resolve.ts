@@ -23,7 +23,13 @@ export type Found =
 
 export type Resolution =
   | { ok: true; name: string; found: Found }
-  | { ok: false; reason: "not-found"; name: string; nearest: string[] }
+  | {
+      ok: false;
+      reason: "not-found";
+      name: string;
+      /** The three nearest served paths, each with its bundle: of the bundle named, else of every served bundle. */
+      nearest: Array<{ bundle: string; path: string }>;
+    }
   | {
       ok: false;
       reason: "ambiguous";
@@ -79,7 +85,9 @@ function lookup(view: BundleView, path: string): Found | undefined {
  * A name that means this path alone in its bundle: the concept id when nothing else answers to it, else the path
  * when nothing else answers to that. For `foo.md` beside `foo.md.md` that is `foo` and `foo.md.md`. Only a chain of
  * three such names (`foo.md`, `foo.md.md`, `foo.md.md.md`) leaves the middle one with no name of its own: then
- * there is none, and the caller says so rather than offer a name that answers with the same ambiguity.
+ * there is none, and the caller says so rather than offer a name that answers with the same ambiguity. The
+ * uniqueness is the bundle's own (D60): across bundles a name is told apart by the bundle's id, which the caller
+ * names beside it (D74).
  */
 export function uniqueName(view: BundleView, path: string): string | undefined {
   const alone = (name: string): boolean =>
@@ -91,10 +99,11 @@ export function uniqueName(view: BundleView, path: string): string | undefined {
 
 /**
  * Turns the name a caller gives (`/p.md`, `./p.md`, `p.md`, or the concept id `p`) into the one page or reserved
- * file it means, or a precise error (D60): not found, with the three nearest served paths; ambiguous, when the name
- * is one file's path and another's concept id (or names files in two bundles), with each candidate and a name that
- * means it alone; or, when a bundle is named, an unknown or a refused bundle. A refused bundle is never a candidate.
- * Nothing is preferred silently: an ambiguous name is an error, as issues 3 and 5 ask.
+ * file it means, or a precise error (D60, D74): not found, with the three nearest served paths and their bundles;
+ * ambiguous, when the name is one file's path and another's concept id, or names files in two bundles, with each
+ * candidate, its bundle and a name that means it alone in that bundle; or, when a bundle is named, an unknown or a
+ * refused bundle. A named bundle is the only one read. A refused bundle is never a candidate, nor among the
+ * nearest. Nothing is preferred silently: an ambiguous name is an error, as issues 3 and 5 ask.
  */
 export function resolvePageName(
   bundles: readonly BundleView[],
@@ -141,6 +150,20 @@ export function resolvePageName(
       }),
     };
   }
-  const served = views.flatMap((view) => servedPaths(view.catalog));
-  return { ok: false, reason: "not-found", name, nearest: nearestPaths(served, name) };
+  // The nearest paths over every bundle read, each path then each bundle that serves it, in bundle order.
+  const bundlesOf = new Map<string, string[]>();
+  for (const view of views) {
+    for (const path of servedPaths(view.catalog)) {
+      const holders = bundlesOf.get(path);
+      if (holders === undefined) bundlesOf.set(path, [view.bundle]);
+      else holders.push(view.bundle);
+    }
+  }
+  const nearest = nearestPaths(bundlesOf.keys(), name)
+    .flatMap((path) => (bundlesOf.get(path) ?? []).map((holder) => ({ bundle: holder, path })))
+    .slice(0, NEAREST);
+  return { ok: false, reason: "not-found", name, nearest };
 }
+
+/** How many nearest paths a not-found answer names. */
+const NEAREST = 3;

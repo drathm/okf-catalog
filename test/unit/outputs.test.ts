@@ -17,12 +17,13 @@ import {
   NOTICE,
   PageOutputSchema,
   ProvenanceOutputSchema,
+  projectBundleStatus,
   projectCatalog,
   projectCitations,
+  projectNetworkCatalog,
   projectPage,
   projectReserved,
   projectSearch,
-  projectStatus,
   projectWalk,
   RESULT_BUDGET,
   SearchOutputSchema,
@@ -30,7 +31,7 @@ import {
   statusSummary,
   walkText,
 } from "../../src/catalog/outputs.js";
-import type { Generation } from "../../src/catalog/runtime.js";
+import type { BundleRuntimeStatus, Generation, RuntimeStatus } from "../../src/catalog/runtime.js";
 import { MARKER } from "../../src/catalog/text.js";
 import type { SearchResponse } from "../../src/search/search.js";
 import { NOW, readFixture } from "../helpers/fixtures.js";
@@ -70,6 +71,31 @@ const generation: Generation = {
   dev: false,
   integrity: "checked",
 };
+/** The status of a one-bundle network over a generation, the runtime's facts given as one bundle's row. */
+const statusOf = (
+  of: Generation,
+  facts: Partial<Omit<RuntimeStatus, "bundles">> & Partial<Omit<BundleRuntimeStatus, "id">> = {},
+) => {
+  const { lock, loaded, refusing, resetOnOpen, lockOwner, ...row } = facts;
+  return projectBundleStatus(
+    { id: "b", generation: of },
+    {
+      lock: lock ?? "exclusive",
+      loaded: loaded ?? true,
+      ...(refusing === undefined ? {} : { refusing }),
+      ...(resetOnOpen === undefined ? {} : { resetOnOpen }),
+      ...(lockOwner === undefined ? {} : { lockOwner }),
+      bundles: [{ id: "b", loaded: true, fatal: of.report.fatal !== undefined, ...row }],
+    },
+    {
+      network: "b",
+      bundles: [{ id: "b", source: "./kb", sourceKind: "local" }],
+      limitDefault: 8,
+      resultBudget: RESULT_BUDGET,
+    },
+    NOW,
+  );
+};
 const jsonSafe = (value: unknown): boolean =>
   JSON.stringify(value) === JSON.stringify(JSON.parse(JSON.stringify(value)));
 
@@ -97,6 +123,7 @@ describe("projections parse under their strict schemas and are JSON-safe", () =>
   const response: SearchResponse = {
     hits: [
       {
+        bundle: "b",
         path: "terms/alpha.md",
         title: "Alpha",
         type: "Term",
@@ -109,6 +136,7 @@ describe("projections parse under their strict schemas and are JSON-safe", () =>
         sources: 0,
       },
       {
+        bundle: "b",
         path: "terms/epsilon.md",
         title: "Epsilon",
         type: "Term",
@@ -202,12 +230,7 @@ describe("projections parse under their strict schemas and are JSON-safe", () =>
   });
 
   it("status: JSON-safe, ISO dates, counts plus capped lists, never a path outside the bundle", () => {
-    const out = projectStatus(
-      generation,
-      { lock: "exclusive", loaded: true, lastAttempt: { at: NOW, outcome: "swapped" } },
-      { company: "b", source: "./kb", dev: false, limitDefault: 8, resultBudget: RESULT_BUDGET },
-      NOW,
-    );
+    const out = statusOf(generation, { lastAttempt: { at: NOW, outcome: "swapped" } });
     expect(() => StatusOutputSchema.parse(out)).not.toThrow();
     expect(jsonSafe(out)).toBe(true);
     expect(out.loadedAt).toBe(NOW.toISOString());
@@ -495,24 +518,17 @@ describe("result bounds (bite 4 build review)", () => {
         encodedFolders: Array.from({ length: 120 }, (_, i) => `dist${i}`),
       },
     };
-    const out = projectStatus(
-      many,
-      { lock: "exclusive", loaded: true },
-      { company: "b", source: "./kb", dev: false, limitDefault: 8, resultBudget: RESULT_BUDGET },
-      NOW,
-    );
+    const out = statusOf(many);
     expect(out.engine.encodedFolders.count).toBe(120);
     expect(out.engine.encodedFolders.first).toHaveLength(50);
   });
 
   it("carries the admitted words no page matches, in the structured output and on the text line (bite a's verification)", () => {
     const words = Array.from({ length: 52 }, (_, i) => `typo-${i}`);
-    const out = projectStatus(
-      { ...generation, report: { ...generation.report, unmatchedAdmits: words } },
-      { lock: "exclusive", loaded: true },
-      { company: "b", source: "./kb", dev: false, limitDefault: 8, resultBudget: RESULT_BUDGET },
-      NOW,
-    );
+    const out = statusOf({
+      ...generation,
+      report: { ...generation.report, unmatchedAdmits: words },
+    });
     expect(() => StatusOutputSchema.parse(out)).not.toThrow();
     expect(out.unmatchedAdmits).toEqual({ count: 52, first: words.slice(0, 50) });
     expect(statusSummary(out)).toContain("52 admitted statuses that match no page");
@@ -521,12 +537,7 @@ describe("result bounds (bite 4 build review)", () => {
   });
 
   it("puts the last attempt and the list counts on the status text line", () => {
-    const out = projectStatus(
-      generation,
-      { lock: "exclusive", loaded: true, lastAttempt: { at: NOW, outcome: "failed" } },
-      { company: "b", source: "./kb", dev: false, limitDefault: 8, resultBudget: RESULT_BUDGET },
-      NOW,
-    );
+    const out = statusOf(generation, { lastAttempt: { at: NOW, outcome: "failed" } });
     const line = statusSummary(out);
     expect(line).toContain("last attempt failed at 2026-10-06T12:00:00.000Z");
     expect(line).toMatch(/\d+ broken links?/);
@@ -1373,5 +1384,64 @@ describe("the last rows go until the result fits (bite b's build review B-I-B6)"
       const out = projectWalk(walk, budget);
       within(out, walkText(out), budget);
     }
+  });
+});
+
+// D74: catalog with no bundle beyond one bundle lists the bundles and their root indexes, within the budget.
+describe("the network's catalog (D74)", () => {
+  const withIndex = (bundle: string, body: string): Generation => {
+    const loaded = loadBundle(
+      bundle,
+      [
+        { path: "index.md", bytes: Buffer.from(body) },
+        {
+          path: "a.md",
+          bytes: Buffer.from("---\ntype: Guide\ntitle: A\n---\n\nbody\n"),
+        },
+      ],
+      {
+        admit: ["stable", "deprecated"],
+        dev: false,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    );
+    return { ...generation, catalog: loaded.catalog, report: loaded.report };
+  };
+
+  it("cuts each root index to its share of the budget in both channels, and says so", () => {
+    // Quotation marks and line breaks lengthen the escaped forms, so the cut is measured in each channel.
+    const long = `# Index\n${'"quoted" line\n'.repeat(4_000)}`;
+    const network = {
+      bundles: [
+        { id: "one", generation: withIndex("one", long) },
+        { id: "two", generation: withIndex("two", long) },
+      ],
+    };
+    const { output, text } = projectNetworkCatalog(network, "acme", RESULT_BUDGET);
+    expect(JSON.stringify(output).length).toBeLessThanOrEqual(RESULT_BUDGET);
+    expect(text.length).toBeLessThanOrEqual(RESULT_BUDGET);
+    expect(output.truncated).toBe(true);
+    for (const row of output.bundles) {
+      expect(row.index?.truncated, row.bundle).toBe(true);
+      expect(long.startsWith(row.index?.text ?? "x"), row.bundle).toBe(true);
+      // Each index keeps a fair share, not a sliver: the two together fill most of what the frame leaves.
+      expect(JSON.stringify(row.index?.text).length, row.bundle).toBeGreaterThan(RESULT_BUDGET / 4);
+    }
+    expect(text.split("\n").filter((line) => line.startsWith("- root index of "))).toHaveLength(2);
+    // A short index comes whole.
+    const small = projectNetworkCatalog(
+      { bundles: [{ id: "one", generation: withIndex("one", "# Short\n") }] },
+      "acme",
+      RESULT_BUDGET,
+    );
+    expect(small.output.truncated).toBe(false);
+    expect(small.output.bundles[0]?.index).toEqual({
+      source: "file",
+      text: "# Short\n",
+      truncated: false,
+    });
   });
 });

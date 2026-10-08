@@ -196,9 +196,8 @@ export async function runServe(argv: string[]): Promise<number> {
   );
   let runtime: Runtime;
   let options: ToolOptions = {
-    company: "unknown",
-    source: "unknown",
-    dev: false,
+    network: "unknown",
+    bundles: [],
     limitDefault: 8,
     resultBudget: RESULT_BUDGET,
   };
@@ -251,9 +250,8 @@ export async function runServe(argv: string[]): Promise<number> {
             )
           : placeholder;
       options = {
-        company: network.network,
-        source: described,
-        dev: config.serve.dev,
+        network: network.network,
+        bundles: [{ id: config.id, source: described, sourceKind: configured.kind }],
         limitDefault: network.limitDefault,
         resultBudget: RESULT_BUDGET,
       };

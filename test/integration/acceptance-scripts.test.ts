@@ -7,7 +7,7 @@ import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, describe, expect, it } from "vitest";
 import { MARKER } from "../../src/catalog/text.js";
 import { createServerFactory } from "../../src/mcp/server.js";
-import { fakeRuntime, loadGeneration } from "../helpers/fake-runtime.js";
+import { fakeRuntime, loadGeneration, toolOptions } from "../helpers/fake-runtime.js";
 import { NOW } from "../helpers/fixtures.js";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -131,7 +131,7 @@ describe("the acceptance scripts", { timeout: 60_000 }, () => {
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
     const server = createServerFactory(
       fakeRuntime(generation),
-      { company: "cited", source: "./cited", dev: false, limitDefault: 8, resultBudget: 40_000 },
+      toolOptions("cited", [{ id: "b", source: "./cited", sourceKind: "local" }]),
       () => NOW,
     )();
     await server.connect(serverTransport);

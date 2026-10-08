@@ -4,12 +4,13 @@ import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Page } from "../../src/bundle/model.js";
 import {
+  projectBundleStatus,
   projectSearch,
-  projectStatus,
   REFUSING_CAP,
   refusingText,
   statusSummary,
 } from "../../src/catalog/outputs.js";
+import type { BundleRuntimeStatus, Generation, RuntimeStatus } from "../../src/catalog/runtime.js";
 import { hitLine, pageHeader, safe } from "../../src/catalog/text.js";
 import {
   discoverConfigPath,
@@ -25,15 +26,34 @@ import { fakeEngine, loadGeneration } from "../helpers/fake-runtime.js";
 import { NOW, readFixture } from "../helpers/fixtures.js";
 
 const HOME = "/home/someone";
-const toolOptions = {
-  company: "b",
-  source: "./kb",
-  dev: false,
-  limitDefault: 8,
-  resultBudget: 40_000,
+/** The status of a one-bundle network over a generation, the runtime's facts given as one bundle's row. */
+const statusOf = (
+  of: Generation,
+  facts: Partial<Omit<RuntimeStatus, "bundles">> & Partial<Omit<BundleRuntimeStatus, "id">> = {},
+) => {
+  const { lock, loaded, refusing, resetOnOpen, lockOwner, ...row } = facts;
+  return projectBundleStatus(
+    { id: "b", generation: of },
+    {
+      lock: lock ?? "exclusive",
+      loaded: loaded ?? true,
+      ...(refusing === undefined ? {} : { refusing }),
+      ...(resetOnOpen === undefined ? {} : { resetOnOpen }),
+      ...(lockOwner === undefined ? {} : { lockOwner }),
+      bundles: [{ id: "b", loaded: true, fatal: of.report.fatal !== undefined, ...row }],
+    },
+    {
+      network: "b",
+      bundles: [{ id: "b", source: "./kb", sourceKind: "local" }],
+      limitDefault: 8,
+      resultBudget: 40_000,
+    },
+    NOW,
+  );
 };
 
 const hit = (patch: Partial<SearchHit> = {}): SearchHit => ({
+  bundle: "b",
   path: "a.md",
   title: "A",
   type: "Guide",
@@ -119,7 +139,7 @@ describe("outputs (round 2)", () => {
       (p) => p.staleAfter?.at !== undefined && NOW.getTime() >= p.staleAfter.at.getTime(),
     ).length;
     expect(expected).toBeGreaterThan(0);
-    const out = projectStatus(generation, { lock: "exclusive", loaded: true }, toolOptions, NOW);
+    const out = statusOf(generation);
     expect(out.overdue).toBe(expected);
     expect(statusSummary(out)).toContain(`${expected} overdue`);
   });
@@ -144,12 +164,7 @@ describe("outputs (round 2)", () => {
     const made = refusingText(long);
     expect(made.length).toBeLessThanOrEqual(REFUSING_CAP + 40);
     expect(made).not.toContain("\n");
-    const out = projectStatus(
-      generation,
-      { lock: "exclusive", loaded: true, refusing: long },
-      toolOptions,
-      NOW,
-    );
+    const out = statusOf(generation, { refusing: long });
     expect(out.refusing?.length ?? 0).toBeLessThanOrEqual(REFUSING_CAP + 40);
     expect(out.refusing).not.toContain("\n");
   });
@@ -239,28 +254,23 @@ describe("status lines for a repository source (bite 5)", () => {
     published: { commit: "c".repeat(40), fetchedAt: new Date("2026-10-07T09:00:00Z") },
   };
   it("names the published commit, the poller's last tick, the lock's holder and the last refusal", () => {
-    const out = projectStatus(
-      withPublished,
-      {
-        lock: "private",
-        loaded: true,
-        fatal: false,
-        lockOwner: { pid: 4242, startedAt: "2026-10-07T08:00:00Z", alive: true },
-        poller: {
-          intervalMs: 600_000,
-          lastTick: new Date("2026-10-07T09:10:00Z"),
-          lastOutcome: "unchanged",
-        },
-        lastRefusal: {
-          commit: "d".repeat(40),
-          rule: "symlink",
-          path: "link.md",
-          detail: "a symbolic link",
-        },
+    const out = statusOf(withPublished, {
+      lock: "private",
+      loaded: true,
+      fatal: false,
+      lockOwner: { pid: 4242, startedAt: "2026-10-07T08:00:00Z", alive: true },
+      poller: {
+        intervalMs: 600_000,
+        lastTick: new Date("2026-10-07T09:10:00Z"),
+        lastOutcome: "unchanged",
       },
-      toolOptions,
-      NOW,
-    );
+      lastRefusal: {
+        commit: "d".repeat(40),
+        rule: "symlink",
+        path: "link.md",
+        detail: "a symbolic link",
+      },
+    });
     const line = statusSummary(out);
     expect(line).toContain("published cccccccccccc fetched 2026-10-07T09:00:00.000Z");
     expect(line).toContain("poller every 600 s, last tick unchanged at 2026-10-07T09:10:00.000Z");
@@ -269,19 +279,14 @@ describe("status lines for a repository source (bite 5)", () => {
     expect(out.lastRefusal).toMatchObject({ commit: "d".repeat(40), rule: "symlink" });
   });
   it("says the holder is unreadable when the private lock's owner file is not, and shows nothing for a local source", () => {
-    const privateNoOwner = projectStatus(
-      generation,
-      { lock: "private", loaded: true, fatal: false, lockOwner: null },
-      toolOptions,
-      NOW,
-    );
+    const privateNoOwner = statusOf(generation, {
+      lock: "private",
+      loaded: true,
+      fatal: false,
+      lockOwner: null,
+    });
     expect(statusSummary(privateNoOwner)).toContain("lock private (holder unreadable)");
-    const local = projectStatus(
-      generation,
-      { lock: "exclusive", loaded: true, fatal: false },
-      toolOptions,
-      NOW,
-    );
+    const local = statusOf(generation, { lock: "exclusive", loaded: true, fatal: false });
     expect(local.published).toBeNull();
     expect(local.poller).toBeNull();
     expect(local.lastRefusal).toBeNull();

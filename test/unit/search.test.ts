@@ -939,3 +939,152 @@ describe("search: the filters (issue 4)", () => {
     expect(Object.keys(some.filteredOut).sort()).toEqual(seven);
   });
 });
+
+// Issue 3 and D74: one search over the network's bundles, each hit with its bundle; paths stay bundle-relative.
+describe("search: a network of bundles (D74)", () => {
+  const load = (bundle: string, pages: Array<[string, string]>): Catalog =>
+    loadBundle(
+      bundle,
+      pages.map(([path, body]) => ({
+        path,
+        bytes: Buffer.from(
+          `---\ntype: Metric\ntitle: ${path}\ndescription: A page.\n---\n\n${body}\n`,
+        ),
+      })),
+      {
+        admit: ["stable", "deprecated"],
+        dev: false,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    ).catalog;
+  /**
+   * An engine over several bundles, one table: every term a prefix, the bundle's id a word of each path as qmd's
+   * `filepath` column holds it, and equal scores in the reverse of bundle order, so the order a search returns is
+   * its own and never the engine's.
+   */
+  function networkEngine(catalogs: Map<string, Catalog>): Engine {
+    const texts: Array<{ bundle: string; path: string; words: string[] }> = [];
+    for (const [bundle, catalog] of catalogs)
+      for (const page of catalog.pages.values())
+        texts.push({
+          bundle,
+          path: page.path,
+          words: `${bundle} ${page.path} ${renderDocument(deriveDocument(page))}`
+            .toLowerCase()
+            .split(/[^\p{L}\p{N}-]+/u)
+            .filter((w) => w.length > 0),
+        });
+    return {
+      ...fakeEngine(base),
+      async lex(terms, limit): Promise<EngineHit[]> {
+        const hits: EngineHit[] = [];
+        for (const { bundle, path, words } of texts) {
+          let bm25 = 0;
+          let all = true;
+          for (const term of terms) {
+            const n = words.filter((w) => w.startsWith(term)).length;
+            if (n === 0) all = false;
+            bm25 += n;
+          }
+          if (all && terms.length > 0) hits.push({ bundle, path, bm25, score: bm25 / (1 + bm25) });
+        }
+        return hits
+          .sort((x, y) => y.bm25 - x.bm25 || (x.bundle < y.bundle ? 1 : -1))
+          .slice(0, limit);
+      },
+    };
+  }
+
+  it("returns a hit from each bundle and matches a topic inside the bundle", async () => {
+    const catalogs = new Map([
+      [
+        "a",
+        load("a", [
+          ["metrics/revenue.md", "Revenue as the finance team books it."],
+          ["notes/revenue-notes.md", "Revenue notes on the metrics."],
+        ]),
+      ],
+      [
+        "b",
+        load("b", [
+          ["metrics/revenue.md", "Revenue by region."],
+          ["notes/revenue-notes.md", "More revenue notes on the metrics."],
+        ]),
+      ],
+    ]);
+    // This holds for a small fixture only: an unscoped search takes one global top-k (qmd's searchFTS fetches
+    // exactly the limit without a collection), so once one bundle fills the limit the other contributes no hit.
+    // It is not a ranking guarantee.
+    const all = await search(catalogs, networkEngine(catalogs), request("revenue"), NOW);
+    expect(all.hits.map((h) => `${h.bundle}:${h.path}`).sort()).toEqual([
+      "a:metrics/revenue.md",
+      "a:notes/revenue-notes.md",
+      "b:metrics/revenue.md",
+      "b:notes/revenue-notes.md",
+    ]);
+    // A topic matches the path inside each bundle, never one that begins with the bundle's id.
+    const topic = await search(
+      catalogs,
+      networkEngine(catalogs),
+      request("revenue", { topic: "metrics" }),
+      NOW,
+    );
+    expect(topic.hits.map((h) => `${h.bundle}:${h.path}`).sort()).toEqual([
+      "a:metrics/revenue.md",
+      "b:metrics/revenue.md",
+    ]);
+    // The notes name the metrics, so the topic's word does not keep them from the engine: the filter leaves them out,
+    // each bundle's page once, under its bundle: one path in two bundles is two pages.
+    expect(topic.filteredOut.topic).toBe(2);
+    expect(topic.considered).toBe(4);
+    const prefixed = await search(
+      catalogs,
+      networkEngine(catalogs),
+      request("revenue", { topic: "a/metrics" }),
+      NOW,
+    );
+    expect(prefixed.hits).toEqual([]);
+    // A hit of a bundle the search was not given (refused, or not this network's) is no page of it.
+    const one = await search(
+      new Map([["a", catalogs.get("a") as Catalog]]),
+      networkEngine(catalogs),
+      request("revenue"),
+      NOW,
+    );
+    expect(one.hits.every((h) => h.bundle === "a")).toBe(true);
+    expect(one.filteredOut.unknown).toBe(2);
+  });
+
+  it("orders equal paths in two bundles by bundle id", async () => {
+    const page: Array<[string, string]> = [["metrics/revenue.md", "Revenue, the same words."]];
+    // Ids chosen so the engine's order (reverse bundle order on a tie) is the opposite of the answer's.
+    const catalogs = new Map([
+      ["zeta", load("zeta", page)],
+      ["alpha", load("alpha", page)],
+    ]);
+    const engine = networkEngine(catalogs);
+    const rows = await engine.lex(["revenue"], 10);
+    expect(rows.map((r) => r.bundle)).toEqual(["zeta", "alpha"]);
+    expect(rows[0]?.bm25).toBe(rows[1]?.bm25);
+    for (const relax of [true, false]) {
+      const r = await search(catalogs, engine, request("revenue", { relax }), NOW);
+      expect(r.hits.map((h) => [h.bundle, h.path])).toEqual([
+        ["alpha", "metrics/revenue.md"],
+        ["zeta", "metrics/revenue.md"],
+      ]);
+    }
+    // Equal score and trust order by path first, then by bundle id.
+    const mixed = new Map([
+      ["zeta", load("zeta", [["a/first.md", "revenue words"]])],
+      ["alpha", load("alpha", [["b/second.md", "revenue words"]])],
+    ]);
+    const ordered = await search(mixed, networkEngine(mixed), request("revenue"), NOW);
+    expect(ordered.hits.map((h) => `${h.bundle}:${h.path}`)).toEqual([
+      "zeta:a/first.md",
+      "alpha:b/second.md",
+    ]);
+  });
+});
