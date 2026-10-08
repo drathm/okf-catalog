@@ -842,6 +842,12 @@ describe("get_page and the concept id (R7)", () => {
     expect(text(await c.call("get_page", { path: "foo.md.md" }))).toBe(
       '"foo.md.md" names more than one page: foo.md.md (no name reaches it alone), foo.md.md.md (ask for "foo.md.md.md")',
     );
+    // The path's description promises a name of its own only where there is one (the fix pass's verification).
+    const getPage = (await c.client.listTools()).tools.find((t) => t.name === "get_page");
+    const path = (getPage?.inputSchema.properties as Record<string, { description?: string }>).path;
+    expect(path?.description).toMatch(
+      /names each page, with a name that means it alone where there is one\.$/,
+    );
     const miss = await s.call("get_page", { path: "guides/b" });
     expect(miss.isError).toBe(true);
     expect(text(miss)).toMatch(

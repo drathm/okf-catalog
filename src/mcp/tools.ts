@@ -308,7 +308,7 @@ export function registerTools(
           .min(1)
           .max(1024)
           .describe(
-            "The page's path in the bundle, as a search result or a catalog lists it, or its concept id (the path without .md). An exact path is ambiguous when a sibling page X.md.md exists, X.md being that page's concept id too; the error then names each page with a name that means it alone.",
+            "The page's path in the bundle, as a search result or a catalog lists it, or its concept id (the path without .md). An exact path is ambiguous when a sibling page X.md.md exists, X.md being that page's concept id too; the error then names each page, with a name that means it alone where there is one.",
           ),
         offset: z
           .number()
