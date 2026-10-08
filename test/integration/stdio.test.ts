@@ -1147,6 +1147,92 @@ describe("okf-catalog serve over stdio: a network (D72, D73)", { timeout: 90_000
     }
   });
 
+  // The fold of bite c's build reviews, C-I-B3, C-I-B4 and C-A-B1: two repository bundles through serve, each with its
+  // own clone, its own poller at its own interval, and its source's log records under its own id (D75).
+  it("serves two repository bundles, each polled at its own interval and logged under its own id", async () => {
+    const first = packedRepo();
+    const second = packedRepo();
+    const yaml = (one: string, two: string): string =>
+      `network: fixture\nbundles:\n  - id: one\n    source:\n      repository: "${one}"\n    serve:\n      pull_interval: 30s\n  - id: two\n    source:\n      repository: "${two}"\n    serve:\n      pull_interval: 2m\n`;
+    type Row = {
+      id: string;
+      state: string;
+      poller: { intervalMs: number; lastTick: string | null; lastOutcome: string | null } | null;
+    };
+    try {
+      const b = box("spec-example", yaml(first.url, second.url));
+      b.env.OKF_CATALOG_GIT_PROTOCOLS = "file";
+      const start = async (): Promise<ReturnType<typeof rawServer>> => {
+        const run = rawServer(b);
+        run.send(INITIALIZE);
+        await run.waitFor(1);
+        run.send(INITIALIZED);
+        return run;
+      };
+      // Each bundle clones its own repository into its own folder, and both are searched.
+      const online = await start();
+      const rows = (await statusOver(online, 2)).bundles as Row[];
+      expect(rows.map((row) => [row.id, row.state])).toEqual([
+        ["one", "serving"],
+        ["two", "serving"],
+      ]);
+      online.send({
+        jsonrpc: "2.0",
+        id: 3,
+        method: "tools/call",
+        params: { name: "search", arguments: { question: "alpha" } },
+      });
+      const found = (await online.waitFor(3)).result as {
+        structuredContent: { hits: Array<{ bundle: string }> };
+      };
+      expect(new Set(found.structuredContent.hits.map((hit) => hit.bundle))).toEqual(
+        new Set(["one", "two"]),
+      );
+      expect((await online.end()).code).toBe(0);
+      for (const id of ["one", "two"])
+        expect(
+          existsSync(join(companyDir(b), "bundles", id, "source", "repo.git", "HEAD")),
+          id,
+        ).toBe(true);
+      // Each bundle names the other's repository now: each source starts over, and says so under its own id.
+      writeFileSync(b.configPath, yaml(second.url, first.url));
+      const swapped = await start();
+      expect(
+        ((await statusOver(swapped, 2)).bundles as Row[]).map((row) => [row.id, row.state]),
+      ).toEqual([
+        ["one", "serving"],
+        ["two", "serving"],
+      ]);
+      expect((await swapped.end()).code).toBe(0);
+      for (const id of ["one", "two"])
+        expect(swapped.stderr(), id).toMatch(
+          new RegExp(`"event":"source.recloned","bundle":"${id}"`),
+        );
+      // Offline, each bundle answers from its tree on disk and its own poller ticks at once: each tick names its
+      // bundle, and each row shows its own poller at its own interval.
+      renameSync(join(first.root, "origin.git"), join(first.root, "origin.moved"));
+      renameSync(join(second.root, "origin.git"), join(second.root, "origin.moved"));
+      const offline = await start();
+      const ticked = (id: string): boolean =>
+        offline.stderr().includes(`"event":"poller.tick","bundle":"${id}"`);
+      const started = Date.now();
+      while (!(ticked("one") && ticked("two")) && Date.now() - started < 20_000)
+        await new Promise((r) => setTimeout(r, 50));
+      expect(ticked("one") && ticked("two")).toBe(true);
+      const polled = (await statusOver(offline, 2)).bundles as Row[];
+      expect(
+        polled.map((row) => [row.id, row.poller?.intervalMs, row.poller?.lastOutcome]),
+      ).toEqual([
+        ["one", 30_000, "failed"],
+        ["two", 120_000, "failed"],
+      ]);
+      expect((await offline.end()).code).toBe(0);
+    } finally {
+      rmSync(first.root, { recursive: true, force: true });
+      rmSync(second.root, { recursive: true, force: true });
+    }
+  });
+
   // The fold of bite c's build reviews, C-I-B2 (D73's "else removed"): a version 0 clone moves only into the one
   // repository bundle of a network that has exactly one, and only when it is a folder; otherwise it is removed.
   it("removes a version 0 clone that no one repository bundle can take, and never moves a link", async () => {
