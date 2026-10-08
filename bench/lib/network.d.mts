@@ -23,6 +23,28 @@ export function pairNetwork(
   split: ReadonlyMap<string, ReadonlyMap<string, number | null>>,
   questions: ReadonlyArray<{ id: string; style: string }>,
 ): Record<string, Paired>;
+/** The gold page's rank and score in one run, null when it is not among the first five. */
+export interface Outcome {
+  rank: number | null;
+  score: number | null;
+}
+export interface PairedAlone {
+  alone: Record<string, Summary> & { all: Summary };
+  network: Record<string, Summary> & { all: Summary };
+  better: number;
+  worse: number;
+  same: number;
+  changed: Array<{ id: string; alone: number | null; network: number | null }>;
+  /** Answers that found the gold page in both runs. */
+  scored: number;
+  /** Of those, the answers that gave it another score. */
+  scoreChanged: number;
+}
+export function pairAlone(
+  alone: ReadonlyMap<string, ReadonlyMap<string, Outcome>>,
+  network: ReadonlyMap<string, ReadonlyMap<string, Outcome>>,
+  questions: ReadonlyArray<{ id: string; style: string }>,
+): Record<string, PairedAlone>;
 export function renderNetworkNote(result: {
   meta: {
     ran: string;
@@ -38,6 +60,14 @@ export function renderNetworkNote(result: {
     Pick<Paired, "better" | "worse" | "same" | "changed"> & {
       one: { all: Summary };
       split: { all: Summary };
+    }
+  >;
+  /** Each folder alone against the network; absent from a note written before the pairing existed. */
+  alone?: Record<
+    string,
+    Pick<PairedAlone, "better" | "worse" | "same" | "changed" | "scored" | "scoreChanged"> & {
+      alone: { all: Summary };
+      network: { all: Summary };
     }
   >;
 }): string;

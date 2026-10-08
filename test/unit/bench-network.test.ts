@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   NETWORK_CONFIGS,
+  pairAlone,
   pairNetwork,
   renderNetworkNote,
   splitGold,
@@ -81,7 +82,49 @@ describe("the network measurement's arithmetic (bench/lib/network.mjs)", () => {
     });
   });
 
-  it("renders the note from the result alone, each configuration paired with the one-bundle run", () => {
+  // The fold of bite c's build reviews (C-I-D1, C-A-D1): the pairing that measures D-D sets each folder indexed alone
+  // against the same folder inside the network, on the gold page's rank and its score.
+  it("pairs each folder alone with the same folder in the network, on the gold rank and the gold page's score", () => {
+    const questions = [
+      { id: "Q1", style: "reuse", gold: "a/one.md" },
+      { id: "Q2", style: "paraphrase", gold: "a/two.md" },
+      { id: "Q3", style: "paraphrase", gold: "b/three.md" },
+    ];
+    type Outcome = { rank: number | null; score: number | null };
+    const of = (rows: Array<[string, Outcome]>) =>
+      new Map(NETWORK_CONFIGS.map((config) => [config, new Map<string, Outcome>(rows)]));
+    const alone = of([
+      ["Q1", { rank: 1, score: 2.5 }],
+      ["Q2", { rank: 3, score: 1.25 }],
+      ["Q3", { rank: null, score: null }],
+    ]);
+    const network = of([
+      ["Q1", { rank: 1, score: 2.5 }],
+      ["Q2", { rank: 2, score: 1.5 }],
+      ["Q3", { rank: 4, score: 0.5 }],
+    ]);
+    const paired = pairAlone(alone, network, questions);
+    expect(Object.keys(paired)).toEqual(NETWORK_CONFIGS);
+    expect(paired["question/relaxed"]).toMatchObject({
+      better: 2,
+      worse: 0,
+      same: 1,
+      changed: [
+        { id: "Q2", alone: 3, network: 2 },
+        { id: "Q3", alone: null, network: 4 },
+      ],
+      // Found in both runs: Q1 and Q2; Q2's score moved.
+      scored: 2,
+      scoreChanged: 1,
+      alone: { all: { n: 3, "hit@1": 1, "hit@3": 2, "MRR@5": 0.444 } },
+      network: { all: { n: 3, "hit@1": 1, "hit@3": 2, "MRR@5": 0.583 } },
+    });
+    // A question no folder answers alone (its gold is in no bundle that ran) is left out of the pairing.
+    const fewer = pairAlone(of([["Q1", { rank: 1, score: 2.5 }]]), network, questions);
+    expect(fewer["keywords/strict"]).toMatchObject({ better: 0, worse: 0, same: 1, scored: 1 });
+  });
+
+  it("renders the note from the result alone: each folder alone against the network first, then the same pages split", () => {
     const row = { n: 25, "hit@1": 10, "hit@3": 15, "MRR@5": 0.5 };
     const note = renderNetworkNote({
       meta: {
@@ -106,14 +149,43 @@ describe("the network measurement's arithmetic (bench/lib/network.mjs)", () => {
           },
         ]),
       ),
+      alone: Object.fromEntries(
+        NETWORK_CONFIGS.map((config) => [
+          config,
+          {
+            alone: { all: { ...row, "hit@1": 12 } },
+            network: { all: row },
+            better: 0,
+            worse: 2,
+            same: 23,
+            changed: [
+              { id: "Q3", alone: 1, network: 2 },
+              { id: "Q9", alone: 4, network: null },
+            ],
+            scored: 20,
+            scoreChanged: 17,
+          },
+        ]),
+      ),
     });
     expect(note).toMatch(/^# Benchmark: a network of bundles\n/);
+    expect(note).toContain("not gated");
+    // The measurement of D-D comes first: each folder alone against the same folder in the network.
+    const alone = note.indexOf("## Each folder alone against the network");
+    const split = note.indexOf("## The same pages, split");
+    expect(alone).toBeGreaterThan(-1);
+    expect(split).toBeGreaterThan(alone);
     expect(note).toContain(
+      "| question/relaxed | 12/25 | 15/25 | 0.50 | 10/25 | 15/25 | 0.50 | 0 | 2 | 23 | 17 of 20 |",
+    );
+    expect(note.slice(alone, split)).toContain("Q3: 1 → 2; Q9: 4 → miss");
+    // The split pairing says what it is: the same pages, which no statistic of the table tells apart.
+    expect(note.slice(split)).toContain("near no-op by construction");
+    expect(note.slice(split)).toContain(
       "| question/relaxed | 10/25 | 15/25 | 0.50 | 11/25 | 15/25 | 0.50 | 1 | 0 | 24 |",
     );
-    expect(note).toContain("Q7: 2 → 1");
+    expect(note.slice(split)).toContain("Q7: 2 → 1");
     expect(note).toContain("okf-skills");
-    expect(note).toContain("not gated");
   });
 });
 
@@ -173,6 +245,16 @@ describe("bench/run.mjs --split", () => {
           string,
           { one: unknown; split: unknown; same: number; better: number; worse: number }
         >;
+        alone: Record<
+          string,
+          {
+            same: number;
+            better: number;
+            worse: number;
+            scored: number;
+            scoreChanged: number;
+          }
+        >;
       };
     };
     // Each top-level folder its own bundle; the root's own files belong to none and are counted.
@@ -188,6 +270,12 @@ describe("bench/run.mjs --split", () => {
     expect(Object.keys(summary.network.configs)).toEqual(NETWORK_CONFIGS);
     for (const paired of Object.values(summary.network.configs))
       expect(paired.better + paired.worse + paired.same).toBe(2);
+    // Each question asked of its gold page's folder alone, and of the network: the measurement of D-D.
+    expect(Object.keys(summary.network.alone)).toEqual(NETWORK_CONFIGS);
+    for (const paired of Object.values(summary.network.alone)) {
+      expect(paired.better + paired.worse + paired.same).toBe(2);
+      expect(paired.scoreChanged).toBeLessThanOrEqual(paired.scored);
+    }
     // For another bundle, the note goes beside the results, never into the checkout.
     expect(readdirSync(out).some((f) => f.endsWith("benchmark-network.md"))).toBe(true);
   });

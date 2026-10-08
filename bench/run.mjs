@@ -18,9 +18,11 @@
 // comparison on every push. For a bundle other than the public corpus the pin, like --out, stays outside this
 // checkout.
 // The network measurement (bite c, D-D, D73): `--split` also loads each top-level folder of the corpus as its own
-// bundle, one collection each in one index, runs the four unfiltered lexical configurations over the network and
-// pairs each question's gold rank with the one-bundle run's. Recorded, not gated: it writes
-// `docs/research/benchmark-network.md` for the public corpus, and the note beside the results for another bundle.
+// bundle, runs the four unfiltered lexical configurations over the four bundles in one index (a network) and over
+// each folder indexed alone, and pairs each question's gold rank and score in its folder alone with the same page in
+// the network: the measurement D-D asks for. It also pairs the network with the one-bundle run, the same pages split
+// into collections, a near no-op by construction. Recorded, not gated: it writes `docs/research/benchmark-network.md`
+// for the public corpus, and the note beside the results for another bundle.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -438,10 +440,11 @@ await engine.close();
 // --- the network measurement (--split) -----------------------------------------------------------------------
 // Each top-level folder its own bundle: its own walk, its own loadBundle call and catalog, one collection each in
 // one index (D73), searched as the server searches a network. The four unfiltered configurations only, paired
-// with the one-bundle ranks above on the gold page, which in the network is the folder's bundle and the rest.
+// with the one-bundle ranks above on the gold page, which in the network is the folder's bundle and the rest; then
+// each folder indexed alone, in a store of its own, paired with the same folder in the network (D-D).
 let network = null;
 if (split) {
-  const { NETWORK_CONFIGS, pairNetwork, splitGold } = await import("./lib/network.mjs");
+  const { NETWORK_CONFIGS, pairAlone, pairNetwork, splitGold } = await import("./lib/network.mjs");
   const folders = readdirSync(corpus, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
     .map((entry) => entry.name)
@@ -457,6 +460,8 @@ if (split) {
   const skippedAtRoot = walked.files.filter((f) => !f.path.includes("/")).length;
   const splitEngine = await QmdEngine.open({ bundles: folders, dir: join(work, "split") });
   const catalogs = new Map();
+  /** Each folder's derived documents, indexed again alone below. */
+  const docsOf = new Map();
   const bundles = [];
   const splitStarted = performance.now();
   for (const id of folders) {
@@ -480,17 +485,21 @@ if (split) {
     if (loaded.report.fatal !== undefined)
       fail(EXIT_USAGE, `--split: the bundle ${id} was refused: ${loaded.report.fatal.rule}`);
     catalogs.set(id, loaded.catalog);
-    const result = await splitEngine.index(
-      id,
-      [...loaded.catalog.pages.values()].map(deriveDocument),
-    );
+    const docs = [...loaded.catalog.pages.values()].map(deriveDocument);
+    docsOf.set(id, docs);
+    const result = await splitEngine.index(id, docs);
     bundles.push({ id, pages: loaded.report.admitted, documents: result.documents });
   }
   const splitIndexMs = Math.round(performance.now() - splitStarted);
+  const networkConfigs = CONFIGS.filter((c) => NETWORK_CONFIGS.includes(c.key));
   const splitRanks = new Map();
-  for (const config of CONFIGS.filter((c) => NETWORK_CONFIGS.includes(c.key))) {
+  /** The gold page's rank and score in the network, by configuration and question. */
+  const inNetwork = new Map();
+  for (const config of networkConfigs) {
     const outcomes = new Map();
     splitRanks.set(config.key, outcomes);
+    const found = new Map();
+    inNetwork.set(config.key, found);
     for (const q of questions) {
       const gold = splitGold(q.gold);
       const extra = config.request(q);
@@ -509,6 +518,7 @@ if (split) {
       const position = top.findIndex((h) => h.bundle === gold.bundle && h.path === gold.path);
       const rank = position === -1 ? null : position + 1;
       outcomes.set(q.id, rank);
+      found.set(q.id, { rank, score: position === -1 ? null : top[position].score });
       emit({
         config: `split:${config.key}`,
         id: q.id,
@@ -523,11 +533,55 @@ if (split) {
     }
   }
   await splitEngine.close();
+  // Each folder alone: its bundle in a store of its own, asked the questions whose gold page it holds (D-D).
+  const alone = new Map(networkConfigs.map((config) => [config.key, new Map()]));
+  for (const id of folders) {
+    const asked = questions.filter((q) => splitGold(q.gold).bundle === id);
+    if (asked.length === 0) continue;
+    const aloneEngine = await QmdEngine.open({ bundles: [id], dir: join(work, "alone", id) });
+    await aloneEngine.index(id, docsOf.get(id));
+    const own = new Map([[id, catalogs.get(id)]]);
+    for (const config of networkConfigs) {
+      for (const q of asked) {
+        const gold = splitGold(q.gold);
+        const r = await search(
+          own,
+          aloneEngine,
+          {
+            question: textOf(q, config.form),
+            includeStale: true,
+            limit: config.limit ?? 5,
+            ...config.request(q),
+          },
+          NOW,
+        );
+        const top = r.hits.slice(0, 5);
+        const position = top.findIndex((h) => h.bundle === gold.bundle && h.path === gold.path);
+        const rank = position === -1 ? null : position + 1;
+        alone
+          .get(config.key)
+          .set(q.id, { rank, score: position === -1 ? null : top[position].score });
+        emit({
+          config: `alone:${config.key}`,
+          id: q.id,
+          style: q.style,
+          terms: r.terms,
+          rung: r.strategy,
+          rank,
+          top5: top.map((h) => `${h.bundle}:${h.path}`),
+          considered: r.considered,
+          pool: r.pool,
+        });
+      }
+    }
+    await aloneEngine.close();
+  }
   network = {
     bundles,
     skippedAtRoot,
     indexMs: splitIndexMs,
     configs: pairNetwork(ranks, splitRanks, questions),
+    alone: pairAlone(alone, inNetwork, questions),
   };
 }
 
@@ -1217,6 +1271,7 @@ if (network !== null) {
     },
     bundles: network.bundles,
     configs: network.configs,
+    alone: network.alone,
   });
   const notePath =
     bundleDir === undefined

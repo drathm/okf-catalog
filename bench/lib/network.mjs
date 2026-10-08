@@ -1,9 +1,12 @@
-// The network measurement of bite c (D-D, D73): `bench/run.mjs --split` loads each top-level folder of the corpus as
-// its own bundle, one collection each in one index, and runs the four unfiltered lexical configurations; their
-// gold ranks are paired, question by question, with the one-bundle run of the same harness invocation. Adding
-// bundles to one index moves BM25 for all (N, n(q), avgdl are the whole table's, and a bundle's id is a token of
-// every one of its pages' paths), so the measurement is recorded, never gated: the one-bundle guard is the gate.
-// Pure functions over plain values; `test/unit/bench-network.test.ts` checks them and the flag.
+// The network measurement of bite c (D-D, D73): `bench/run.mjs --split` measures what a network does to a bundle's
+// ranks, over the four unfiltered lexical configurations, with two pairings. SQLite's BM25 counts N, n(q) and avgdl
+// over the whole FTS table, which every collection of one store shares, so a bundle that joins a network moves the
+// scores of every other; and a bundle's id is a token of every one of its pages' paths. The measurement of D-D sets
+// each corpus folder indexed alone against the same folder inside the network (the fold of bite c's build reviews,
+// C-I-D1); the second pairing, the one-bundle run against the same pages split into one collection per folder, holds
+// the same pages in one table and is a near no-op by construction: it checks that collections change no rank. Both
+// are recorded, never gated: the one-bundle guard is the gate. Pure functions over plain values;
+// `test/unit/bench-network.test.ts` checks them and the flag.
 
 /** The configurations the split runs: the four without a filter, so a filter's own effect does not enter. */
 export const NETWORK_CONFIGS = [
@@ -73,6 +76,43 @@ export function pairNetwork(one, split, questions) {
   return result;
 }
 
+/**
+ * Per configuration: each question's gold page in its folder's bundle indexed alone, paired with the same page in the
+ * network (D-D): the two summaries; better, worse and the same on the gold rank (a miss ranks as 99), seen from the
+ * network, with each question whose rank changed; and, of the answers that found the gold page in both runs, how many
+ * gave it another score. A question no folder answered alone is left out.
+ */
+export function pairAlone(alone, network, questions) {
+  const result = {};
+  const ranksOf = (outcomes) => new Map([...outcomes].map(([id, outcome]) => [id, outcome.rank]));
+  for (const config of NETWORK_CONFIGS) {
+    const a = alone.get(config) ?? new Map();
+    const b = network.get(config) ?? new Map();
+    const paired = questions.filter((q) => a.has(q.id));
+    const tally = { better: 0, worse: 0, same: 0, changed: [], scored: 0, scoreChanged: 0 };
+    for (const q of paired) {
+      const x = a.get(q.id) ?? { rank: null, score: null };
+      const y = b.get(q.id) ?? { rank: null, score: null };
+      const xr = x.rank ?? 99;
+      const yr = y.rank ?? 99;
+      if (yr < xr) tally.better += 1;
+      else if (yr > xr) tally.worse += 1;
+      else tally.same += 1;
+      if (x.rank !== y.rank) tally.changed.push({ id: q.id, alone: x.rank, network: y.rank });
+      if (x.score !== null && y.score !== null) {
+        tally.scored += 1;
+        if (x.score !== y.score) tally.scoreChanged += 1;
+      }
+    }
+    result[config] = {
+      alone: summarise(ranksOf(a), paired),
+      network: summarise(ranksOf(b), paired),
+      ...tally,
+    };
+  }
+  return result;
+}
+
 const cell = (row) =>
   `${row["hit@1"]}/${row.n} | ${row["hit@3"]}/${row.n} | ${row["MRR@5"].toFixed(2)}`;
 const rank = (value) => (value === null ? "miss" : String(value));
@@ -80,20 +120,43 @@ const rank = (value) => (value === null ? "miss" : String(value));
 /** `docs/research/benchmark-network.md`, every number from the result it is given. */
 export function renderNetworkNote(result) {
   const m = result.meta;
+  const commits =
+    Object.entries(m.corpus ?? {})
+      .map(([name, commit]) => `${name} ${commit ?? "unknown"}`)
+      .join(", ") || "not read";
+  const moved = (changed, from, to) =>
+    changed.length === 0
+      ? "none"
+      : changed.map((c) => `${c.id}: ${rank(c[from])} → ${rank(c[to])}`).join("; ");
   const lines = [
     "# Benchmark: a network of bundles",
     "",
     `Written by \`node bench/run.mjs --split\` on ${m.ran}, okf-catalog at \`${m.okfCatalogCommit ?? "unknown"}\`, qmd ${m.qmd}, Node ${m.node}, ${m.os}. Recorded, not gated: the gate is the one-bundle guard (\`bench/expected/lexical-ranks.json\`, D66), which this run also held or failed on its own.`,
     "",
-    "What it measures (plan for 0.2 to 0.4, section 3.3, step 8; D-D, D73). The one-bundle run loads the public corpus as one bundle, `bench`, in one qmd collection. The split run loads each top-level folder of the corpus as its own bundle, with its own `loadBundle` call and its own catalog, one collection each, in one index: the shape of a network. Both run the four unfiltered lexical configurations at limit 5, question by question, and the gold page's rank in the first five is paired: better, worse or the same. The split loads read no manifest, which covers a whole tree and never one folder of it; the public corpus has none, so both runs read the same pages. A shift is expected: SQLite's BM25 counts N, n(q) and avgdl over the whole FTS table, which every collection shares, and a bundle's id is a token of each of its pages' `filepath` (`<id>/<path>`), where the one-bundle run had `bench/<folder>/<path>`.",
+    "What it measures (plan for 0.2 to 0.4, section 3.3, step 8; D-D, D73). SQLite's BM25 counts N, n(q) and avgdl over the whole FTS table, which every collection of one store shares, so a bundle that joins a network moves every other bundle's scores; and a bundle's id is a token of each of its pages' `filepath` (`<id>/<path>`). Two pairings over the four unfiltered lexical configurations at limit 5, the gold page's rank in the first five paired question by question: better, worse or the same. Each corpus folder is loaded as its own bundle, with its own `loadBundle` call and its own catalog; the loads read no manifest, which covers a whole tree and never one folder of it (the public corpus has none).",
     "",
-    "## Bundles",
+    "## Each folder alone against the network",
     "",
-    "| Bundle | Pages admitted | Documents indexed |",
-    "|---|---|---|",
-    ...result.bundles.map((b) => `| ${b.id} | ${b.pages} | ${b.documents} |`),
+    "The measurement D-D accepts and asks for. Each question is asked of its gold page's folder indexed alone, a store of its own holding that bundle only, and of the network, the four folders' bundles in one store: the gold page's rank and score alone are paired with its rank and score among every bundle's pages. The network columns count the questions whose gold rank is better, worse or the same there; the last column counts, of the answers that found the gold page in both runs, those that gave it another score.",
     "",
-    "## The four unfiltered configurations",
+    "| Configuration | alone hit@1 | hit@3 | MRR@5 | network hit@1 | hit@3 | MRR@5 | network better | worse | same | gold score changed |",
+    "|---|---|---|---|---|---|---|---|---|---|---|",
+    ...NETWORK_CONFIGS.map((config) => {
+      const c = result.alone?.[config];
+      if (c === undefined) return `| ${config} | not run |`;
+      return `| ${config} | ${cell(c.alone.all)} | ${cell(c.network.all)} | ${c.better} | ${c.worse} | ${c.same} | ${c.scoreChanged} of ${c.scored} |`;
+    }),
+    "",
+    "The questions whose gold rank moved, alone → network:",
+    "",
+    ...NETWORK_CONFIGS.map(
+      (config) =>
+        `- ${config}: ${moved(result.alone?.[config]?.changed ?? [], "alone", "network")}`,
+    ),
+    "",
+    "## The same pages, split",
+    "",
+    "A near no-op by construction, kept as a check that collections change no rank, and not the measurement of a bundle joining. The one-bundle run loads the public corpus as one bundle, `bench`, in one collection; the split run loads each folder as its own bundle, one collection each, in one store. Both stores hold the same pages, so N, n(q) and avgdl are the same but for the `filepath` column, which loses the token `bench` (`bench/<folder>/<path>` becomes `<folder>/<path>`).",
     "",
     "| Configuration | one bundle hit@1 | hit@3 | MRR@5 | split hit@1 | hit@3 | MRR@5 | better | worse | same |",
     "|---|---|---|---|---|---|---|---|---|---|",
@@ -102,20 +165,19 @@ export function renderNetworkNote(result) {
       return `| ${config} | ${cell(c.one.all)} | ${cell(c.split.all)} | ${c.better} | ${c.worse} | ${c.same} |`;
     }),
     "",
-    "## The questions whose gold rank moved",
+    "The questions whose gold rank moved, one bundle → split:",
     "",
-    ...NETWORK_CONFIGS.flatMap((config) => {
-      const changed = result.configs[config].changed;
-      return [
-        `- ${config}: ${changed.length === 0 ? "none" : changed.map((c) => `${c.id}: ${rank(c.one)} → ${rank(c.split)}`).join("; ")}`,
-      ];
-    }),
+    ...NETWORK_CONFIGS.map(
+      (config) => `- ${config}: ${moved(result.configs[config].changed, "one", "split")}`,
+    ),
     "",
-    `Corpus commits: ${
-      Object.entries(m.corpus ?? {})
-        .map(([name, commit]) => `${name} ${commit ?? "unknown"}`)
-        .join(", ") || "not read"
-    }.`,
+    "## Bundles",
+    "",
+    "| Bundle | Pages admitted | Documents indexed |",
+    "|---|---|---|",
+    ...result.bundles.map((b) => `| ${b.id} | ${b.pages} | ${b.documents} |`),
+    "",
+    `Corpus commits: ${commits}.`,
     "",
   ];
   return lines.join("\n");
