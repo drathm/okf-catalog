@@ -1,5 +1,13 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -79,6 +87,70 @@ describe("the acceptance scripts", { timeout: 60_000 }, () => {
     );
     expect(r.stdout).toMatch(
       /^S9 \(paraphrase\): question: absent \(every word of the question is a common word[^)]*\) {2}<-- expected page not among the hits$/m,
+    );
+    expect(r.stdout).toContain("1 of 2 expected pages found");
+    expect(r.status).toBe(1);
+  });
+
+  // The fold of bite c's build reviews, C-I-B6: beyond one bundle a gold page is named as a result line prints it,
+  // bundle:path, and ask.mjs finds that page in that bundle, not the same path in another.
+  it("ask.mjs matches a gold page written bundle:path in its bundle alone", () => {
+    const folder = join(temp, "two");
+    for (const id of ["a", "b"])
+      cpSync(join(REPO, "test", "fixtures", "bundles", "spec-example"), join(folder, id), {
+        recursive: true,
+      });
+    const config = join(folder, "okf-catalog.yaml");
+    writeFileSync(
+      config,
+      "network: two\nbundles:\n  - id: a\n    source:\n      local: ./a\n  - id: b\n    source:\n      local: ./b\n",
+    );
+    const questions = join(folder, "questions.json");
+    writeFileSync(
+      questions,
+      JSON.stringify([
+        {
+          id: "N1",
+          style: "reuse",
+          question: "gross margin",
+          keywords: ["gross", "margin"],
+          gold: "b:metrics/gross-margin.md",
+        },
+        {
+          id: "N2",
+          style: "reuse",
+          question: "gross margin",
+          keywords: ["gross", "margin"],
+          gold: "c:metrics/gross-margin.md",
+        },
+      ]),
+    );
+    const r = spawnSync(
+      process.execPath,
+      [join(ACCEPTANCE, "ask.mjs"), "--config", config, "--questions", questions],
+      {
+        cwd: folder,
+        env: {
+          ...process.env,
+          NODE_LLAMA_CPP_SKIP_DOWNLOAD: "1",
+          XDG_CACHE_HOME: join(folder, "cache"),
+          OKF_CATALOG_NOW: "2026-10-06T12:00:00Z",
+        },
+        encoding: "utf8",
+      },
+    );
+    expect(r.stderr).not.toMatch(/Error|TypeError/);
+    // The two bundles serve the same page with the same score; a's comes first (path, then bundle id), so b's is
+    // second: the rank of the page the gold names, not of the first hit with its path.
+    expect(r.stdout).toMatch(
+      /^N1 \(reuse\): question: rank 2 of \d+ hits; keywords: rank 2 of \d+ hits$/m,
+    );
+    expect(r.stdout).toMatch(
+      /expected page: b:metrics\/gross-margin\.md, type Metric, status stable/,
+    );
+    // A bundle the network does not hold finds nothing, not the path in another bundle.
+    expect(r.stdout).toMatch(
+      /^N2 \(reuse\): question: absent of \d+ hits; keywords: absent of \d+ hits {2}<-- expected page not among the hits$/m,
     );
     expect(r.stdout).toContain("1 of 2 expected pages found");
     expect(r.status).toBe(1);
@@ -313,6 +385,37 @@ describe("the acceptance scripts", { timeout: 60_000 }, () => {
     );
     expect(unnamed.stdout).toContain("the answer does not name the bundle spec-example");
     expect(unnamed.status).toBe(1);
+    // The cited name is matched whole, bundle:path (C-I-B6): a bundle named apart from the path, a longer id that
+    // holds the expected one, or a longer path, is not the page.
+    const cite = (answer: string) =>
+      verify(
+        [init, call("mcp__okf-catalog__get_page"), result(answer)],
+        ["--expect-path", "policies/revenue-recognition.md", "--expect-bundle", "spec-example"],
+      );
+    for (const answer of [
+      "In bundle spec-example, policies/revenue-recognition.md (human-reviewed) says …",
+      "old-spec-example:policies/revenue-recognition.md (human-reviewed) says …",
+      "spec-examples:policies/revenue-recognition.md (human-reviewed) says …",
+      "spec-example:policies/revenue-recognition.md.bak (human-reviewed) says …",
+    ]) {
+      const r = cite(answer);
+      expect(r.stdout, answer).toContain(
+        "the answer does not cite spec-example:policies/revenue-recognition.md",
+      );
+      expect(r.status, answer).toBe(1);
+    }
+    for (const answer of [
+      "`spec-example:policies/revenue-recognition.md` (human-reviewed) says …",
+      "It is cited as spec-example:policies/revenue-recognition.md. Human-reviewed.",
+    ])
+      expect(cite(answer).status, answer).toBe(0);
+    // The bundle is checked on the cited name, so it needs the path.
+    const alone = verify(
+      [init, call("mcp__okf-catalog__get_page"), result("spec-example:x.md")],
+      ["--expect-bundle", "spec-example"],
+    );
+    expect(alone.stderr).toContain("--expect-bundle needs --expect-path");
+    expect(alone.status).toBe(2);
   });
 
   it("claude.sh's question item checks the answer names the bundle when one is given (the 0.4 item)", () => {
