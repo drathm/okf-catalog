@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { loadBundle } from "../../src/bundle/load.js";
 import { DEFAULT_CAPS, type Page } from "../../src/bundle/model.js";
-import type { Citations, Walk, WalkNode } from "../../src/catalog/graph.js";
+import { type Citations, citationsOf, type Walk, type WalkNode } from "../../src/catalog/graph.js";
 import {
   CatalogOutputSchema,
   CitationsOutputSchema,
@@ -554,7 +554,9 @@ describe("the result budget (D82)", () => {
         sources: [
           { id: `f${i}`, resource: `https://x.test/${i}`, title: longText(`title ${i}`, 80) },
         ],
+        sourcesTotal: 1,
       })),
+      claimsTotal: 60,
       bibliography: sixty((i) => ({ resource: `https://x.test/b${i}`, title: `B ${i}` })),
       unjoined: sixty((i) => ({ footnote: `u${i}`, block: `Unjoined ${i}.` })),
       inboundDerivations: sixty((i) => ({
@@ -595,6 +597,7 @@ describe("the result budget (D82)", () => {
         mentions: citations.mentions.slice(0, 2),
         inboundMentions: [],
         claims: [],
+        claimsTotal: 0,
         bibliography: [],
         unjoined: [],
         inboundDerivations: [],
@@ -604,6 +607,49 @@ describe("the result budget (D82)", () => {
     expect(small.truncated).toBe(false);
     expect(small.mentions).toMatchObject({ total: 2 });
     expect(small.mentions.rows).toHaveLength(2);
+  });
+
+  it("answers a page of 6 000 references to 6 000 sources of one id within seconds, the claim rows bounded (bite b's build reviews B-A-A1, B-I-A1)", () => {
+    // The adversarial reviewer's page: every reference joins every source, so a full join is 36 million rows and
+    // ran the server out of memory. The bound is generous, since CI runs under load; the counts are the contract.
+    const n = 6_000;
+    const sources = Array.from(
+      { length: n },
+      (_, i) => `  - { id: x, resource: "https://x.test/${i}" }\n`,
+    ).join("");
+    const body = Array.from({ length: n }, (_, i) => `Claim ${i}.[^x]`).join("\n\n");
+    const text = `---\ntype: Note\ntitle: A\ndescription: D\nusage_window: { from: 2026-01-01, to: 2026-03-31 }\nsources:\n${sources}---\n\n${body}\n\n[^x]: X.\n`;
+    const loaded = loadBundle(
+      "b",
+      [{ path: "a.md", bytes: Buffer.from(text) }],
+      {
+        admit: ["stable"],
+        dev: false,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    );
+    const joined = loaded.catalog.pages.get("a.md");
+    if (joined === undefined) throw new Error("a.md");
+    expect(joined.footnoteReferences).toHaveLength(n);
+    const started = performance.now();
+    const out = projectCitations(citationsOf(loaded.catalog, joined), RESULT_BUDGET);
+    const textOut = citationsText(out);
+    const elapsed = performance.now() - started;
+    expect(elapsed).toBeLessThan(10_000);
+    expect(out.claims.total).toBe(n);
+    expect(out.claims.rows.length).toBeGreaterThan(0);
+    expect(out.claims.rows.length).toBeLessThanOrEqual(50);
+    for (const claim of out.claims.rows) {
+      expect(claim.sourcesTotal).toBe(n);
+      expect(claim.sources.length).toBeLessThanOrEqual(50);
+    }
+    expect(out.bibliography.total).toBe(0);
+    expect(out.unjoined.total).toBe(0);
+    within(out, textOut);
+    expect(() => CitationsOutputSchema.parse(out)).not.toThrow();
   });
 
   it("cuts provenance nodes in walk order at the result budget", () => {
@@ -768,8 +814,10 @@ describe("the result budget (D82)", () => {
           footnote: "f",
           block: hostile,
           sources: [{ id: "f", resource: hostile, title: hostile }],
+          sourcesTotal: 1,
         },
       ],
+      claimsTotal: 1,
       bibliography: [{ resource: "https://x.test", title: hostile }],
       unjoined: [],
       inboundDerivations: [],

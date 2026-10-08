@@ -3,7 +3,14 @@ import type { Page, ReservedFile } from "../bundle/model.js";
 import { byCodeUnit } from "../bundle/paths.js";
 import type { SearchResponse } from "../search/search.js";
 import { snippet } from "../search/snippet.js";
-import { type Citations, LIST_CAP, type Walk, type WalkEdge, type WalkNode } from "./graph.js";
+import {
+  type Citations,
+  LIST_CAP,
+  type SourceFacts,
+  type Walk,
+  type WalkEdge,
+  type WalkNode,
+} from "./graph.js";
 import type { Catalog } from "./model.js";
 import { type DatedWindow, type EffectiveWindow, provenanceOf } from "./provenance.js";
 import type { Generation, RuntimeStatus, ToolOptions } from "./runtime.js";
@@ -339,7 +346,9 @@ export const CitationsOutputSchema = z.strictObject({
       footnote: z.string(),
       block: z.string(),
       heading: z.string().optional(),
+      /** The first 50 sources the reference joins; `sourcesTotal` says how many there are. */
       sources: z.array(SourceFactsSchema),
+      sourcesTotal: z.number(),
     }),
   ),
   bibliography: cappedList(SourceFactsSchema),
@@ -906,19 +915,30 @@ export function citationsText(output: CitationsOutput): string {
  * budget is spent, every cut list keeping its total, and the result says `truncated`.
  */
 export function projectCitations(citations: Citations, budget: number): CitationsOutput {
+  // Only the rows a list can carry are projected (at most 50 each); each claim's list of sources is projected once
+  // per id and shared, as the graph shares it (bite b's build reviews B-I-A1, B-A-A1).
+  const first = <T>(rows: readonly T[]): readonly T[] => rows.slice(0, LIST_CAP);
+  const projectedSources = new Map<readonly SourceFacts[], Rows["claims"][number]["sources"]>();
+  const sourcesOut = (sources: readonly SourceFacts[]): Rows["claims"][number]["sources"] => {
+    const done = projectedSources.get(sources);
+    if (done !== undefined) return done;
+    const projected = sources.map(({ window, ...source }) => ({ ...source, ...windowOut(window) }));
+    projectedSources.set(sources, projected);
+    return projected;
+  };
   const all: Rows = {
-    mentions: citations.mentions.map((m) => ({ ...m })),
-    inboundMentions: citations.inboundMentions.map((m) => ({ ...m })),
-    claims: citations.claims.map(({ sources, ...claim }) => ({
+    mentions: first(citations.mentions).map((m) => ({ ...m })),
+    inboundMentions: first(citations.inboundMentions).map((m) => ({ ...m })),
+    claims: first(citations.claims).map(({ sources, ...claim }) => ({
       ...claim,
-      sources: sources.map(({ window, ...source }) => ({ ...source, ...windowOut(window) })),
+      sources: sourcesOut(sources),
     })),
-    bibliography: citations.bibliography.map(({ window, ...source }) => ({
+    bibliography: first(citations.bibliography).map(({ window, ...source }) => ({
       ...source,
       ...windowOut(window),
     })),
-    unjoined: citations.unjoined.map((u) => ({ ...u })),
-    inboundDerivations: citations.inboundDerivations.map(({ window, ...derivation }) => ({
+    unjoined: first(citations.unjoined).map((u) => ({ ...u })),
+    inboundDerivations: first(citations.inboundDerivations).map(({ window, ...derivation }) => ({
       ...derivation,
       ...windowOut(window),
     })),
@@ -933,12 +953,12 @@ export function projectCitations(citations: Citations, budget: number): Citation
   };
   const build = (truncated: boolean): CitationsOutput => {
     const totals = {
-      mentions: all.mentions.length,
-      inboundMentions: all.inboundMentions.length,
-      claims: all.claims.length,
-      bibliography: all.bibliography.length,
-      unjoined: all.unjoined.length,
-      inboundDerivations: all.inboundDerivations.length,
+      mentions: citations.mentions.length,
+      inboundMentions: citations.inboundMentions.length,
+      claims: citations.claimsTotal,
+      bibliography: citations.bibliography.length,
+      unjoined: citations.unjoined.length,
+      inboundDerivations: citations.inboundDerivations.length,
     };
     return {
       path: citations.path,

@@ -375,7 +375,9 @@ export function claimLine(claim: {
   footnote: string;
   block: string;
   heading?: string | undefined;
-  sources: Array<SourceFields & { resource: string }>;
+  sources: ReadonlyArray<SourceFields & { resource: string }>;
+  /** How many sources the reference joins; the line names the first ones and says how many there are. */
+  sourcesTotal?: number | undefined;
 }): string {
   const joined = claim.sources
     .map(
@@ -383,7 +385,12 @@ export function claimLine(claim: {
         `${s.id === undefined ? "" : `${quoted(s.id)} `}${quoted(s.resource)}${sourceSignals(s)}`,
     )
     .join("; and ");
-  return `- footnote ${quoted(claim.footnote)}: ${quoted(claim.block)}${under(claim.heading)}; its source${claim.sources.length === 1 ? "" : "s"} ${joined}`;
+  const total = claim.sourcesTotal ?? claim.sources.length;
+  const which =
+    total > claim.sources.length
+      ? `its ${total} sources, the first ${claim.sources.length}:`
+      : `its source${total === 1 ? "" : "s"}`;
+  return `- footnote ${quoted(claim.footnote)}: ${quoted(claim.block)}${under(claim.heading)}; ${which} ${joined}`;
 }
 
 export function unjoinedLine(footnote: {

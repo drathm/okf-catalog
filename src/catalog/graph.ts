@@ -56,12 +56,17 @@ export interface SourceFacts {
   window?: EffectiveWindow;
 }
 
-/** A footnote reference joined to every source whose id it matches without regard to case (§5.1). */
+/**
+ * A footnote reference joined to the sources whose id it matches without regard to case (§5.1): the first 50 of
+ * them in the page's order, beside how many there are (bite b's build reviews B-I-A1, B-I-E2).
+ */
 export interface Claim {
   footnote: string;
   block: string;
   heading?: string;
-  sources: SourceFacts[];
+  /** One list per source id, built once and shared by every claim that cites the id. */
+  sources: readonly SourceFacts[];
+  sourcesTotal: number;
 }
 
 /** A footnote reference no source joins: not a claim. */
@@ -85,7 +90,11 @@ export interface Derivation {
   window?: DatedWindow;
 }
 
-/** What a page cites and what cites it, each list whole: the projection caps and budgets them. */
+/**
+ * What a page cites and what cites it. Each list is whole but the claims, of which the first 50 are built, since a
+ * join of every reference to every source of one id grows as their product; the projection caps and budgets the
+ * rest.
+ */
 export interface Citations {
   path: PagePath;
   /** The page's shared window, once: the claims' and the bibliography's sources that inherit it name it. */
@@ -94,7 +103,10 @@ export interface Citations {
   partial: boolean;
   mentions: Mention[];
   inboundMentions: InboundMention[];
+  /** The first 50 claims in document order. */
   claims: Claim[];
+  /** How many footnote references join a source: the claims there are. */
+  claimsTotal: number;
   bibliography: SourceFacts[];
   unjoined: Unjoined[];
   inboundDerivations: Derivation[];
@@ -120,8 +132,11 @@ function sourceFacts(source: Source, pageWindow: UsageWindow | undefined): Sourc
  * What a page cites and what cites it (issue 5), from what the loader stored: its body links in document order,
  * a link to a page that is not admitted called `unserved`; the body links of admitted pages that point at it;
  * its footnote references joined to its sources by id without regard to case, each with the block holding it and
- * every source it matches; the sources no footnote joins; the references no source joins; and the admitted pages
- * whose `resource` or source names it under the path-field classifier. Nothing is fetched or opened.
+ * the first 50 sources it matches beside their total, the first 50 such claims built and all of them counted; the
+ * sources no footnote joins; the references no source joins; and the admitted pages whose `resource` or source
+ * names it under the path-field classifier. Nothing is fetched or opened. The work is linear in the page's
+ * references and sources: each source's facts are built once, and each id's list once (bite b's build reviews
+ * B-I-A1, B-A-A1).
  */
 export function citationsOf(catalog: Catalog, page: Page): Citations {
   const mentions = page.links.map((link): Mention => {
@@ -146,32 +161,54 @@ export function citationsOf(catalog: Catalog, page: Page): Citations {
     if (same === undefined) byId.set(key, [i]);
     else same.push(i);
   });
-  const joined = new Set<number>();
+  // Each source's facts are built once, when a list first needs them, and shared by reference.
+  const facts: Array<SourceFacts | undefined> = [];
+  const factsOf = (i: number): SourceFacts => {
+    const built = facts[i] ?? sourceFacts(page.sources[i] as Source, page.usageWindow);
+    facts[i] = built;
+    return built;
+  };
+  // Each id's list, its first 50 sources and their total, is built when a claim first cites it.
+  const lists = new Map<string, { sources: readonly SourceFacts[]; total: number }>();
+  const joinedIds = new Set<string>();
   const claims: Claim[] = [];
+  let claimsTotal = 0;
   const unjoined: Unjoined[] = [];
   for (const reference of page.footnoteReferences) {
-    const matches = byId.get(reference.id.toLowerCase()) ?? [];
-    if (matches.length === 0) {
+    const key = reference.id.toLowerCase();
+    const matches = byId.get(key);
+    if (matches === undefined) {
       unjoined.push(
         withHeading({ footnote: reference.id, block: reference.block }, reference.heading),
       );
       continue;
     }
-    for (const i of matches) joined.add(i);
+    joinedIds.add(key);
+    claimsTotal += 1;
+    if (claims.length >= LIST_CAP) continue;
+    let list = lists.get(key);
+    if (list === undefined) {
+      list = { sources: matches.slice(0, LIST_CAP).map(factsOf), total: matches.length };
+      lists.set(key, list);
+    }
     claims.push(
       withHeading(
         {
           footnote: reference.id,
           block: reference.block,
-          sources: matches.map((i) => sourceFacts(page.sources[i] as Source, page.usageWindow)),
+          sources: list.sources,
+          sourcesTotal: list.total,
         },
         reference.heading,
       ),
     );
   }
-  const bibliography = page.sources
-    .filter((_, i) => !joined.has(i))
-    .map((source) => sourceFacts(source, page.usageWindow));
+  // A source no reference joins: one with no id, or whose id no reference names.
+  const bibliography: SourceFacts[] = [];
+  page.sources.forEach((source, i) => {
+    if (source.id === undefined || !joinedIds.has(source.id.toLowerCase()))
+      bibliography.push(factsOf(i));
+  });
   const inboundDerivations = (catalog.graph.inboundDerivations.get(page.path) ?? []).map(
     ({ from, edge }): Derivation => {
       const derivation: Derivation = {
@@ -198,6 +235,7 @@ export function citationsOf(catalog: Catalog, page: Page): Citations {
     mentions,
     inboundMentions,
     claims,
+    claimsTotal,
     bibliography,
     unjoined,
     inboundDerivations,

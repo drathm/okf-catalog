@@ -52,6 +52,7 @@ describe("citationsOf", () => {
         },
         { id: "GA4-Schema", resource: "https://x.test/ga4-old" },
       ],
+      sourcesTotal: 2,
     };
     // Two references in one block are two claims with the same prose.
     expect(cited.claims).toEqual([claim, claim]);
@@ -154,6 +155,35 @@ describe("citationsOf", () => {
       { from: "page.md", text: "self", heading: "Links" },
     ]);
     expect(cited.inboundDerivations.map((d) => d.from)).toEqual(["sourcing.md"]);
+  });
+
+  it("builds at most 50 claims in document order, each with at most 50 sources shared by reference, every cut keeping its total (bite b's build reviews B-I-A1, B-A-A1, B-I-E2)", () => {
+    // Seventy references to one id that sixty sources carry, and one source no reference names.
+    const catalog = bundle({
+      "many.md": note(
+        sources(
+          ...Array.from({ length: 60 }, (_, i) => `{ id: x, resource: https://x.test/${i} }`),
+          "{ id: y, resource: https://x.test/y }",
+        ),
+        `${Array.from({ length: 70 }, (_, i) => `Claim ${i}.[^x]`).join("\n\n")}\n\n[^x]: X.\n`,
+      ),
+    });
+    const cited = citationsOf(catalog, pageOf(catalog, "many.md"));
+    expect(cited.claimsTotal).toBe(70);
+    expect(cited.claims).toHaveLength(50);
+    expect(cited.claims.map((c) => c.block)).toEqual(
+      Array.from({ length: 50 }, (_, i) => `Claim ${i}.`),
+    );
+    for (const claim of cited.claims) {
+      expect(claim.sourcesTotal).toBe(60);
+      expect(claim.sources.map((s) => s.resource)).toEqual(
+        Array.from({ length: 50 }, (_, i) => `https://x.test/${i}`),
+      );
+    }
+    // One list per source id, built once and shared: no claim copies another's sources.
+    expect(cited.claims[49]?.sources).toBe(cited.claims[0]?.sources);
+    expect(cited.bibliography.map((s) => s.id)).toEqual(["y"]);
+    expect(cited.unjoined).toEqual([]);
   });
 
   it("says partial when the body was only partly analysed", () => {
