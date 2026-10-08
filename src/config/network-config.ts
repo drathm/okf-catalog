@@ -5,7 +5,13 @@ import { z } from "zod/v4";
 import { type Caps, DEFAULT_CAPS, type SpecText } from "../bundle/model.js";
 import { isSafeRelativePath } from "../bundle/paths.js";
 import { safe } from "../catalog/text.js";
-import { foldersOverlap, networkDir } from "../fs/cache-dir.js";
+import {
+  catalogCacheDir,
+  folderInside,
+  foldersOverlap,
+  networkDir,
+  realFolder,
+} from "../fs/cache-dir.js";
 
 /** Where a bundle comes from: a folder on this machine, or a published branch fetched into the cache (D47, D50). */
 export type BundleSource =
@@ -59,8 +65,9 @@ export interface ParseOptions {
   /** Accept `file://` repositories (a test-only setting, paired with the `file` transport protocol). */
   allowFileRepositories?: boolean;
   /**
-   * The cache root the server will use: when given, a local bundle that lies inside the network's cache folder, or
-   * holds it, is refused (D76). `serve` gives it; `pack`, which writes no cache, does not.
+   * The cache root the server will use: when given, a local bundle that lies inside the okf-catalog cache folder (any
+   * network's part of it), or holds this network's folder, is refused, real paths compared (D76). `serve` gives it;
+   * `pack`, which writes no cache, does not.
    */
   cacheRoot?: string;
 }
@@ -345,7 +352,11 @@ function nameProblem(value: string, key: string): string | undefined {
   return undefined;
 }
 
-/** The local folders the network may not use: inside its cache folder or holding it, or another bundle's (D76). */
+/**
+ * The local folders the network may not use (D76), each compared by its real path, so a link to a folder or its name
+ * in another case on a file system that ignores case is that folder (C-A-A6): a folder inside the okf-catalog cache
+ * folder, whichever network's part of it, or holding this network's; a folder inside another bundle's, or holding it.
+ */
 function folderProblems(
   network: string,
   bundles: ReadonlyArray<{ bundle: BundleConfig; key: (name: string) => string }>,
@@ -353,24 +364,30 @@ function folderProblems(
 ): string[] {
   const problems: string[] = [];
   const cache =
-    options.cacheRoot === undefined ? undefined : networkDir(options.cacheRoot, network);
-  bundles.forEach(({ bundle, key }, index) => {
-    if (bundle.source.kind !== "local") return;
-    const path = bundle.source.path;
-    if (cache !== undefined && foldersOverlap(cache, path)) {
+    options.cacheRoot === undefined
+      ? undefined
+      : {
+          all: realFolder(catalogCacheDir(options.cacheRoot)),
+          own: realFolder(networkDir(options.cacheRoot, network)),
+        };
+  const real = bundles.map(({ bundle }) =>
+    bundle.source.kind === "local" ? realFolder(bundle.source.path) : undefined,
+  );
+  bundles.forEach(({ key }, index) => {
+    const path = real[index];
+    if (path === undefined) return;
+    if (cache !== undefined && (folderInside(path, cache.all) || folderInside(cache.own, path))) {
       problems.push(
-        `${key("source.local")}: lies inside the network's cache folder, or holds it; set XDG_CACHE_HOME to a folder outside the bundle`,
+        `${key("source.local")}: lies inside the okf-catalog cache folder (every network's) or holds this network's; set XDG_CACHE_HOME to a folder outside the bundle`,
       );
     }
-    const earlier = bundles
-      .slice(0, index)
-      .find(
-        (other) =>
-          other.bundle.source.kind === "local" && foldersOverlap(other.bundle.source.path, path),
-      );
-    if (earlier !== undefined) {
+    const earlier = bundles.findIndex((_, other) => {
+      const there = real[other];
+      return other < index && there !== undefined && foldersOverlap(there, path);
+    });
+    if (earlier !== -1) {
       problems.push(
-        `${key("source.local")}: lies inside the folder of bundle ${JSON.stringify(earlier.bundle.id)}, or holds it; two bundles never share a file`,
+        `${key("source.local")}: lies inside the folder of bundle ${JSON.stringify(bundles[earlier]?.bundle.id)}, or holds it; two bundles never share a file`,
       );
     }
   });

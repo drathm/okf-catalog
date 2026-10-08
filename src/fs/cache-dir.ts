@@ -1,5 +1,5 @@
 import { chmodSync, existsSync, lstatSync, mkdirSync, realpathSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 /** The cache root: an absolute XDG_CACHE_HOME, else the platform's cache folder. A relative XDG value is ignored and noted. */
 export function cacheRoot(input: {
@@ -21,9 +21,14 @@ export function cacheRoot(input: {
 const fallbackRoot = (platform: NodeJS.Platform, home: string): string =>
   platform === "darwin" ? join(home, "Library", "Caches") : join(home, ".cache");
 
+/** The okf-catalog cache folder under the cache root: every network's folder lies in it (D72). */
+export function catalogCacheDir(root: string): string {
+  return join(root, "okf-catalog");
+}
+
 /** The network's cache folder: its lock, its store, its private folders, and a folder per bundle (D72, D73). */
 export function networkDir(root: string, network: string): string {
-  return join(root, "okf-catalog", network);
+  return join(catalogCacheDir(root), network);
 }
 
 /** A bundle's folder under a work folder (the network's, or a private one): its clone, its trees and its generations. */
@@ -58,14 +63,32 @@ export function judgeFolder(stat: FolderStat, uid: number, isRoot: boolean): str
   return undefined;
 }
 
+/** Whether a folder lies inside another, or is it, by the paths as given (callers compare real paths, `realFolder`). */
+export function folderInside(inner: string, outer: string): boolean {
+  const rel = relative(resolve(outer), resolve(inner));
+  // A sibling named "..out" is outside; only ".." itself or a "../" prefix leaves the folder.
+  return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
+}
+
 /** Whether one folder lies inside the other, or is it: two bundles never share a file (D76). */
 export function foldersOverlap(one: string, other: string): boolean {
-  const inside = (inner: string, outer: string): boolean => {
-    const rel = relative(resolve(outer), resolve(inner));
-    // A sibling named "..out" is outside; only ".." itself or a "../" prefix leaves the folder.
-    return rel === "" || (rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
-  };
-  return inside(one, other) || inside(other, one);
+  return folderInside(one, other) || folderInside(other, one);
+}
+
+/**
+ * A folder's real path: its links resolved and, where the file system ignores case, its name as stored
+ * (`realpathSync.native`), so two spellings of one folder compare as one (D76; the fold of bite c's build reviews,
+ * C-A-A6). The part of a path that does not exist yet is kept as written below its nearest existing folder's real
+ * path.
+ */
+export function realFolder(path: string): string {
+  const absolute = resolve(path);
+  try {
+    return realpathSync.native(absolute);
+  } catch {
+    const parent = dirname(absolute);
+    return parent === absolute ? absolute : join(realFolder(parent), basename(absolute));
+  }
 }
 
 /** Whether one folder lies inside the other: the cache must never sit inside the bundle, nor the bundle inside the cache. */

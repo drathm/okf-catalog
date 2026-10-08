@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -434,17 +434,18 @@ bundles:
     expect(problems(`network: Acme Inc\nbundles:\n${bundle("kb", "./kb")}`)).toEqual([
       "network: must be one lower-case path segment (letters, digits and hyphens, starting with a letter or digit, at most 63 characters)",
     ]);
-    // A bundle folder inside the network's cache folder, or holding it, is refused when the cache root is known.
+    // A bundle folder inside the okf-catalog cache folder, or holding the network's, is refused when the cache
+    // root is known.
     const cached = { cacheRoot: "/home/someone/.cache" };
     const inside = "~/.cache/okf-catalog/acme/kb";
     expect(problems(`network: acme\nbundles:\n${bundle("kb", inside)}`, cached)).toEqual([
-      "bundles[0].source.local: lies inside the network's cache folder, or holds it; set XDG_CACHE_HOME to a folder outside the bundle",
+      "bundles[0].source.local: lies inside the okf-catalog cache folder (every network's) or holds this network's; set XDG_CACHE_HOME to a folder outside the bundle",
     ]);
     expect(problems(`network: acme\nbundles:\n${bundle("kb", "/home/someone")}`, cached)).toEqual([
-      "bundles[0].source.local: lies inside the network's cache folder, or holds it; set XDG_CACHE_HOME to a folder outside the bundle",
+      "bundles[0].source.local: lies inside the okf-catalog cache folder (every network's) or holds this network's; set XDG_CACHE_HOME to a folder outside the bundle",
     ]);
     expect(problems(`company: acme\nsource:\n  local: ${inside}\n`, cached)).toEqual([
-      "source.local: lies inside the network's cache folder, or holds it; set XDG_CACHE_HOME to a folder outside the bundle",
+      "source.local: lies inside the okf-catalog cache folder (every network's) or holds this network's; set XDG_CACHE_HOME to a folder outside the bundle",
     ]);
     expect(problems(`network: acme\nbundles:\n${bundle("kb", inside)}`)).toEqual([]);
     // A bundle folder inside another bundle's folder, or the same folder, is refused: two bundles never share files.
@@ -478,5 +479,59 @@ bundles:
       "bundles[0].source.repository: must be an https:// or ssh:// URL, or user@host:path",
       "bundles[0].source.branch: must be a plain branch name of letters, digits, '.', '_', '-' and '/'",
     ]);
+  });
+});
+
+// The fold of bite c's build reviews, C-A-A6: two spellings of one folder are one folder, and the server's cache
+// folder holds no bundle, whichever network's part of it a bundle would sit in (D76).
+describe("parseNetworkConfig: local folders by their real paths (D76)", () => {
+  const scratch = mkdtempSync(join(tmpdir(), "okf-catalog-config-"));
+  afterAll(() => rmSync(scratch, { recursive: true, force: true }));
+  const network = (...locals: string[]): string =>
+    `network: acme\nbundles:\n${locals.map((local, i) => `  - id: b${i}\n    source:\n      local: ${local}\n`).join("")}`;
+  const at = (text: string, options: ParseOptions = {}): string[] => {
+    const r = parseNetworkConfig(text, scratch, HOME, options);
+    return r.ok ? [] : r.problems;
+  };
+
+  it("takes a link to a bundle's folder, or its name in another case where the file system ignores case, for that folder", () => {
+    mkdirSync(join(scratch, "real", "sub"), { recursive: true });
+    mkdirSync(join(scratch, "other"));
+    symlinkSync(join(scratch, "real"), join(scratch, "link"));
+    const shared =
+      'bundles[1].source.local: lies inside the folder of bundle "b0", or holds it; two bundles never share a file';
+    expect(at(network("./real", "./link"))).toEqual([shared]);
+    expect(at(network("./link/sub", "./real"))).toEqual([shared]);
+    expect(at(network("./real", "./other"))).toEqual([]);
+    // A file system that ignores case (macOS by default) finds the folder under the other spelling: one folder.
+    const ignoresCase = existsSync(join(scratch, "REAL"));
+    expect(at(network("./real", "./REAL"))).toEqual(ignoresCase ? [shared] : []);
+  });
+
+  it("refuses a local bundle anywhere in the okf-catalog cache folder, any network's part of it, or holding this network's", () => {
+    const cacheRoot = join(scratch, "cache");
+    const another = join(cacheRoot, "okf-catalog", "other", "bundles", "b", "derived");
+    mkdirSync(another, { recursive: true });
+    mkdirSync(join(cacheRoot, "elsewhere", "kb"), { recursive: true });
+    symlinkSync(join(cacheRoot, "okf-catalog", "other"), join(scratch, "into-cache"));
+    const cached = { cacheRoot };
+    const refused = (key: string): string[] => [
+      `${key}: lies inside the okf-catalog cache folder (every network's) or holds this network's; set XDG_CACHE_HOME to a folder outside the bundle`,
+    ];
+    // Another network's folder in the cache, the cache folder itself, a link into it.
+    expect(at(network(another), cached)).toEqual(refused("bundles[0].source.local"));
+    expect(at(network(join(cacheRoot, "okf-catalog")), cached)).toEqual(
+      refused("bundles[0].source.local"),
+    );
+    expect(at(network("./into-cache"), cached)).toEqual(refused("bundles[0].source.local"));
+    expect(at(`company: acme\nsource:\n  local: ./into-cache\n`, cached)).toEqual(
+      refused("source.local"),
+    );
+    // A folder that holds this network's folder, even one not yet made.
+    expect(at(network(cacheRoot), cached)).toEqual(refused("bundles[0].source.local"));
+    // Beside the okf-catalog folder, under the same cache root, a bundle is fine.
+    expect(at(network(join(cacheRoot, "elsewhere", "kb")), cached)).toEqual([]);
+    // Without the cache root (pack writes no cache), nothing is checked against it.
+    expect(at(network(another))).toEqual([]);
   });
 });
