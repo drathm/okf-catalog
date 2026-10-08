@@ -50,9 +50,11 @@ export interface Recheck {
 
 export function recheckPhrase(recheck: Recheck | undefined): string {
   if (recheck === undefined) return "no recheck date";
-  if (recheck.overdue) return `overdue since ${safe(recheck.raw)}`;
-  if (recheck.form === "unparseable") return `recheck date unparseable (${safe(recheck.raw)})`;
-  return `recheck ${safe(recheck.raw)}`;
+  // A date that does not parse is any text the company wrote; one that parses is plain and stays bare.
+  const raw = plainOrQuoted(recheck.raw);
+  if (recheck.overdue) return `overdue since ${raw}`;
+  if (recheck.form === "unparseable") return `recheck date unparseable (${raw})`;
+  return `recheck ${raw}`;
 }
 
 function deprecationSuffix(status: string, replacement: string | undefined): string {
@@ -88,6 +90,13 @@ const MISREAD = /[,[\]"\\]/;
  */
 const fact = (word: string, vouched: boolean): string =>
   vouched && !MISREAD.test(word) && escapeControls(word) === word ? safe(word) : quoted(word);
+
+/**
+ * Company text in the brackets that no list vouches for, the verifier, a recheck date and the page's resource: bare
+ * when none of its characters could be misread, otherwise quoted, as a status or type is (P13, amended after the
+ * verification of the build review's fix pass).
+ */
+const plainOrQuoted = (text: string): string => fact(text, true);
 
 /** What a line needs to know about the bundle beyond the page: the types the company did not declare. */
 export interface LineOptions {
@@ -127,7 +136,7 @@ export function hitLine(
     hit.trust,
     recheckPhrase(recheck),
     sourceCount(hit.sources),
-    ...(hit.resource === undefined ? [] : [`resource: ${safe(hit.resource)}`]),
+    ...(hit.resource === undefined ? [] : [`resource: ${plainOrQuoted(hit.resource)}`]),
   ].join(", ");
   const snippetPart = snippet === undefined || snippet.length === 0 ? "" : ` ${quoted(snippet)}`;
   return `${safe(hit.path)} — ${safe(hit.title)} [${facts}]${snippetPart}${deprecationSuffix(hit.status, hit.replacement)}`;
@@ -151,8 +160,8 @@ function verificationPhrase(page: Page): string {
   const named = namedVerification(page);
   if (named === undefined || page.verified.length === 0) return "unverified";
   return named.at === undefined
-    ? `verified by ${safe(named.by)}, date unknown`
-    : `verified by ${safe(named.by)} on ${safe(named.at.raw)}`;
+    ? `verified by ${plainOrQuoted(named.by)}, date unknown`
+    : `verified by ${plainOrQuoted(named.by)} on ${plainOrQuoted(named.at.raw)}`;
 }
 
 /** The citation header of a page: path, then the bracketed facts, then the deprecation. */
@@ -186,7 +195,7 @@ export function pageHeader(page: Page, now: Date, options: LineOptions = {}): st
     ...(page.verified.length === 0 ? [] : [verificationPhrase(page)]),
     recheckPhrase(recheck),
     sources,
-    ...(page.resource === undefined ? [] : [`resource: ${safe(page.resource)}`]),
+    ...(page.resource === undefined ? [] : [`resource: ${plainOrQuoted(page.resource)}`]),
   ].join(", ");
   return `${safe(page.path)} [${facts}]${deprecationSuffix(page.status, page.replacement)}`;
 }
