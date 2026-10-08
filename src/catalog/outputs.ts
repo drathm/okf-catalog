@@ -1026,9 +1026,26 @@ export function projectCatalog(
   return CatalogOutputSchema.parse(output);
 }
 
-const capped = <T>(items: readonly T[]): { count: number; first: T[] } => ({
+/**
+ * How a bundle's own status cuts what the pages wrote (D82): every value at `cap` characters with an ellipsis, and
+ * each of the report's lists at its first `keep` entries, never more than 50, its count kept.
+ */
+interface StatusCut {
+  cap: number;
+  keep: number;
+}
+
+/** The cut a bundle's own status starts from, and a network's row always takes: 2 000 characters, 50 entries. */
+const STATUS_CUT: StatusCut = { cap: FIELD_CAP, keep: STATUS_LIST_CAP };
+
+/** A list as a bundle's own status carries it: its count, and its first entries, each cut by `cut`. */
+const listed = <T>(
+  items: readonly T[],
+  { keep }: StatusCut,
+  cut: (item: T) => T,
+): { count: number; first: T[] } => ({
   count: items.length,
-  first: items.slice(0, STATUS_LIST_CAP),
+  first: items.slice(0, Math.min(keep, STATUS_LIST_CAP)).map(cut),
 });
 
 /** One bundle's facts in its own status: the scalars, the report's lists, and its part of the engine. */
@@ -1040,14 +1057,21 @@ type BundleFacts = Omit<
 };
 
 /**
- * The facts of one bundle's state, in either shape of `status` (D74): every value outside the report's lists cut at
- * 2 000 characters; the lists keep their first 50 entries, as version 0's status did.
+ * The facts of one bundle's state, in either shape of `status` (D74): every value a page, the configuration or the
+ * engine wrote cut at `cut.cap` characters, the lists' values too, and each list at its first `cut.keep` entries,
+ * at most 50 as version 0's status kept (D82; bite c's verification).
  */
 function bundleFacts(
   generation: Generation,
   runtime: BundleRuntimeStatus | undefined,
   now: Date,
+  cut: StatusCut = STATUS_CUT,
 ): BundleFacts {
+  const value = (text: string): string => ellipsised(text, cut.cap);
+  const values =
+    <T extends object, K extends keyof T>(keys: readonly K[]) =>
+    (row: T): T =>
+      capFields(row, keys, cut.cap);
   const r = generation.report;
   let overdue = 0;
   for (const page of generation.catalog.pages.values()) {
@@ -1066,26 +1090,32 @@ function bundleFacts(
     attachments: r.attachments,
     hidden: r.hidden,
     overdue,
-    refusals: capped(r.refusals.map((x) => ({ path: x.path, rule: x.rule, detail: x.detail }))),
-    degradations: capped(
-      r.degradations.map((x) => ({ path: x.path, code: x.code, field: x.field })),
+    refusals: listed(
+      r.refusals.map((x) => ({ path: x.path, rule: x.rule, detail: x.detail })),
+      cut,
+      values(["path", "detail"]),
     ),
-    unknownTypes: capped(r.unknownTypes),
-    unknownStatuses: capped(r.unknownStatuses),
-    unmatchedAdmits: capped(r.unmatchedAdmits),
-    brokenLinks: capped(r.brokenLinks),
-    linksToUnserved: capped(r.linksToUnserved),
-    foldersWithoutIndex: capped(r.foldersWithoutIndex),
-    missingOnDisk: capped(r.missingOnDisk),
+    degradations: listed(
+      r.degradations.map((x) => ({ path: x.path, code: x.code, field: x.field })),
+      cut,
+      values(["path", "field"]),
+    ),
+    unknownTypes: listed(r.unknownTypes, cut, value),
+    unknownStatuses: listed(r.unknownStatuses, cut, values(["path", "value"])),
+    unmatchedAdmits: listed(r.unmatchedAdmits, cut, value),
+    brokenLinks: listed(r.brokenLinks, cut, values(["from", "raw"])),
+    linksToUnserved: listed(r.linksToUnserved, cut, values(["from", "raw", "target"])),
+    foldersWithoutIndex: listed(r.foldersWithoutIndex, cut, value),
+    missingOnDisk: listed(r.missingOnDisk, cut, value),
     fatal:
       r.fatal === undefined
         ? null
-        : { rule: r.fatal.rule, path: capField(r.fatal.path), detail: capField(r.fatal.detail) },
+        : { rule: r.fatal.rule, path: value(r.fatal.path), detail: value(r.fatal.detail) },
     engine: {
       documents: generation.index.documents,
       notIndexed: generation.index.notIndexed.length,
       collisions: generation.index.collisions.length,
-      encodedFolders: capped(generation.index.encodedFolders),
+      encodedFolders: listed(generation.index.encodedFolders, cut, value),
     },
     published:
       generation.published === undefined
@@ -1111,14 +1141,14 @@ function bundleFacts(
         ? null
         : {
             commit: runtime.lastRefusal.commit ?? null,
-            rule: capField(safe(runtime.lastRefusal.rule)),
-            path: capField(safe(runtime.lastRefusal.path)),
-            detail: capField(safe(runtime.lastRefusal.detail)),
+            rule: value(safe(runtime.lastRefusal.rule)),
+            path: value(safe(runtime.lastRefusal.path)),
+            detail: value(safe(runtime.lastRefusal.detail)),
           },
     publishedAt: r.publishedAt ?? null,
     // The root index's own text, of any length: cut as the row's other values are.
     okfVersion:
-      generation.catalog.okfVersion === undefined ? null : capField(generation.catalog.okfVersion),
+      generation.catalog.okfVersion === undefined ? null : value(generation.catalog.okfVersion),
   };
 }
 
@@ -1143,7 +1173,10 @@ const optionOf = (options: ToolOptions, id: string): BundleOption =>
 /**
  * `status` of a network of one bundle: version 0's shape, so the runbook and its scripts keep working, its company
  * the network's name, plus the manifest's `publishedAt` and the root index's `okfVersion` (D74). `named` is the same
- * shape for one bundle of a larger network, asked for by name: it says which bundle it is.
+ * shape for one bundle of a larger network, asked for by name: it says which bundle it is. The result holds the
+ * budget in both channels (D82; bite c's verification): every value a page wrote, in the report's lists or not, is
+ * cut at 2 000 characters, at 200 when the result would pass the budget, and when even that passes it each list
+ * keeps the same number of its first entries, the most that fit, its count kept.
  */
 export function projectBundleStatus(
   served: ServedBundle,
@@ -1152,22 +1185,37 @@ export function projectBundleStatus(
   now: Date,
   named = false,
 ): BundleStatusOutput {
-  const facts = bundleFacts(
-    served.generation,
-    runtime.bundles.find((bundle) => bundle.id === served.id),
-    now,
-  );
-  return BundleStatusOutputSchema.parse({
-    ...(named ? { bundle: served.id } : {}),
-    company: options.network,
-    source: capField(optionOf(options, served.id).source),
-    ...facts,
-    engine: {
-      ...facts.engine,
-      resetOnOpen: runtime.resetOnOpen === undefined ? null : safe(runtime.resetOnOpen),
-    },
-    ...lockFacts(runtime),
-  });
+  const own = runtime.bundles.find((bundle) => bundle.id === served.id);
+  const build = (cut: StatusCut): BundleStatusOutput => {
+    const facts = bundleFacts(served.generation, own, now, cut);
+    return BundleStatusOutputSchema.parse({
+      ...(named ? { bundle: served.id } : {}),
+      company: options.network,
+      source: ellipsised(optionOf(options, served.id).source, cut.cap),
+      ...facts,
+      engine: {
+        ...facts.engine,
+        resetOnOpen: runtime.resetOnOpen === undefined ? null : safe(runtime.resetOnOpen),
+      },
+      ...lockFacts(runtime),
+    });
+  };
+  const fits = (output: BundleStatusOutput): boolean =>
+    JSON.stringify(output).length <= options.resultBudget &&
+    statusSummary(output).length <= options.resultBudget;
+  const whole = build(STATUS_CUT);
+  if (fits(whole)) return whole;
+  const short = { cap: HEADER_FIELD_CAP, keep: STATUS_LIST_CAP };
+  const cut = build(short);
+  if (fits(cut)) return cut;
+  let low = 0;
+  let high = STATUS_LIST_CAP - 1;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (fits(build({ ...short, keep: mid }))) low = mid;
+    else high = mid - 1;
+  }
+  return build({ ...short, keep: low });
 }
 
 type NetworkRow = NetworkStatusOutput["bundles"][number];

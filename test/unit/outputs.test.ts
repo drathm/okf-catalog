@@ -1809,3 +1809,125 @@ describe("the result budget beyond one bundle (D82; C-A-A5)", () => {
     expect(statusOf(long).okfVersion).toBe(cut);
   });
 });
+
+// Bite c's verification: a bundle's own status (a network of one bundle's, or status with a bundle) carried the
+// values of its lists as the pages wrote them, version 0's shape, and could pass the result budget. Every value in
+// them is cut as a row's values are (2 000 characters), at 200 when the result would pass the budget, and when even
+// that passes it each list keeps fewer of its first entries, its count kept (D82).
+describe("a bundle's own status within the result budget (D82)", () => {
+  /** A value that keeps its index in front, so a cut keeps the order visible. */
+  const value = (letter: string, i: number, size: number): string => `${i}${letter.repeat(size)}`;
+  const withLists = (entries: number, size: number): Generation => {
+    const many = <T>(make: (i: number) => T): T[] =>
+      Array.from({ length: entries }, (_, i) => make(i));
+    const v = (letter: string, i: number) => value(letter, i, size);
+    return {
+      ...generation,
+      report: {
+        ...generation.report,
+        refusals: many((i) => ({ path: v("r", i), rule: "no-type" as const, detail: v("d", i) })),
+        degradations: many((i) => ({
+          path: v("g", i),
+          code: "field-ignored" as const,
+          field: v("f", i),
+          detail: "ignored",
+        })),
+        unknownTypes: many((i) => v("t", i)),
+        unknownStatuses: many((i) => ({ path: v("s", i), value: v("v", i) })),
+        unmatchedAdmits: many((i) => v("a", i)),
+        brokenLinks: many((i) => ({ from: v("l", i), raw: v("w", i) })),
+        linksToUnserved: many((i) => ({ from: v("u", i), raw: v("x", i), target: v("y", i) })),
+        foldersWithoutIndex: many((i) => v("o", i)),
+        missingOnDisk: many((i) => v("m", i)),
+      },
+      index: { ...generation.index, encodedFolders: many((i) => v("e", i)) },
+    };
+  };
+  /** `status` with a bundle named, beyond one bundle: the same shape, for that bundle. */
+  const named = (of: Generation) => {
+    const out = projectStatus(
+      {
+        bundles: [
+          { id: "b1", generation: of },
+          { id: "b2", generation },
+        ],
+      },
+      {
+        lock: "exclusive",
+        loaded: true,
+        bundles: [
+          { id: "b1", loaded: true, fatal: false },
+          { id: "b2", loaded: true, fatal: false },
+        ],
+      },
+      {
+        network: "acme",
+        bundles: [
+          { id: "b1", source: "./b1", sourceKind: "local" as const },
+          { id: "b2", source: "./b2", sourceKind: "local" as const },
+        ],
+        limitDefault: 8,
+        resultBudget: RESULT_BUDGET,
+      },
+      NOW,
+      "b1",
+    );
+    if ("network" in out) throw new Error("expected one bundle's shape");
+    return out;
+  };
+
+  it("cuts every value of a bundle's own status lists at 2 000 characters", () => {
+    const cut = (letter: string) => `${value(letter, 0, 10_000).slice(0, 2_000)}…`;
+    for (const out of [statusOf(withLists(1, 10_000)), named(withLists(1, 10_000))]) {
+      expect(out.refusals.first).toEqual([{ path: cut("r"), rule: "no-type", detail: cut("d") }]);
+      expect(out.degradations.first).toEqual([
+        { path: cut("g"), code: "field-ignored", field: cut("f") },
+      ]);
+      expect(out.unknownTypes.first).toEqual([cut("t")]);
+      expect(out.unknownStatuses.first).toEqual([{ path: cut("s"), value: cut("v") }]);
+      expect(out.unmatchedAdmits.first).toEqual([cut("a")]);
+      expect(out.brokenLinks.first).toEqual([{ from: cut("l"), raw: cut("w") }]);
+      expect(out.linksToUnserved.first).toEqual([
+        { from: cut("u"), raw: cut("x"), target: cut("y") },
+      ]);
+      expect(out.foldersWithoutIndex.first).toEqual([cut("o")]);
+      expect(out.missingOnDisk.first).toEqual([cut("m")]);
+      expect(out.engine.encodedFolders.first).toEqual([cut("e")]);
+      expect(JSON.stringify(out).length).toBeLessThanOrEqual(RESULT_BUDGET);
+    }
+  });
+
+  it("holds a bundle's own status within the budget in both channels, each list's count kept", () => {
+    for (const out of [statusOf(withLists(300, 5_000)), named(withLists(300, 5_000))]) {
+      expect(JSON.stringify(out).length).toBeLessThanOrEqual(RESULT_BUDGET);
+      expect(statusSummary(out).length).toBeLessThanOrEqual(RESULT_BUDGET);
+      for (const list of [
+        out.refusals,
+        out.degradations,
+        out.unknownTypes,
+        out.unknownStatuses,
+        out.unmatchedAdmits,
+        out.brokenLinks,
+        out.linksToUnserved,
+        out.foldersWithoutIndex,
+        out.missingOnDisk,
+        out.engine.encodedFolders,
+      ]) {
+        expect(list.count).toBe(300);
+        // Fewer entries than the 50 a list carries, but some, every list alike.
+        expect(list.first.length).toBe(out.unknownTypes.first.length);
+      }
+      const kept = out.unknownTypes.first.length;
+      expect(kept).toBeGreaterThan(0);
+      expect(kept).toBeLessThan(50);
+      // Each value is cut at 200 characters, and each list keeps its first entries, in their order.
+      expect(out.unknownTypes.first).toEqual(
+        Array.from({ length: kept }, (_, i) => `${value("t", i, 5_000).slice(0, 200)}…`),
+      );
+      expect(out.refusals.first.map((row) => row.path)).toEqual(
+        Array.from({ length: kept }, (_, i) => `${value("r", i, 5_000).slice(0, 200)}…`),
+      );
+      expect(statusSummary(out)).toMatch(/300 refusals, 300 degradations/);
+    }
+  });
+});
