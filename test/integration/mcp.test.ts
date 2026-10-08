@@ -1808,6 +1808,96 @@ describe("a network of bundles (D74)", () => {
     );
   });
 
+  // Bite c's verification: a mutation that answered the call which itself started the failing first load with the
+  // refusal, rather than with the rows, survived the suite. The first call and every later one answer alike.
+  it("answers status with its rows when the first load that status itself started makes the network refuse", async () => {
+    const failedIn = (id: string) =>
+      loadGeneration(
+        [],
+        {
+          walkFatal: {
+            path: "",
+            rule: "load-failed",
+            detail: `the bundle folder ./${id} does not exist or cannot be read`,
+          },
+        },
+        NOW,
+        id,
+      );
+    const refusing =
+      "a: the bundle folder ./a does not exist or cannot be read; b: the bundle folder ./b does not exist or cannot be read";
+    const rows = [
+      { id: "a", loaded: true, fatal: true },
+      { id: "b", loaded: true, fatal: true },
+    ];
+    let started = false;
+    const runtime: Runtime = {
+      async ready() {
+        started = true;
+        throw new Error(refusing);
+      },
+      snapshot: () => ({
+        bundles: [
+          { id: "a", generation: failedIn("a") },
+          { id: "b", generation: failedIn("b") },
+        ],
+      }),
+      async lease() {
+        started = true;
+        throw new Error(refusing);
+      },
+      async refresh() {
+        return { outcome: "failed", error: refusing };
+      },
+      status: () =>
+        started
+          ? { lock: "exclusive", loaded: false, refusing, bundles: rows }
+          : { lock: "exclusive", loaded: false, bundles: rows },
+      async shutdown() {},
+    };
+    const s = await session(runtime, toolOptions("acme", ["a", "b"]));
+    for (const call of ["first", "second"]) {
+      const status = await s.call("status", {});
+      expect(status.isError, call).not.toBe(true);
+      expect(
+        (status.structuredContent as { bundles: Array<{ state: string }> }).bundles.map(
+          (row) => row.state,
+        ),
+        call,
+      ).toEqual(["load-failed", "load-failed"]);
+      expect(text(status).split("\n")[0], call).toMatch(
+        /^network acme: 2 bundles, 0 served, 2 load-failed; lock exclusive; refusing: a: /,
+      );
+    }
+  });
+
+  // Bite c's verification: a mutation that printed an ambiguous name's candidates uncut survived the suite.
+  it("cuts each path and name an ambiguity error lists at 200 characters", async () => {
+    const long = `${"p".repeat(300)}.md`;
+    const holding = (bundle: string) =>
+      loadGeneration(
+        [
+          {
+            path: long,
+            bytes: Buffer.from("---\ntype: Note\ntitle: Long\nstatus: stable\n---\n\nBody.\n"),
+          },
+        ],
+        { integrity: "none" },
+        NOW,
+        bundle,
+      );
+    const s = await session(
+      fakeRuntime([holding("a"), holding("b")]),
+      toolOptions("acme", ["a", "b"]),
+    );
+    const r = await s.call("get_page", { path: long });
+    expect(r.isError).toBe(true);
+    const cut = `"${"p".repeat(200)}"…`;
+    expect(text(r)).toBe(
+      `${cut} names more than one page: a:${cut} (ask for ${cut} with bundle "a"), b:${cut} (ask for ${cut} with bundle "b")`,
+    );
+  });
+
   it("answers status with a row per bundle while the network refuses, and every other tool with the refusal (C-I-C1)", async () => {
     const failed = (id: string) =>
       loadGeneration(

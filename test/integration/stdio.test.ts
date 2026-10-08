@@ -974,6 +974,44 @@ describe("okf-catalog serve over stdio: a network (D72, D73)", { timeout: 90_000
     }
   });
 
+  // Bite c's verification: git that is on PATH but cannot be run to read its version answers with a fixed sentence,
+  // its own words (which may name its path or the cache folder) going to the log; a mutation that put git's words
+  // back into the sentence survived the suite.
+  it("refuses each repository bundle with a fixed sentence when git cannot be run to read its version", async () => {
+    const fixtures = join(REPO, "test", "fixtures", "bundles");
+    const yaml = `network: fixture\nbundles:\n  - id: terms\n    source:\n      local: ${join(fixtures, "behaviours")}\n  - id: remote\n    source:\n      repository: "https://host.example/org/repo.git"\n`;
+    const b = box("spec-example", yaml);
+    const broken = mkdtempSync(join(tmpdir(), "okf-catalog-badgit-"));
+    writeFileSync(
+      join(broken, "git"),
+      `#!/bin/sh\necho "fatal: cannot read ${b.cacheRoot}/okf-catalog/secret" >&2\nexit 1\n`,
+    );
+    chmodSync(join(broken, "git"), 0o755);
+    b.env.PATH = broken;
+    try {
+      const run = rawServer(b);
+      run.send(INITIALIZE);
+      await run.waitFor(1);
+      run.send(INITIALIZED);
+      run.send({
+        jsonrpc: "2.0",
+        id: 2,
+        method: "tools/call",
+        params: { name: "get_page", arguments: { path: "index.md", bundle: "remote" } },
+      });
+      const answer = await run.waitFor(2);
+      expect(JSON.stringify(answer)).not.toContain(b.cacheRoot);
+      expect((answer.result as { content: Array<{ text: string }> }).content[0]?.text).toBe(
+        "the bundle remote was refused and nothing in it is served: load-failed: git could not be run to read its version; install git 2.30 or later to serve a repository source (the log has the detail)",
+      );
+      expect((await run.end()).code).toBe(0);
+      // The log has git's own words, under the bundle.
+      expect(run.stderr()).toMatch(/"event":"load.failed","bundle":"remote".*cannot read/);
+    } finally {
+      rmSync(broken, { recursive: true, force: true });
+    }
+  });
+
   it("refuses an all-repository network as a whole while git cannot be prepared, and still answers status with its rows", async () => {
     const yaml = `network: fixture\nbundles:\n  - id: one\n    source:\n      repository: "https://host.example/org/one.git"\n  - id: two\n    source:\n      repository: "https://host.example/org/two.git"\n`;
     const b = box("spec-example", yaml);

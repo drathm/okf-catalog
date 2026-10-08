@@ -552,6 +552,10 @@ describe("parseNetworkConfig: repository bundles that would serve one tree (D76)
       "https://example.test/acme/kb.git/",
       "git@example.test:acme/kb.git",
       "ssh://git@example.test/acme/kb",
+      // The host's case aside where the URL parser keeps it, as it does for ssh and the scp-like form (bite c's
+      // verification: a mutation that kept the case survived).
+      "git@EXAMPLE.test:acme/kb.git",
+      "ssh://git@Example.Test/acme/kb",
     ])
       expect(at(repo("a", KB), repo("b", other)), other).toEqual([same]);
     // The defaults count as written: the branch published and the bundle path ".".

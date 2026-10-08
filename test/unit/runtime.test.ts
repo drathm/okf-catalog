@@ -11,7 +11,7 @@ import { renderDocument } from "../../src/engine/qmd-render.js";
 import type { WalkResult } from "../../src/fs/walk.js";
 import type { Engine, EngineHit, IndexResult } from "../../src/search/engine.js";
 import { search } from "../../src/search/search.js";
-import { createRuntime } from "../../src/serve/runtime.js";
+import { createRuntime, FIRST_LOAD_DEADLINE_MS } from "../../src/serve/runtime.js";
 import type { Loaded, Source } from "../../src/source/source.js";
 import { NOW, readFixture } from "../helpers/fixtures.js";
 
@@ -970,6 +970,27 @@ describe("createRuntime: one bundle's index failure is its own (D39 per bundle)"
     await runtime.shutdown();
   });
 
+  // Bite c's verification: a mutation that skipped this re-alignment survived the suite.
+  it("puts a broken bundle's served pages back at its next refresh even when that load throws before any write", async () => {
+    const engine = countingEngine();
+    const files = readFixture("behaviours");
+    const a = memorySource(files);
+    const runtime = network(a, memorySource(readFixture("spec-example")), engine);
+    runtime.start();
+    const first = generationOf(await runtime.ready(), "a");
+    engine.failing.add("a");
+    expect((await runtime.refresh("a")).outcome).toBe("failed");
+    expect(generationOf(await runtime.ready(), "a").report.fatal?.rule).toBe("index-broken");
+    // The engine is back, but the bundle's source throws (a fetch that fails): nothing new is written, and the
+    // previous generation, re-aligned, is served again.
+    engine.failing.delete("a");
+    a.fail("the repository could not be fetched");
+    expect((await runtime.refresh("a")).outcome).toBe("failed");
+    expect(generationOf(await runtime.ready(), "a")).toBe(first);
+    expect(engine.byBundle.get("a")).toEqual([...first.catalog.pages.keys()].sort());
+    await runtime.shutdown();
+  });
+
   it("names an engine failure at the first load with a fixed sentence, the engine's words in the log", async () => {
     const engine = countingEngine();
     const { records, log } = recording();
@@ -1141,6 +1162,11 @@ describe("createRuntime: the first-load deadline (D75)", () => {
     expect(own(runtime, "b")).toMatchObject({ loaded: true, fatal: false });
     expect(generationOf(await runtime.ready(), "b").report.fatal).toBeUndefined();
     await runtime.shutdown();
+  });
+
+  // Bite c's verification: the deadline's value is the documented one (D75), which no other test fixes.
+  it("waits twenty seconds by default", () => {
+    expect(FIRST_LOAD_DEADLINE_MS).toBe(20_000);
   });
 
   it("waits for a network of one bundle's one load past the deadline, as version 0 did", async () => {
