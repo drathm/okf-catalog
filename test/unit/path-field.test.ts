@@ -301,3 +301,22 @@ describe("classifyPathField: bite b's build reviews (B-A-E1, B-A-A7, B-A-A9)", (
     expect(pathEdgesOf(page, indexOver(["a.md"])).edges).toEqual([]);
   });
 });
+
+describe("pathEdgesOf: empty values (bite b's build review B-I-B4)", () => {
+  it("emits no edge for an empty resource, and an unresolved one for an empty contract string", () => {
+    const files: BundleFile[] = [
+      {
+        path: "a.md",
+        bytes: Buffer.from(
+          '---\ntype: Note\ntitle: A\nresource: ""\ncomputation: ""\nexecutor: { resource: "" }\n---\n\nBody.\n',
+        ),
+      },
+    ];
+    expect(
+      pathEdgesOf(parsed(files, "a.md"), indexOver(["a.md"])).edges.map((e) => [e.field, e.kind]),
+    ).toEqual([
+      ["computation", "unresolved"],
+      ["executor.resource", "unresolved"],
+    ]);
+  });
+});

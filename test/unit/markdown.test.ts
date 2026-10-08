@@ -260,3 +260,18 @@ describe("readBody: bite b's build reviews (B-I-A5, B-I-A6, B-A-E8)", () => {
     expect(facts.prose).toContain("[^nodef]");
   });
 });
+
+describe("readBody: the smallest block, in nested blocks (bite b's build reviews B-I-B2, MD4)", () => {
+  it("takes the paragraph, the inner item, the quoted paragraph or the cell, never the block around it", () => {
+    const defs = "\n\n[^a]: A.\n[^b]: B.\n[^c]: C.\n[^d]: D.\n[^e]: E.\n";
+    const block = (body: string): string | undefined =>
+      readBody(body + defs).footnoteReferences[0]?.block;
+    expect(block("- first para of the item.[^a]\n\n  second para of the item.")).toBe(
+      "first para of the item.",
+    );
+    expect(block("- outer item\n  - inner item claim[^b]")).toBe("inner item claim");
+    expect(block("> quoted one.[^c]\n>\n> quoted two.")).toBe("quoted one.");
+    expect(block("| a | b |\n|---|---|\n| cell one[^d] | two |")).toBe("cell one");
+    expect(block("- item\n  > quoted[^e] text")).toBe("quoted text");
+  });
+});

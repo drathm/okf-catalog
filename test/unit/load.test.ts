@@ -387,3 +387,28 @@ describe("loadBundle: review round 1 additions", () => {
     ).toBe("skipped");
   });
 });
+
+describe("loadBundle: path fields naming a held draft (bite b's build reviews B-I-B1, L1)", () => {
+  it("classifies a source naming a draft as unserved at load, without development mode", () => {
+    const files = {
+      "a.md":
+        "---\ntype: Note\ntitle: A\nsources:\n  - { resource: drafts/plan.md }\n  - { resource: b.md }\n---\n\nA.\n",
+      "b.md": "---\ntype: Note\ntitle: B\n---\n\nB.\n",
+      "drafts/plan.md": "---\ntype: Note\ntitle: Plan\nstatus: draft\n---\n\nPlan.\n",
+    };
+    const { catalog, report } = loadBundle(
+      "b",
+      Object.entries(files).map(([path, text]) => ({ path, bytes: Buffer.from(text) })),
+      options({ integrity: "none" }),
+      NOW,
+    );
+    expect(report.excludedByStatus).toBe(1);
+    expect(catalog.pages.has("drafts/plan.md")).toBe(false);
+    expect(catalog.pages.get("a.md")?.pathEdges.map((e) => [e.kind, e.target])).toEqual([
+      ["unserved", "drafts/plan.md"],
+      ["concept", "b.md"],
+    ]);
+    // An unserved edge derives nothing: only the served page has an inbound derivation.
+    expect([...catalog.graph.inboundDerivations.keys()]).toEqual(["b.md"]);
+  });
+});

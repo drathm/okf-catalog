@@ -197,6 +197,38 @@ describe("citationsOf", () => {
     const catalog = bundle({ "deep.md": note("", `${">".repeat(300)} deep\n`) });
     expect(citationsOf(catalog, pageOf(catalog, "deep.md")).partial).toBe(true);
   });
+
+  it("says partial for a body past the 256 KiB analysis budget, its first part analysed (B-I-B5, G12)", () => {
+    const long = `[first](/a.md) ${"word ".repeat(60_000)}\n\n[late](/b.md)\n`;
+    const catalog = bundle({ "long.md": note("", long), "a.md": note(""), "b.md": note("") });
+    const page = pageOf(catalog, "long.md");
+    expect(page.body.length).toBeGreaterThan(256 * 1024);
+    const cited = citationsOf(catalog, page);
+    expect(cited.partial).toBe(true);
+    expect(cited.mentions.map((m) => m.target)).toEqual(["a.md"]);
+    expect(citationsOf(catalog, pageOf(catalog, "a.md")).partial).toBe(false);
+  });
+
+  it("takes an inbound derivation's window from the deriving page, not the cited one (G9)", () => {
+    const catalog = bundle({
+      "t.md": note("usage_window: { from: 2020-01-01, to: 2020-12-31 }\n"),
+      "d.md": note(
+        `usage_window: { from: 2026-01-01, to: 2026-03-31 }\n${sources("{ resource: t.md, usage_count: 9 }")}`,
+      ),
+    });
+    const cited = citationsOf(catalog, pageOf(catalog, "t.md"));
+    expect(cited.usageWindow).toEqual({ from: "2020-01-01", to: "2020-12-31" });
+    expect(cited.inboundDerivations).toEqual([
+      {
+        from: "d.md",
+        status: "stable",
+        field: "sources[0].resource",
+        kind: "concept",
+        usageCount: 9,
+        window: { from: "2026-01-01", to: "2026-03-31", inherited: true },
+      },
+    ]);
+  });
 });
 
 describe("walkProvenance", () => {
