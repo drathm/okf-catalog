@@ -56,7 +56,7 @@ serve:
 types: [Term, Guide, Policy]
 ```
 
-Or a network: several bundles one audience follows, served from one process and searched in one index (from 0.4.0). The top-level keys are the defaults each bundle inherits; a bundle may set its own `serve.admit`, `serve.pull_interval`, `caps`, `types` and `spec_text`, and only a local bundle may set `serve.dev`, which turns integrity off for it alone. Each id is one lower-case path segment, and not `vendor`, `dist` or `build`.
+Or a network: several bundles one audience follows, served from one process and searched in one index (from 0.4.0). The top-level keys are the defaults each bundle inherits; a bundle may set its own `serve.admit`, `serve.pull_interval`, `caps`, `types` and `spec_text`, and only a local bundle may set `serve.dev`, which turns integrity off for it alone. Each id is one lower-case path segment, and not `vendor`, `dist` or `build`. Two bundles never serve the same files: two local folders may not be one, or one inside the other (compared by their real paths), and two repository bundles of one repository and branch may not have the same `bundle_path`, or one inside the other; no local bundle may lie in the server's cache folder.
 
 ```yaml
 network: acme
@@ -81,7 +81,7 @@ bundles:
       dev: true
 ```
 
-A `company:` file is a network of that name with one bundle of that id, and keeps the lines and the `catalog` and `status` shapes it had (`status` gains `publishedAt` and `okfVersion`; hits and pages gain `bundle` and `conceptId`); it is kept until 0.5.0, which removes it, and the server logs it as the alias at start. With more than one bundle, every hit names its bundle (`finance:metrics/revenue.md`), `catalog` without a bundle lists the bundles, `status` gives a row per bundle, and a path two bundles hold is read with its bundle (`get_page` with `bundle: "finance"`). A bundle that is refused, or cannot be fetched, is reported and the others are served.
+A `company:` file is a network of that name with one bundle of that id, and keeps the lines and the `catalog` and `status` shapes it had (`status` gains `publishedAt` and `okfVersion`; hits and pages gain `bundle` and `conceptId`; `get_page`, `citations`, `provenance`, `catalog` and `status` take an optional `bundle`); it is kept until 0.5.0, which removes it, and the server logs it as the alias at start. A `company:` file whose company is `vendor`, `dist` or `build` still loads until then, with a second note saying a `network:` file refuses those ids. With more than one bundle, every hit names its bundle (`finance:metrics/revenue.md`), and that name is taken back as it is printed; `catalog` without a bundle lists the bundles; `status` gives a row per bundle in counts, and `status` with a bundle that bundle's own report; a path two bundles hold is read with its bundle (`get_page` with `bundle: "finance"`). A bundle that is refused, cannot be fetched or loaded, whose part of the index breaks, or is still loading twenty seconds after the loads began is reported by name and the others are served; a repository bundle is tried again at its next poll, a local bundle at a restart. The tools refuse only when no bundle is served.
 
 Give it to Claude Code through the plugin, which asks for no settings: it runs the `okf-catalog` command from PATH in the project folder, where the server finds `okf-catalog.yaml` (or the file named by `OKF_CATALOG_CONFIG`). The plugin folder ships inside the package:
 
@@ -96,7 +96,7 @@ To publish, `node dist/cli.js pack --config okf-catalog.yaml --from ./knowledge 
 ## Requirements
 
 - Node 24 or later (the Active LTS line when version 0 was built), on macOS or Linux (Windows is not a version 0 host: the cache folder's ownership and mode checks assume POSIX).
-- The cache folder (`$XDG_CACHE_HOME/okf-catalog/<network>`, or the platform's user cache folder) must be on a local filesystem: the one-process-per-network lock is an operating-system lock on a SQLite file, which network filesystems do not honour reliably, and it must not lie inside a bundle folder. A cache folder written by 0.1 to 0.3 is taken over without a re-index: its clone moves into `bundles/<id>/` the first time a server holding the lock starts.
+- The cache folder (`$XDG_CACHE_HOME/okf-catalog/<network>`, or the platform's user cache folder) must be on a local filesystem: the one-process-per-network lock is an operating-system lock on a SQLite file, which network filesystems do not honour reliably, and it must not lie inside a bundle folder. A cache folder written by 0.1 to 0.3 is taken over without a re-index when the bundle's id is the old company's name, as a `company:` file's always is (a `network:` file whose ids differ has the store rebuilt once): its clone moves into `bundles/<id>/` the first time a server holding the lock starts.
 
 ## Publishing
 
