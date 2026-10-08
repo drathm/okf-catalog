@@ -187,16 +187,38 @@ describe("readBody: link text, headings and claim blocks (#5)", () => {
     ]);
   });
 
+  it("cuts link text and headings at 500 characters with an ellipsis, a setext heading too (bite b's build reviews B-I-A3, B-A-A2)", () => {
+    const heading = "h".repeat(41_000);
+    const text = "l".repeat(50_000);
+    // A paragraph followed by --- with no blank line is a setext heading, and every link below it carries it.
+    const paragraph = "A long introductory paragraph that runs on. ".repeat(40).trim();
+    const facts = readBody(
+      `# ${heading}\n\n[${text}](/a.md) and [short](/b.md)\n\n${paragraph}\n---\n\n[under](/c.md) a claim.[^x]\n\n[^x]: X.\n`,
+    );
+    expect(facts.links).toEqual([
+      { url: "/a.md", text: `${"l".repeat(500)}…`, heading: `${"h".repeat(500)}…` },
+      { url: "/b.md", text: "short", heading: `${"h".repeat(500)}…` },
+      { url: "/c.md", text: "under", heading: `${paragraph.slice(0, 500)}…` },
+    ]);
+    expect(facts.footnoteReferences[0]?.heading).toBe(`${paragraph.slice(0, 500)}…`);
+    // A value at the cap is whole.
+    const whole = readBody(`# ${"w".repeat(500)}\n\n[${"t".repeat(500)}](/d.md)\n`);
+    expect(whole.links).toEqual([
+      { url: "/d.md", text: "t".repeat(500), heading: "w".repeat(500) },
+    ]);
+  });
+
   it("takes the smallest block holding a reference, cut at 500, never the definition", () => {
     const long = `${"word ".repeat(120)}claim.`;
     const facts = readBody(
       `# H\n\n${long}[^n]\n\nShort.[^m]\n\n${"a".repeat(499)}${"😀".repeat(3)}[^p]\n\n[^n]: See [d](/d.md).\n[^m]: The definition prose.\n[^p]: P.\n`,
     );
     const [first, second, third] = facts.footnoteReferences;
-    expect(first).toEqual({ id: "n", block: long.slice(0, 500), heading: "H" });
+    // A cut block says so with an ellipsis (bite b's build reviews B-I-A3, B-A-A2).
+    expect(first).toEqual({ id: "n", block: `${long.slice(0, 500)}…`, heading: "H" });
     expect(second).toEqual({ id: "m", block: "Short.", heading: "H" });
     // The cut never splits a surrogate pair.
-    expect(third?.block).toBe("a".repeat(499));
+    expect(third?.block).toBe(`${"a".repeat(499)}…`);
     for (const reference of facts.footnoteReferences) {
       expect(reference.block).not.toContain("See d");
       expect(reference.block).not.toContain("definition prose");

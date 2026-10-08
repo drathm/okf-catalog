@@ -1,4 +1,5 @@
 import { z } from "zod/v4";
+import { ellipsised } from "../bundle/cut.js";
 import type { Page, ReservedFile } from "../bundle/model.js";
 import { byCodeUnit } from "../bundle/paths.js";
 import type { SearchResponse } from "../search/search.js";
@@ -123,7 +124,8 @@ const SourceSchema = z.strictObject({
   author: z.string().optional(),
   usageCount: z.number().optional(),
   lastModified: z.string().optional(),
-  usageWindow: Window.optional(),
+  /** The source's own window as written, or its note past D78's cap. */
+  usageWindow: orOmitted(Window).optional(),
   effectiveWindow: EffectiveWindowSchema.optional(),
 });
 const ContractSchema = z.strictObject({
@@ -472,6 +474,26 @@ export function projectSearch(
   });
 }
 
+/**
+ * Characters of a page-written value a row carries in the structured output (an id, a path, a raw value, a title,
+ * an author, a last change, a recheck date) before it is cut with an ellipsis, D78's number, so that any row fits
+ * the result (bite b's build reviews B-I-A3, B-A-A2). Text lines print at most 500 of them.
+ */
+export const FIELD_CAP = 2_000;
+
+/** A value cut at the field cap with an ellipsis. */
+export const capField = (value: string): string => ellipsised(value, FIELD_CAP);
+
+/** A copy of a row with the named string fields cut at the field cap; absent fields stay absent. */
+function capFields<T extends object, K extends keyof T>(row: T, keys: readonly K[]): T {
+  const out = { ...row };
+  for (const key of keys) {
+    const value = out[key];
+    if (typeof value === "string") out[key] = capField(value) as T[K];
+  }
+  return out;
+}
+
 /** A typed field as a result carries it: whole within its budget, else its own note (D78). */
 function typedField<T>(field: string, value: T): T | { omitted: string } {
   return JSON.stringify(value).length > TYPED_FIELD_BUDGET
@@ -489,11 +511,15 @@ function projectProvenance(page: Page, now: Date): ProjectedProvenance {
   const { sources, usageWindow, contract, timestamp, ...rest } = provenanceOf(page, now);
   const projected: ProjectedProvenance = {
     ...rest,
-    sources: sources.map(({ effectiveWindow, ...source }) =>
-      effectiveWindow === undefined
-        ? source
-        : { ...source, effectiveWindow: typedField("effectiveWindow", effectiveWindow) },
-    ),
+    // Each row's page-written values cut at the field cap, so one long value never crowds out the rest (B-I-A3).
+    verified: rest.verified.map((v) => capFields(v, ["by", "at"])),
+    sources: sources.map(({ effectiveWindow, usageWindow: own, ...source }) => ({
+      ...capFields(source, ["id", "resource", "title", "author", "lastModified"]),
+      ...(own === undefined ? {} : { usageWindow: typedField("usageWindow", own) }),
+      ...(effectiveWindow === undefined
+        ? {}
+        : { effectiveWindow: typedField("effectiveWindow", effectiveWindow) }),
+    })),
     verifiedTotal: rest.verified.length,
     sourcesTotal: sources.length,
   };
@@ -909,37 +935,71 @@ export function citationsText(output: CitationsOutput): string {
   return lines.join("\n");
 }
 
+type ClaimRow = Rows["claims"][number];
+type Space = { json: number; text: number };
+
+/** A source's facts as a row carries them: each page-written value cut at the field cap, the window at D78's. */
+const sourceFactsOut = ({ window, ...source }: SourceFacts): Rows["bibliography"][number] => ({
+  ...capFields(source, ["id", "resource", "title", "author", "lastModified"]),
+  ...windowOut(window),
+});
+
+/**
+ * The largest first part of a claim's sources that fits the space in both channels, as a walk's last page keeps
+ * the edges that fit (D82); the row says how many sources there are. Undefined when not even the claim fits.
+ */
+function fitClaim(row: ClaimRow, space: Space): { row: ClaimRow; cost: Space } | undefined {
+  const costOf = (part: ClaimRow): Space => ({
+    json: JSON.stringify(part).length + 1,
+    text: claimLine(part).length + 1,
+  });
+  const with_ = (count: number): ClaimRow => ({ ...row, sources: row.sources.slice(0, count) });
+  const fits = (cost: Space) => cost.json <= space.json && cost.text <= space.text;
+  if (!fits(costOf(with_(0)))) return undefined;
+  let low = 0;
+  let high = row.sources.length - 1;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (fits(costOf(with_(mid)))) low = mid;
+    else high = mid - 1;
+  }
+  const part = with_(low);
+  return { row: part, cost: costOf(part) };
+}
+
 /**
  * The result of `citations` (issue 5): every list in its order, at most 50 rows beside its total, and the whole
- * result, text and structured, within the budget (D82): rows are kept list by list in issue 5's order until the
- * budget is spent, every cut list keeping its total, and the result says `truncated`.
+ * result, text and structured, within the budget (D82). Every page-written value of a row is cut at 2 000
+ * characters (link text, headings and blocks at 500 at load), so one long value never fills the result. Each list
+ * that has rows gets an equal share of what the frame leaves, in both channels, and keeps its first rows within
+ * its share and what the lists before it left unused; what the last list leaves goes back, in order, to the lists
+ * cut before it, so no list starves another (bite b's build reviews B-I-A3, B-A-A2, B-I-E1). A claim too large for
+ * its room keeps its first sources, with their total. Every cut list keeps its total, and the result says
+ * `truncated`.
  */
 export function projectCitations(citations: Citations, budget: number): CitationsOutput {
   // Only the rows a list can carry are projected (at most 50 each); each claim's list of sources is projected once
   // per id and shared, as the graph shares it (bite b's build reviews B-I-A1, B-A-A1).
   const first = <T>(rows: readonly T[]): readonly T[] => rows.slice(0, LIST_CAP);
-  const projectedSources = new Map<readonly SourceFacts[], Rows["claims"][number]["sources"]>();
-  const sourcesOut = (sources: readonly SourceFacts[]): Rows["claims"][number]["sources"] => {
+  const projectedSources = new Map<readonly SourceFacts[], ClaimRow["sources"]>();
+  const sourcesOut = (sources: readonly SourceFacts[]): ClaimRow["sources"] => {
     const done = projectedSources.get(sources);
     if (done !== undefined) return done;
-    const projected = sources.map(({ window, ...source }) => ({ ...source, ...windowOut(window) }));
+    const projected = sources.map(sourceFactsOut);
     projectedSources.set(sources, projected);
     return projected;
   };
   const all: Rows = {
-    mentions: first(citations.mentions).map((m) => ({ ...m })),
-    inboundMentions: first(citations.inboundMentions).map((m) => ({ ...m })),
+    mentions: first(citations.mentions).map((m) => capFields(m, ["raw", "target"])),
+    inboundMentions: first(citations.inboundMentions).map((m) => capFields(m, ["from"])),
     claims: first(citations.claims).map(({ sources, ...claim }) => ({
-      ...claim,
+      ...capFields(claim, ["footnote"]),
       sources: sourcesOut(sources),
     })),
-    bibliography: first(citations.bibliography).map(({ window, ...source }) => ({
-      ...source,
-      ...windowOut(window),
-    })),
-    unjoined: first(citations.unjoined).map((u) => ({ ...u })),
+    bibliography: first(citations.bibliography).map(sourceFactsOut),
+    unjoined: first(citations.unjoined).map((u) => capFields(u, ["footnote"])),
     inboundDerivations: first(citations.inboundDerivations).map(({ window, ...derivation }) => ({
-      ...derivation,
+      ...capFields(derivation, ["from", "author", "lastModified"]),
       ...windowOut(window),
     })),
   };
@@ -985,26 +1045,63 @@ export function projectCitations(citations: Citations, budget: number): Citation
   };
   const over = (output: CitationsOutput): boolean =>
     JSON.stringify(output).length > budget || citationsText(output).length > budget;
-  // Rows are added while both channels stay within the budget, measured from the frame with no rows.
+  // The room the frame (the header, the notice, the page window, the list headings) leaves, in both channels.
   const frame = build(true);
-  let json = JSON.stringify(frame).length;
-  let text = citationsText(frame).length;
-  let truncated = false;
-  spend: for (const list of CITATION_LISTS) {
-    const line = CITATION_LINES[list] as (row: unknown) => string;
+  const room: Space = {
+    json: Math.max(0, budget - JSON.stringify(frame).length),
+    text: Math.max(0, budget - citationsText(frame).length),
+  };
+  const next: Record<CitationList, number> = {
+    mentions: 0,
+    inboundMentions: 0,
+    claims: 0,
+    bibliography: 0,
+    unjoined: 0,
+    inboundDerivations: 0,
+  };
+  // A list that ended in a claim cut short is finished: no later claim follows a cut one.
+  const finished = new Set<CitationList>();
+  /** Adds a list's next rows, in order, while they fit the space; returns what is left of it. */
+  const fill = (list: CitationList, space: Space): Space => {
+    const rows = all[list] as unknown[];
     const target = kept[list] as unknown[];
-    for (const row of (all[list] as unknown[]).slice(0, LIST_CAP)) {
-      const jsonCost = JSON.stringify(row).length + 1;
-      const textCost = line(row).length + 1;
-      if (json + jsonCost > budget || text + textCost > budget) {
-        truncated = true;
-        break spend;
+    const line = CITATION_LINES[list] as (row: unknown) => string;
+    const left = { ...space };
+    while (next[list] < rows.length) {
+      const row = rows[next[list]];
+      const cost = { json: JSON.stringify(row).length + 1, text: line(row).length + 1 };
+      if (cost.json <= left.json && cost.text <= left.text) {
+        target.push(row);
+        left.json -= cost.json;
+        left.text -= cost.text;
+        next[list] += 1;
+        continue;
       }
-      target.push(row);
-      json += jsonCost;
-      text += textCost;
+      if (list === "claims") {
+        const part = fitClaim(row as ClaimRow, left);
+        if (part !== undefined) {
+          target.push(part.row);
+          left.json -= part.cost.json;
+          left.text -= part.cost.text;
+          finished.add(list);
+        }
+      }
+      break;
     }
-  }
+    return left;
+  };
+  const lists = CITATION_LISTS.filter((list) => all[list].length > 0);
+  const share: Space = {
+    json: Math.floor(room.json / Math.max(1, lists.length)),
+    text: Math.floor(room.text / Math.max(1, lists.length)),
+  };
+  let carry: Space = { json: 0, text: 0 };
+  for (const list of lists)
+    carry = fill(list, { json: share.json + carry.json, text: share.text + carry.text });
+  // What the last list leaves goes back to the lists the budget cut, in their order.
+  for (const list of lists)
+    if (!finished.has(list) && next[list] < all[list].length) carry = fill(list, carry);
+  const truncated = lists.some((list) => finished.has(list) || next[list] < all[list].length);
   // The measure above is close, not exact (a list heading's digits); the last rows go until the result fits.
   let output = build(truncated);
   while (over(output)) {
@@ -1019,18 +1116,19 @@ export function projectCitations(citations: Citations, budget: number): Citation
 type NodeOut = ProvenanceOutput["nodes"][number];
 type EdgeOut = NodeOut["edges"][number];
 
+/** An edge as the result carries it, each page-written value cut at the field cap (B-I-A3, B-A-A2). */
 function edgeOut({ window, candidates, ...edge }: WalkEdge): EdgeOut {
   return {
-    ...edge,
-    ...(candidates === undefined ? {} : { candidates: [...candidates] }),
+    ...capFields(edge, ["raw", "target", "id", "title", "author", "lastModified"]),
+    ...(candidates === undefined ? {} : { candidates: candidates.map(capField) }),
     ...windowOut(window),
   };
 }
 
 function nodeOut({ edges, recheck, usageWindow, ...node }: WalkNode): NodeOut {
   return {
-    ...node,
-    ...(recheck === undefined ? {} : { recheck: { ...recheck } }),
+    ...capFields(node, ["path", "parent"]),
+    ...(recheck === undefined ? {} : { recheck: { ...recheck, raw: capField(recheck.raw) } }),
     ...(usageWindow === undefined ? {} : { usageWindow: typedField("usageWindow", usageWindow) }),
     edges: edges.map(edgeOut),
   };

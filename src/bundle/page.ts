@@ -1,7 +1,8 @@
+import { ellipsised } from "./cut.js";
 import { decodeUtf8, parseFrontmatter, splitFrontmatter } from "./frontmatter.js";
 import { type LinkIndex, resolveLink } from "./links.js";
 import { sha256Hex } from "./manifest.js";
-import { BLOCK_CAP, cutAt, readBody } from "./markdown.js";
+import { BLOCK_CAP, readBody } from "./markdown.js";
 import type {
   BundleFile,
   Contract,
@@ -40,8 +41,7 @@ const STATUSES: ReadonlySet<string> = new Set<Status>(["draft", "stable", "depre
 const CITATION_CAP = BLOCK_CAP;
 
 /** A legacy citation item's text or link, cut at the cap with an ellipsis, never inside a surrogate pair. */
-const capCitation = (text: string): string =>
-  text.length <= CITATION_CAP ? text : `${cutAt(text, CITATION_CAP)}…`;
+const capCitation = (text: string): string => ellipsised(text, CITATION_CAP);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

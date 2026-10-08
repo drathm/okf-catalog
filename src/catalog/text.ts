@@ -65,10 +65,17 @@ export interface Recheck {
   overdue: boolean;
 }
 
-export function recheckPhrase(recheck: Recheck | undefined): string {
+/**
+ * The recheck date as a fact: overdue since it, unparseable, or the date. `cap` bounds the printed raw text, which
+ * is whatever the company wrote: 500 in the rows of the two graph tools (bite b's build review B-A-A2).
+ */
+export function recheckPhrase(
+  recheck: Recheck | undefined,
+  cap: number = Number.POSITIVE_INFINITY,
+): string {
   if (recheck === undefined) return "no recheck date";
   // A date that does not parse is any text the company wrote; one that parses is plain and stays bare.
-  const raw = plainOrQuoted(recheck.raw);
+  const raw = plainOrQuoted(recheck.raw, cap);
   if (recheck.overdue) return `overdue since ${raw}`;
   if (recheck.form === "unparseable") return `recheck date unparseable (${raw})`;
   return `recheck ${raw}`;
@@ -103,10 +110,16 @@ const escapeQuotes = (text: string): string => text.replace(/\\/g, "\\\\").repla
  * escapes counted, with an ellipsis after the quote, as the values in use are listed; a frontmatter source's id and
  * resource are of any length (the fix pass's verification).
  */
-const quotedSource = (text: string): string => {
-  const { kept, cut } = cutEscaped(collapse(text), SOURCE_CAP);
+const quotedSource = (text: string): string => quotedCut(text, SOURCE_CAP);
+
+/**
+ * Page text quoted as `quoted` quotes, cut at `cap` characters once its controls are escaped, an escape never split,
+ * with an ellipsis after the closing quote when cut.
+ */
+function quotedCut(text: string, cap: number): string {
+  const { kept, cut } = cutEscaped(collapse(text), cap);
   return `"${escapeQuotes(kept)}"${cut ? "…" : ""}`;
-};
+}
 
 /**
  * What a bare fact must not carry besides a control character: a comma or a bracket, which would read as another
@@ -119,15 +132,18 @@ const MISREAD = /[,[\]"\\]/;
  * carries none of `MISREAD`'s characters and nothing in it needs an escape (no control character, nor any other
  * character `escapeControls` rewrites); otherwise quoted, so it reads as one fact.
  */
-const fact = (word: string, vouched: boolean): string =>
-  vouched && !MISREAD.test(word) && escapeControls(word) === word ? safe(word) : quoted(word);
+const fact = (word: string, vouched: boolean, cap = Number.POSITIVE_INFINITY): string =>
+  vouched && !MISREAD.test(word) && escapeControls(word) === word && word.length <= cap
+    ? safe(word)
+    : quotedCut(word, cap);
 
 /**
  * Company text in the brackets that no list vouches for, the verifier, a recheck date and the page's resource: bare
  * when none of its characters could be misread, otherwise quoted, as a status or type is (P13, amended after the
  * verification of the build review's fix pass).
  */
-const plainOrQuoted = (text: string): string => fact(text, true);
+const plainOrQuoted = (text: string, cap = Number.POSITIVE_INFINITY): string =>
+  fact(text, true, cap);
 
 /** What a line needs to know about the bundle beyond the page: the types the company did not declare. */
 export interface LineOptions {
@@ -294,8 +310,17 @@ export function searchHeader(response: SearchResponse, dev: boolean): string {
 const counted = (count: number, one: string, many = `${one}s`): string =>
   `${count} ${count === 1 ? one : many}`;
 
+/**
+ * Characters of one page-written value a row of the two graph tools prints, its escapes counted, before an
+ * ellipsis after the quote; the structured output carries up to 2 000 (bite b's build reviews B-I-A3, B-A-A2).
+ */
+const ROW_CAP = 500;
+
+/** A page-written value in a row: quoted, escaped and cut at the row cap. */
+const rowQuoted = (text: string): string => quotedCut(text, ROW_CAP);
+
 const under = (heading: string | undefined): string =>
-  heading === undefined ? "" : ` under ${quoted(heading)}`;
+  heading === undefined ? "" : ` under ${rowQuoted(heading)}`;
 
 /**
  * A usage window as a result carries it: with its dates, saying whether it is its page's shared one; named only, its
@@ -321,14 +346,14 @@ function windowPhrase(window: WindowFact | undefined): string {
   if (window === undefined) return "";
   if ("omitted" in window) return ", its usage window over 2000 characters and not returned";
   if (!("from" in window)) return ", usage window inherited from its page";
-  return `, usage window ${quoted(window.from)} to ${quoted(window.to)} (${window.inherited ? "inherited from its page" : "its own"})`;
+  return `, usage window ${rowQuoted(window.from)} to ${rowQuoted(window.to)} (${window.inherited ? "inherited from its page" : "its own"})`;
 }
 
 /** A page's own usage window, printed once in a result whose sources name it rather than copy it (D62). */
 function pageWindowPhrase(window: { from: string; to: string } | { omitted: string }): string {
   return "omitted" in window
     ? "usage window over 2000 characters and not returned"
-    : `usage window ${quoted(window.from)} to ${quoted(window.to)}`;
+    : `usage window ${rowQuoted(window.from)} to ${rowQuoted(window.to)}`;
 }
 
 /** The line after the marker that gives the cited page's own usage window, which its inheriting sources name. */
@@ -339,17 +364,17 @@ export function pageWindowLine(window: { from: string; to: string } | { omitted:
 /** A source's signals after its id or value: title, author, usage count, window, last change. */
 function sourceSignals(source: SourceFields): string {
   return [
-    source.title === undefined ? "" : `, titled ${quoted(source.title)}`,
-    source.author === undefined ? "" : `, by ${quoted(source.author)}`,
+    source.title === undefined ? "" : `, titled ${rowQuoted(source.title)}`,
+    source.author === undefined ? "" : `, by ${rowQuoted(source.author)}`,
     source.usageCount === undefined ? "" : `, usage count ${source.usageCount}`,
     windowPhrase(source.window),
-    source.lastModified === undefined ? "" : `, last modified ${quoted(source.lastModified)}`,
+    source.lastModified === undefined ? "" : `, last modified ${rowQuoted(source.lastModified)}`,
   ].join("");
 }
 
 /** A source of the page: its id when it has one, its resource, its signals. */
 export function sourceLine(source: SourceFields & { resource: string }): string {
-  return `- source ${source.id === undefined ? "" : `${quoted(source.id)} `}${quoted(source.resource)}${sourceSignals(source)}`;
+  return `- source ${source.id === undefined ? "" : `${rowQuoted(source.id)} `}${rowQuoted(source.resource)}${sourceSignals(source)}`;
 }
 
 export function mentionLine(mention: {
@@ -359,8 +384,8 @@ export function mentionLine(mention: {
   text: string;
   heading?: string | undefined;
 }): string {
-  const where = mention.target === undefined ? quoted(mention.raw) : safe(mention.target);
-  return `- ${mention.kind} ${where}: ${quoted(mention.text)}${under(mention.heading)}`;
+  const where = mention.target === undefined ? rowQuoted(mention.raw) : safe(mention.target);
+  return `- ${mention.kind} ${where}: ${rowQuoted(mention.text)}${under(mention.heading)}`;
 }
 
 export function inboundMentionLine(mention: {
@@ -368,7 +393,7 @@ export function inboundMentionLine(mention: {
   text: string;
   heading?: string | undefined;
 }): string {
-  return `- from ${safe(mention.from)}: ${quoted(mention.text)}${under(mention.heading)}`;
+  return `- from ${safe(mention.from)}: ${rowQuoted(mention.text)}${under(mention.heading)}`;
 }
 
 export function claimLine(claim: {
@@ -382,15 +407,19 @@ export function claimLine(claim: {
   const joined = claim.sources
     .map(
       (s) =>
-        `${s.id === undefined ? "" : `${quoted(s.id)} `}${quoted(s.resource)}${sourceSignals(s)}`,
+        `${s.id === undefined ? "" : `${rowQuoted(s.id)} `}${rowQuoted(s.resource)}${sourceSignals(s)}`,
     )
     .join("; and ");
   const total = claim.sourcesTotal ?? claim.sources.length;
+  const shown = claim.sources.length;
+  // A claim the budget cut names the sources it kept and says how many there are.
   const which =
-    total > claim.sources.length
-      ? `its ${total} sources, the first ${claim.sources.length}:`
-      : `its source${total === 1 ? "" : "s"}`;
-  return `- footnote ${quoted(claim.footnote)}: ${quoted(claim.block)}${under(claim.heading)}; ${which} ${joined}`;
+    total <= shown
+      ? `its source${total === 1 ? "" : "s"} ${joined}`
+      : shown === 0
+        ? `its ${counted(total, "source")}, none within the result budget`
+        : `its ${total} sources, the first ${shown}: ${joined}`;
+  return `- footnote ${rowQuoted(claim.footnote)}: ${rowQuoted(claim.block)}${under(claim.heading)}; ${which}`;
 }
 
 export function unjoinedLine(footnote: {
@@ -398,7 +427,7 @@ export function unjoinedLine(footnote: {
   block: string;
   heading?: string | undefined;
 }): string {
-  return `- footnote ${quoted(footnote.footnote)}, no source: ${quoted(footnote.block)}${under(footnote.heading)}`;
+  return `- footnote ${rowQuoted(footnote.footnote)}, no source: ${rowQuoted(footnote.block)}${under(footnote.heading)}`;
 }
 
 export function derivationLine(
@@ -448,7 +477,7 @@ export function citationsHeader(summary: {
     parts.push(`each list shows at most ${summary.listCap} rows`);
   if (summary.truncated)
     parts.push(
-      "truncated at the result budget: the lists are cut in this order, each keeping its total",
+      "truncated at the result budget: each list keeps its first rows within its share of the budget, and its total",
     );
   parts.push("nothing was fetched");
   return parts.join("; ");
@@ -471,7 +500,7 @@ export function walkNodeLine(
   const facts = [
     node.parent === undefined ? "start" : `level ${node.level}, from ${safe(node.parent)}`,
     node.trust,
-    recheckPhrase(node.recheck),
+    recheckPhrase(node.recheck, ROW_CAP),
     `${sourceCount(node.sourcesTotal)}${node.sourcesTotal > listCap ? `, the first ${listCap} listed` : ""}`,
     ...(node.usageWindow === undefined ? [] : [pageWindowPhrase(node.usageWindow)]),
     ...(node.truncated ? ["the depth stops this branch"] : []),
@@ -517,9 +546,9 @@ export function walkEdgeLine(
       ? ", not entered: a contract field"
       : "";
   const walk = edge.walk === undefined ? contract : (WALK_PHRASES[edge.walk] ?? "");
-  const id = edge.id === undefined ? "" : `, id ${quoted(edge.id)}`;
+  const id = edge.id === undefined ? "" : `, id ${rowQuoted(edge.id)}`;
   // The field names the role: `resource`, `sources[i].resource`, `computation`, `executor.resource`, `attester.resource`.
-  return `- ${safe(edge.field)} ${quoted(edge.raw)}: ${names[edge.kind] ?? edge.kind}${edge.fromRoot === true ? ", read from the bundle root" : ""}${walk}${id}${sourceSignals(edge)}`;
+  return `- ${safe(edge.field)} ${rowQuoted(edge.raw)}: ${names[edge.kind] ?? edge.kind}${edge.fromRoot === true ? ", read from the bundle root" : ""}${walk}${id}${sourceSignals(edge)}`;
 }
 
 /** The first line of `provenance`: the start page, the depth, the walk's size and every cut; no page text. */

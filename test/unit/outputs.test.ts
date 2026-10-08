@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { loadBundle } from "../../src/bundle/load.js";
 import { DEFAULT_CAPS, type Page } from "../../src/bundle/model.js";
-import { type Citations, citationsOf, type Walk, type WalkNode } from "../../src/catalog/graph.js";
+import {
+  type Citations,
+  citationsOf,
+  type Walk,
+  type WalkNode,
+  walkProvenance,
+} from "../../src/catalog/graph.js";
+import type { Catalog } from "../../src/catalog/model.js";
 import {
   CatalogOutputSchema,
   CitationsOutputSchema,
@@ -432,10 +439,13 @@ describe("result bounds (bite 4 build review)", () => {
     const out = projectPage(longSource, NOW, 0, RESULT_BUDGET);
     expect(out.citation.length).toBeLessThan(1_000);
     expect(out.truncated).toBe(true);
-    expect(out.body.length).toBeGreaterThan(RESULT_BUDGET - 3_000);
-    // Bite b brings the structured output under the result budget too (D82): the source is counted, and the
-    // whole result fits.
-    expect(out.provenance?.sourcesTotal).toBe(1);
+    // Bite b brings the structured output under the result budget too (D82), each of a source's values cut at
+    // 2 000 characters (bite b's build review B-I-A3): the source is kept, cut, and the body still takes all but a
+    // few thousand characters.
+    expect(out.provenance?.sources).toEqual([
+      { id: `${"i".repeat(2_000)}…`, resource: `${resource.slice(0, 2_000)}…` },
+    ]);
+    expect(out.body.length).toBeGreaterThan(RESULT_BUDGET - 6_000);
     expect(JSON.stringify(out).length).toBeLessThanOrEqual(RESULT_BUDGET);
     expect(() => PageOutputSchema.parse(out)).not.toThrow();
   });
@@ -583,12 +593,16 @@ describe("the result budget (D82)", () => {
     expect(out.mentions.rows.map((m) => m.target)).toEqual(
       citations.mentions.slice(0, out.mentions.rows.length).map((m) => m.target),
     );
-    // Cut in the stated order: a full list of 50, then the list the budget ran out in, then empty lists.
-    const kept = lists.map((list) => list.rows.length);
-    const short = kept.findIndex((n) => n < 50);
-    expect(short).toBeGreaterThan(0);
-    expect(kept.slice(0, short).every((n) => n === 50)).toBe(true);
-    expect(kept.slice(short + 1).every((n) => n === 0)).toBe(true);
+    // Each list keeps its first rows within its share of the budget, so none is empty (bite b's build review
+    // B-I-E1); the short lists are whole, the claims, the longest rows, are cut, and the budget is used.
+    for (const list of lists) expect(list.rows.length).toBeGreaterThan(0);
+    for (const list of [out.bibliography, out.unjoined, out.inboundDerivations])
+      expect(list.rows).toHaveLength(50);
+    expect(out.claims.rows.length).toBeLessThan(50);
+    expect(JSON.stringify(out).length).toBeGreaterThan(RESULT_BUDGET - 3_000);
+    expect(out.inboundDerivations.rows.map((d) => d.from)).toEqual(
+      citations.inboundDerivations.slice(0, out.inboundDerivations.rows.length).map((d) => d.from),
+    );
     expect(out.summary).toContain("truncated at the result budget");
     // A small result is whole: nothing cut, each total its row count.
     const small = projectCitations(
@@ -864,5 +878,225 @@ describe("the result budget (D82)", () => {
     expect(walkLines[1]).toBe(NOTICE);
     expect(walkLines.filter((line) => line.startsWith(MARKER))).toHaveLength(1);
     expect(walkLines[0]).not.toContain("evil");
+  });
+});
+
+describe("row caps and list shares (bite b's build reviews B-I-A3, B-A-A2, B-I-E1)", () => {
+  const within = (structured: unknown, text: string): void => {
+    expect(JSON.stringify(structured).length).toBeLessThanOrEqual(RESULT_BUDGET);
+    expect(text.length).toBeLessThanOrEqual(RESULT_BUDGET);
+  };
+  /** A bundle from a map of path to text, loaded as a served bundle loads it, integrity off. */
+  const load = (files: Record<string, string>): Catalog =>
+    loadBundle(
+      "b",
+      Object.entries(files).map(([path, text]) => ({ path, bytes: Buffer.from(text) })),
+      {
+        admit: ["stable", "deprecated"],
+        dev: false,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    ).catalog;
+  const note = (frontmatter: string, body = "Body.\n") =>
+    `---\ntype: Note\ntitle: T\ndescription: D\n${frontmatter}---\n\n${body}`;
+  const sources = (...entries: string[]) =>
+    `sources:\n${entries.map((e) => `  - ${e}\n`).join("")}`;
+  const pageIn = (catalog: Catalog, path: string): Page => {
+    const found = catalog.pages.get(path);
+    if (found === undefined) throw new Error(path);
+    return found;
+  };
+  const long = (char: string, n: number) => char.repeat(n);
+  const neighbours = load({
+    "target.md": note(
+      sources("{ id: t1, resource: https://x.test/t1 }", "{ resource: https://x.test/t2 }"),
+      "Claim.[^t1]\n\n[^t1]: def\n",
+    ),
+    // The adversarial reviewer's pages: a 41 000-character heading and a 50 000-character link text on pages that
+    // link to the target, and a 100 000-character resource beside a source that names it.
+    "aaa-long-heading.md": note("", `# ${long("h", 41_000)}\n\n[to target](target.md)\n`),
+    "long-link.md": note("", `[${long("l", 50_000)}](target.md)\n`),
+    "long-resource.md": note(
+      sources(
+        `{ id: big, resource: ${JSON.stringify(`https://x.test/${long("r", 100_000)}`)}, title: Big }`,
+        "{ resource: target.md }",
+      ),
+    ),
+    "long-stale.md": note(
+      `stale_after: ${JSON.stringify(long("z", 100_000))}\n${sources("{ resource: target.md }")}`,
+    ),
+    ...Object.fromEntries(
+      Array.from({ length: 10 }, (_, i) => [
+        `deriv/d${i}.md`,
+        note(sources("{ resource: ../target.md, author: team:x }")),
+      ]),
+    ),
+  });
+
+  it("keeps every list of a page when its neighbours wrote one oversize heading, link text or resource", () => {
+    const out = projectCitations(
+      citationsOf(neighbours, pageIn(neighbours, "target.md")),
+      RESULT_BUDGET,
+    );
+    const text = citationsText(out);
+    within(out, text);
+    expect(() => CitationsOutputSchema.parse(out)).not.toThrow();
+    expect(out.truncated).toBe(false);
+    expect(out.inboundMentions.rows.map((m) => [m.from, m.text.length, m.heading?.length])).toEqual(
+      [
+        ["aaa-long-heading.md", 9, 501],
+        ["long-link.md", 501, undefined],
+      ],
+    );
+    expect(out.claims.rows).toHaveLength(1);
+    expect(out.bibliography.rows).toHaveLength(1);
+    expect(out.inboundDerivations.rows).toHaveLength(12);
+  });
+
+  it("cuts a row's page-written values at 2 000 characters in the structured output and 500 in the text", () => {
+    const out = projectCitations(
+      citationsOf(neighbours, pageIn(neighbours, "long-resource.md")),
+      RESULT_BUDGET,
+    );
+    const text = citationsText(out);
+    within(out, text);
+    // The oversize source and the small one after it are both there.
+    expect(out.bibliography.rows.map((s) => s.resource.length)).toEqual([2_001, 9]);
+    expect(out.bibliography.rows[0]?.resource.endsWith("…")).toBe(true);
+    const line = text.split("\n").find((l) => l.startsWith('- source "big"'));
+    expect(line).toBeDefined();
+    expect(line?.length).toBeLessThan(600);
+    expect(line).toContain('r"…');
+  });
+
+  it("keeps a walk's edges after an oversize value, and cuts an oversize recheck date", () => {
+    const walk = projectWalk(
+      walkProvenance(neighbours, pageIn(neighbours, "long-resource.md"), 4, NOW),
+      RESULT_BUDGET,
+    );
+    within(walk, walkText(walk));
+    expect(walk.truncated).toBe(false);
+    expect(walk.nodes.map((n) => n.path)).toEqual(["long-resource.md", "target.md"]);
+    expect(walk.nodes[0]?.edges.map((e) => [e.raw.length, e.walk ?? null])).toEqual([
+      [2_001, null],
+      [9, "entered"],
+    ]);
+    const stale = projectWalk(
+      walkProvenance(neighbours, pageIn(neighbours, "long-stale.md"), 4, NOW),
+      RESULT_BUDGET,
+    );
+    within(stale, walkText(stale));
+    expect(stale.nodes[0]?.recheck?.raw.length).toBe(2_001);
+    const nodeLine = walkText(stale).split("\n")[2] ?? "";
+    expect(nodeLine.length).toBeLessThan(700);
+    expect(stale.nodes.map((n) => n.path)).toEqual(["long-stale.md", "target.md"]);
+  });
+
+  it("keeps get_page's sources after one with an oversize title, the title cut at 2 000", () => {
+    // The independent reviewer's page: a 25 000-character title ahead of five small sources.
+    const catalog = load({
+      "a.md": note(
+        sources(
+          `{ id: big, resource: "https://x.test/big", title: ${JSON.stringify(long("t", 25_000))} }`,
+          ...Array.from({ length: 5 }, (_, i) => `{ id: s${i}, resource: "https://x.test/${i}" }`),
+        ),
+      ),
+    });
+    const out = projectPage(pageIn(catalog, "a.md"), NOW, 0, RESULT_BUDGET);
+    within(out, `${out.citation}\n${out.notice}\n${out.body}`);
+    expect(out.provenance?.sources.map((s) => s.id)).toEqual(["big", "s0", "s1", "s2", "s3", "s4"]);
+    expect(out.provenance?.sources[0]?.title?.length).toBe(2_001);
+  });
+
+  it("gives each list a share of the budget, so one long list starves no other (B-I-E1)", () => {
+    const rows = <T>(n: number, make: (i: number) => T): T[] =>
+      Array.from({ length: n }, (_, i) => make(i));
+    const citations: Citations = {
+      path: "a.md",
+      partial: false,
+      mentions: rows(50, (i) => ({
+        kind: "page",
+        raw: `/m${i}.md`,
+        target: `m${i}.md`,
+        text: `mention ${i} ${long("x", 480)}`,
+        heading: long("h", 480),
+      })),
+      inboundMentions: rows(50, (i) => ({
+        from: `in${i}.md`,
+        text: `inbound ${i} ${long("y", 480)}`,
+        heading: long("g", 480),
+      })),
+      claims: rows(3, (i) => ({
+        footnote: `f${i}`,
+        block: `Claim ${i}.`,
+        sources: [{ id: `f${i}`, resource: `https://x.test/${i}` }],
+        sourcesTotal: 1,
+      })),
+      claimsTotal: 3,
+      bibliography: rows(2, (i) => ({ resource: `https://x.test/b${i}` })),
+      unjoined: [],
+      inboundDerivations: rows(5, (i) => ({
+        from: `d${i}.md`,
+        field: "sources[0].resource",
+        kind: "concept" as const,
+      })),
+    };
+    const out = projectCitations(citations, RESULT_BUDGET);
+    within(out, citationsText(out));
+    expect(out.truncated).toBe(true);
+    // The two long lists are cut, each keeping its first rows; the short lists after them are whole.
+    expect(out.mentions.rows.length).toBeGreaterThan(5);
+    expect(out.mentions.rows.length).toBeLessThan(50);
+    expect(out.inboundMentions.rows.length).toBeGreaterThan(5);
+    expect(out.inboundMentions.rows.length).toBeLessThan(50);
+    expect(out.claims.rows).toHaveLength(3);
+    expect(out.bibliography.rows).toHaveLength(2);
+    expect(out.inboundDerivations.rows).toHaveLength(5);
+    expect(out.inboundMentions.rows.map((m) => m.from)).toEqual(
+      citations.inboundMentions.slice(0, out.inboundMentions.rows.length).map((m) => m.from),
+    );
+    // The budget is used, not left over: what the short lists leave goes back to the long ones.
+    expect(JSON.stringify(out).length).toBeGreaterThan(RESULT_BUDGET - 3_000);
+  });
+
+  it("keeps the first sources of a claim too large for its room, with their total", () => {
+    const claim = {
+      footnote: "x",
+      block: "One claim.",
+      sources: Array.from({ length: 50 }, (_, i) => ({
+        id: "x",
+        resource: `https://x.test/${i}`,
+        title: `${i} ${long("t", 1_500)}`,
+      })),
+      sourcesTotal: 50,
+    };
+    const out = projectCitations(
+      {
+        path: "a.md",
+        partial: false,
+        mentions: [],
+        inboundMentions: [],
+        claims: [claim],
+        claimsTotal: 1,
+        bibliography: [],
+        unjoined: [],
+        inboundDerivations: [],
+      },
+      RESULT_BUDGET,
+    );
+    const text = citationsText(out);
+    within(out, text);
+    expect(out.truncated).toBe(true);
+    const kept = out.claims.rows[0];
+    expect(kept?.sourcesTotal).toBe(50);
+    expect(kept?.sources.length).toBeGreaterThan(5);
+    expect(kept?.sources.length).toBeLessThan(50);
+    expect(kept?.sources.map((s) => s.resource)).toEqual(
+      claim.sources.slice(0, kept?.sources.length).map((s) => s.resource),
+    );
+    expect(text).toContain(`its 50 sources, the first ${kept?.sources.length}:`);
   });
 });

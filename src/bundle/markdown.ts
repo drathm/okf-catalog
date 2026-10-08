@@ -4,13 +4,17 @@ import { gfmFootnoteFromMarkdown } from "mdast-util-gfm-footnote";
 import { gfmTableFromMarkdown } from "mdast-util-gfm-table";
 import { gfmFootnote } from "micromark-extension-gfm-footnote";
 import { gfmTable } from "micromark-extension-gfm-table";
+import { ellipsised } from "./cut.js";
 
 /** A link as the body writes it: its URL, its text, and the nearest heading at or before it (issue 5). */
 export interface BodyLink {
   url: string;
-  /** The link's prose, whitespace collapsed. */
+  /** The link's prose, whitespace collapsed, cut at 500 characters with an ellipsis. */
   text: string;
-  /** The prose of the last heading that starts at or before the link (the link's own heading when it sits in one); absent before any heading, or when that heading has no text. */
+  /**
+   * The prose of the last heading that starts at or before the link (the link's own heading when it sits in one),
+   * cut as the text is; absent before any heading, or when that heading has no text.
+   */
   heading?: string;
 }
 
@@ -19,8 +23,8 @@ export interface BodyFootnoteReference {
   id: string;
   /**
    * The prose of the smallest paragraph, heading, list item, block quote or table cell holding the reference,
-   * whitespace collapsed and cut at 500 characters: the sentence the footnote supports, never the footnote's
-   * definition.
+   * whitespace collapsed and cut at 500 characters with an ellipsis: the sentence the footnote supports, never the
+   * footnote's definition.
    */
   block: string;
   heading?: string;
@@ -49,8 +53,10 @@ export interface BodyFacts {
 
 const SENTENCE_CAP = 200;
 /**
- * Characters of a claim's block kept (issue 5): the sentence a footnote supports, not the page around it. The same
- * bound cuts an OKF 0.1 citation item read as a source (D63, bite a's build review I-E2).
+ * Characters of a prose value kept at load, then an ellipsis: a claim's block, the sentence a footnote supports
+ * and not the page around it (issue 5), and a link's text and a heading, so that no row of `citations` carries a
+ * value of any length (bite b's build reviews B-I-A3, B-A-A2). The same bound cuts an OKF 0.1 citation item read as
+ * a source (D63, bite a's build review I-E2).
  */
 export const BLOCK_CAP = 500;
 export const ANALYSIS_BUDGET = 256 * 1024;
@@ -158,13 +164,6 @@ function proseWithBlocks(tree: Nodes): string {
 
 /** The blocks a footnote reference's sentence is taken from; the innermost one holding it is the one used. */
 const CLAIM_BLOCKS = new Set(["paragraph", "heading", "listItem", "blockquote", "tableCell"]);
-
-/** The first `cap` characters of a text, one fewer when the cut would split a surrogate pair. */
-export function cutAt(text: string, cap: number): string {
-  if (text.length <= cap) return text;
-  const code = text.charCodeAt(cap - 1);
-  return text.slice(0, code >= 0xd800 && code <= 0xdbff ? cap - 1 : cap);
-}
 
 function firstSentenceOf(text: string): string {
   const match = /^(.*?[.!?])(?=\s|$)/.exec(text);
@@ -287,7 +286,7 @@ export function readBody(body: string): BodyFacts {
       case "heading": {
         const prose = proseOf(node);
         if (facts.firstHeading === undefined) facts.firstHeading = prose;
-        heading = prose.length > 0 ? prose : undefined;
+        heading = prose.length > 0 ? ellipsised(prose, BLOCK_CAP) : undefined;
         break;
       }
       case "paragraph":
@@ -297,16 +296,20 @@ export function readBody(body: string): BodyFacts {
         }
         break;
       case "link":
-        facts.links.push(withHeading({ url: node.url, text: proseOf(node) }, heading));
+        facts.links.push(
+          withHeading({ url: node.url, text: ellipsised(proseOf(node), BLOCK_CAP) }, heading),
+        );
         break;
       case "linkReference":
         references.push({ identifier: node.identifier, slot: facts.links.length });
-        facts.links.push(withHeading({ url: "", text: proseOf(node) }, heading));
+        facts.links.push(
+          withHeading({ url: "", text: ellipsised(proseOf(node), BLOCK_CAP) }, heading),
+        );
         break;
       case "footnoteReference": {
         let prose = "";
         if (block !== undefined) {
-          prose = blockProse.get(block) ?? cutAt(proseOf(block), BLOCK_CAP);
+          prose = blockProse.get(block) ?? ellipsised(proseOf(block), BLOCK_CAP);
           blockProse.set(block, prose);
         }
         facts.footnoteReferences.push(withHeading({ id: node.identifier, block: prose }, heading));
