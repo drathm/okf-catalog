@@ -557,6 +557,24 @@ describe("the result budget (D82)", () => {
     expect(plain.provenance?.sources).toHaveLength(1);
   });
 
+  it("keeps the page header within a quarter of the budget, naming fewer sources when escaping lengthens them", () => {
+    // A line separator is one character in JSON and six once escaped for a line: the provenance keeps every
+    // source, and the header names those that fit a quarter of the budget, then says how many more there are.
+    const base = page("terms/alpha.md");
+    const sources = Array.from({ length: 100 }, (_, i) => ({
+      id: `s${i}`,
+      resource: `r${i}${" ".repeat(100)}x`,
+    }));
+    const out = projectPage({ ...base, sources }, NOW, 0, RESULT_BUDGET);
+    within(out, `${out.citation}\n${out.notice}\n${out.body}`);
+    const kept = out.provenance?.sources.length ?? 0;
+    expect(kept).toBeGreaterThan(50);
+    expect(out.citation.length).toBeLessThanOrEqual(RESULT_BUDGET / 4);
+    const more = Number(/; and (\d+) more/.exec(out.citation)?.[1] ?? "0");
+    expect(100 - more).toBeLessThan(kept);
+    expect(100 - more).toBeGreaterThan(0);
+  });
+
   it("keeps a get_page body within the structured budget when escaping lengthens it", () => {
     const base = page("terms/alpha.md");
     const quotes: Page = { ...base, body: `${'"\\'.repeat(30_000)}\n` };

@@ -533,6 +533,35 @@ function cutBody(body: string, offset: number, textRoom: number, jsonRoom: numbe
   return cut;
 }
 
+/**
+ * The page header within a quarter of the budget: it names the sources the provenance kept, or, when escaping a
+ * line lengthens them past that quarter, as many of them as fit, then says how many more there are (D82).
+ */
+function headerWithin(
+  page: Page,
+  now: Date,
+  options: LineOptions,
+  kept: number,
+  room: number,
+): string {
+  const header = (shown: number): string =>
+    pageHeader(page, now, { ...options, sourcesShown: shown });
+  const whole = header(kept);
+  if (whole.length <= room) return whole;
+  let best = header(0);
+  let low = 1;
+  let high = kept - 1;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidate = header(mid);
+    if (candidate.length <= room) {
+      best = candidate;
+      low = mid + 1;
+    } else high = mid - 1;
+  }
+  return best;
+}
+
 /** The room a body has in the structured result: the budget less the result with an empty body. */
 const jsonRoomOf = (frame: PageOutput, budget: number): number =>
   budget -
@@ -542,7 +571,7 @@ const jsonRoomOf = (frame: PageOutput, budget: number): number =>
 /**
  * A page as `get_page` returns it, the whole result within the budget in both channels (D82): the provenance
  * takes at most half, its `verified` then `sources` cut in order with their totals, and the header names the
- * sources the provenance kept; the body takes the rest and says where to continue.
+ * sources the provenance kept, within a quarter; the body takes the rest and says where to continue.
  */
 export function projectPage(
   page: Page,
@@ -552,7 +581,13 @@ export function projectPage(
   options: LineOptions = {},
 ): PageOutput {
   const provenance = fitProvenance(projectProvenance(page, now), Math.floor(budget / 2));
-  const citation = pageHeader(page, now, { ...options, sourcesShown: provenance.sources.length });
+  const citation = headerWithin(
+    page,
+    now,
+    options,
+    provenance.sources.length,
+    Math.floor(budget / 4),
+  );
   const output: PageOutput = {
     path: page.path,
     kind: "page",
