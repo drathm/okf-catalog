@@ -32,29 +32,29 @@ describe("citationsOf", () => {
           "{ id: ga4-schema, resource: https://x.test/ga4, title: GA4 schema, author: team:data, usage_count: 7, last_modified: 2026-01-01 }",
           "{ id: GA4-Schema, resource: https://x.test/ga4-old }",
         ),
-        "# Events\n\nThe event table changed.[^Ga4-Schema] Then more.\n\n[^Ga4-Schema]: See [the notes](/b.md) on the schema.\n",
+        "# Events\n\nThe event table changed.[^Ga4-Schema] Then more.[^ga4-schema]\n\n[^Ga4-Schema]: See [the notes](/b.md) on the schema.\n",
       ),
       "b.md": note(""),
     });
     const cited = citationsOf(catalog, pageOf(catalog, "a.md"));
-    expect(cited.claims).toEqual([
-      {
-        footnote: "ga4-schema",
-        block: "The event table changed. Then more.",
-        heading: "Events",
-        sources: [
-          {
-            id: "ga4-schema",
-            resource: "https://x.test/ga4",
-            title: "GA4 schema",
-            author: "team:data",
-            usageCount: 7,
-            lastModified: "2026-01-01",
-          },
-          { id: "GA4-Schema", resource: "https://x.test/ga4-old" },
-        ],
-      },
-    ]);
+    const claim = {
+      footnote: "ga4-schema",
+      block: "The event table changed. Then more.",
+      heading: "Events",
+      sources: [
+        {
+          id: "ga4-schema",
+          resource: "https://x.test/ga4",
+          title: "GA4 schema",
+          author: "team:data",
+          usageCount: 7,
+          lastModified: "2026-01-01",
+        },
+        { id: "GA4-Schema", resource: "https://x.test/ga4-old" },
+      ],
+    };
+    // Two references in one block are two claims with the same prose.
+    expect(cited.claims).toEqual([claim, claim]);
     // The link in the definition is a mention; the definition's prose is no claim's block.
     expect(cited.mentions).toEqual([
       { kind: "page", raw: "/b.md", target: "b.md", text: "the notes", heading: "Events" },
