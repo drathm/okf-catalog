@@ -65,25 +65,42 @@ export interface Recheck {
   overdue: boolean;
 }
 
-export function recheckPhrase(recheck: Recheck | undefined): string {
+/**
+ * The recheck date as a fact: overdue since it, unparseable, or the date. `cap` bounds the printed raw text, which
+ * is whatever the company wrote: 500 in the rows of the two graph tools (bite b's build review B-A-A2).
+ */
+export function recheckPhrase(
+  recheck: Recheck | undefined,
+  cap: number = Number.POSITIVE_INFINITY,
+): string {
   if (recheck === undefined) return "no recheck date";
-  // A date that does not parse is any text the company wrote; one that parses is plain and stays bare.
-  const raw = plainOrQuoted(recheck.raw);
+  // A date that does not parse is any text the company wrote, quoted however plain, so it can close no
+  // parenthesis and add no fact (bite b's build reviews B-I-A4, B-A-A5); one that parses stays bare when plain.
+  if (recheck.form === "unparseable")
+    return `recheck date unparseable (${quotedCut(recheck.raw, cap)})`;
+  const raw = plainOrQuoted(recheck.raw, cap);
   if (recheck.overdue) return `overdue since ${raw}`;
-  if (recheck.form === "unparseable") return `recheck date unparseable (${raw})`;
   return `recheck ${raw}`;
 }
 
-function deprecationSuffix(status: string, replacement: string | undefined): string {
-  if (replacement !== undefined) return ` replaced by ${safe(replacement)}`;
+function deprecationSuffix(
+  status: string,
+  replacement: string | undefined,
+  cap: number = Number.POSITIVE_INFINITY,
+): string {
+  if (replacement !== undefined) return ` replaced by ${printed(replacement, "path", cap)}`;
   if (status === "deprecated") return " deprecated, no replacement";
   return "";
 }
 
 /** The most sources a page header names; the rest are counted. */
 const HEADER_SOURCES = 10;
-/** The most characters of a named source's id or resource, its escapes counted, before an ellipsis. */
-const SOURCE_CAP = 200;
+/**
+ * The most characters of one page-written value a page header prints, its escapes counted, before an ellipsis
+ * after the quote: a named source's id or resource (bite a's verification), and the path, type, status, verifier,
+ * dates, resource and replacement (bite b's build review B-I-A2), as the values in use are listed.
+ */
+const HEADER_CAP = 200;
 
 /** How many sources a page lists, as a phrase. */
 export const sourceCount = (count: number): string =>
@@ -103,10 +120,17 @@ const escapeQuotes = (text: string): string => text.replace(/\\/g, "\\\\").repla
  * escapes counted, with an ellipsis after the quote, as the values in use are listed; a frontmatter source's id and
  * resource are of any length (the fix pass's verification).
  */
-const quotedSource = (text: string): string => {
-  const { kept, cut } = cutEscaped(collapse(text), SOURCE_CAP);
+const quotedSource = (text: string): string => quotedCut(text, HEADER_CAP);
+
+/**
+ * Page text quoted as `quoted` quotes, cut at `cap` characters once its controls are escaped, an escape never split,
+ * with an ellipsis after the closing quote when cut.
+ */
+function quotedCut(text: string, cap: number): string {
+  if (!Number.isFinite(cap)) return quoted(text);
+  const { kept, cut } = cutEscaped(collapse(text), cap);
   return `"${escapeQuotes(kept)}"${cut ? "…" : ""}`;
-};
+}
 
 /**
  * What a bare fact must not carry besides a control character: a comma or a bracket, which would read as another
@@ -119,15 +143,44 @@ const MISREAD = /[,[\]"\\]/;
  * carries none of `MISREAD`'s characters and nothing in it needs an escape (no control character, nor any other
  * character `escapeControls` rewrites); otherwise quoted, so it reads as one fact.
  */
-const fact = (word: string, vouched: boolean): string =>
-  vouched && !MISREAD.test(word) && escapeControls(word) === word ? safe(word) : quoted(word);
+const fact = (word: string, vouched: boolean, cap = Number.POSITIVE_INFINITY): string =>
+  vouched && !MISREAD.test(word) && escapeControls(word) === word && word.length <= cap
+    ? safe(word)
+    : quotedCut(word, cap);
 
 /**
  * Company text in the brackets that no list vouches for, the verifier, a recheck date and the page's resource: bare
  * when none of its characters could be misread, otherwise quoted, as a status or type is (P13, amended after the
  * verification of the build review's fix pass).
  */
-const plainOrQuoted = (text: string): string => fact(text, true);
+const plainOrQuoted = (text: string, cap = Number.POSITIVE_INFINITY): string =>
+  fact(text, true, cap);
+
+/**
+ * The kinds of page-written value a server line prints bare when the value is plain for its kind: a path (letters,
+ * digits, `_ - . /` and single spaces inside), a word (letters, digits, `_ -`), a title (anything but a bracket, a
+ * quotation mark, a backslash or a control character). P13 generalised (bite b's build review B-A-A8; the title
+ * kind, bite a's verification).
+ */
+export type ValueKind = "path" | "word" | "title";
+
+const PLAIN: Record<ValueKind, (value: string) => boolean> = {
+  path: (value) => /^[\p{L}\p{N}_./-]+(?: [\p{L}\p{N}_./-]+)*$/u.test(value),
+  word: (value) => /^[\p{L}\p{N}_-]+$/u.test(value),
+  title: (value) => value.length > 0 && !/[[\]"\\]/.test(value) && escapeControls(value) === value,
+};
+
+/**
+ * A page-written value in a server line: bare when it is plain for its kind and within `cap` characters, otherwise
+ * quoted as `quoted` quotes and cut at `cap`, its escapes counted, so it reads as one value and can add no fact.
+ */
+export function printed(
+  value: string,
+  kind: ValueKind,
+  cap: number = Number.POSITIVE_INFINITY,
+): string {
+  return PLAIN[kind](value) && value.length <= cap ? safe(value) : quotedCut(value, cap);
+}
 
 /** What a line needs to know about the bundle beyond the page: the types the company did not declare. */
 export interface LineOptions {
@@ -141,16 +194,21 @@ const KNOWN_STATUSES: ReadonlySet<string> = new Set(["draft", "stable", "depreca
  * A status as a fact in the brackets: one of the three known values as it is, any other word quoted, since it is
  * the company's own text and a comma in it must not add a fact (P13).
  */
-const statusFact = (status: string): string => fact(status, KNOWN_STATUSES.has(status));
+const statusFact = (status: string, cap = Number.POSITIVE_INFINITY): string =>
+  fact(status, KNOWN_STATUSES.has(status), cap);
 
 /**
  * A type as a fact in the brackets: quoted when the company declares its types and this is not one of them, and
  * whenever a character of it could be misread, declared or not (P13, amended after the build review).
  */
-const typeFact = (type: string, options: LineOptions): string =>
-  fact(type, options.undeclaredTypes?.has(type) !== true);
+const typeFact = (type: string, options: LineOptions, cap = Number.POSITIVE_INFINITY): string =>
+  fact(type, options.undeclaredTypes?.has(type) !== true, cap);
 
-/** One search hit as a line: path, title, the bracketed facts, the quoted snippet, the replacement. */
+/**
+ * One search hit as a line: path, title, the bracketed facts, the quoted snippet, the replacement; each value the
+ * page wrote printed whole up to 200 characters and cut there, as a page header prints it (the verification of bite
+ * b's fix pass).
+ */
 export function hitLine(
   hit: SearchHit,
   snippet: string | undefined,
@@ -162,15 +220,15 @@ export function hitLine(
       ? undefined
       : { raw: hit.staleAfter, form: form ?? "date", overdue: hit.overdue };
   const facts = [
-    typeFact(hit.type, options),
-    statusFact(hit.status),
+    typeFact(hit.type, options, HEADER_CAP),
+    statusFact(hit.status, HEADER_CAP),
     hit.trust,
-    recheckPhrase(recheck),
+    recheckPhrase(recheck, HEADER_CAP),
     sourceCount(hit.sources),
-    ...(hit.resource === undefined ? [] : [`resource: ${plainOrQuoted(hit.resource)}`]),
+    ...(hit.resource === undefined ? [] : [`resource: ${plainOrQuoted(hit.resource, HEADER_CAP)}`]),
   ].join(", ");
   const snippetPart = snippet === undefined || snippet.length === 0 ? "" : ` ${quoted(snippet)}`;
-  return `${safe(hit.path)} — ${safe(hit.title)} [${facts}]${snippetPart}${deprecationSuffix(hit.status, hit.replacement)}`;
+  return `${printed(hit.path, "path")} — ${printed(hit.title, "title", HEADER_CAP)} [${facts}]${snippetPart}${deprecationSuffix(hit.status, hit.replacement, HEADER_CAP)}`;
 }
 
 const instant = (v: Verification): number =>
@@ -187,16 +245,46 @@ function namedVerification(page: Page): Verification | undefined {
   return page.latestVerification;
 }
 
-function verificationPhrase(page: Page): string {
+function verificationPhrase(page: Page, cap: number): string {
   const named = namedVerification(page);
   if (named === undefined || page.verified.length === 0) return "unverified";
   return named.at === undefined
-    ? `verified by ${plainOrQuoted(named.by)}, date unknown`
-    : `verified by ${plainOrQuoted(named.by)} on ${plainOrQuoted(named.at.raw)}`;
+    ? `verified by ${plainOrQuoted(named.by, cap)}, date unknown`
+    : `verified by ${plainOrQuoted(named.by, cap)} on ${plainOrQuoted(named.at.raw, cap)}`;
 }
 
-/** The citation header of a page: path, then the bracketed facts, then the deprecation. */
-export function pageHeader(page: Page, now: Date, options: LineOptions = {}): string {
+/** What a page header needs beyond a line's options: how many of the page's sources the result names (D82). */
+export interface HeaderOptions extends LineOptions {
+  /** The sources the provenance kept within the result budget; the header names the same ones. All by default. */
+  sourcesShown?: number;
+}
+
+/**
+ * The sources a header names: at most ten of those the result kept, each id and resource quoted, since either can
+ * be body text (a v0.1 citation item), and cut at 200 characters, since a frontmatter source's can be of any
+ * length; then how many more there are, so neither a long list nor a long source crowds the body out of the result
+ * (bite a's build review I-E2, I-E3 and its verification; D82).
+ */
+function headerSources(page: Page, shown: number): string {
+  const total = page.sources.length;
+  if (total === 0) return "no sources";
+  if (shown <= 0) return `${sourceCount(total)}, none named within the result budget`;
+  const named = page.sources
+    .slice(0, Math.min(shown, HEADER_SOURCES))
+    .map((s) =>
+      s.id === undefined
+        ? quotedSource(s.resource)
+        : `${quotedSource(s.id)} ${quotedSource(s.resource)}`,
+    );
+  const more = total - named.length;
+  return `sources: ${[...named, ...(more > 0 ? [`and ${more} more`] : [])].join("; ")}`;
+}
+
+/**
+ * The citation header of a page: path, then the bracketed facts, then the deprecation; each page-written value in
+ * it printed whole up to 200 characters and cut there (bite b's build review B-I-A2).
+ */
+export function pageHeader(page: Page, now: Date, options: HeaderOptions = {}): string {
   const recheck: Recheck | undefined =
     page.staleAfter === undefined
       ? undefined
@@ -206,32 +294,20 @@ export function pageHeader(page: Page, now: Date, options: LineOptions = {}): st
           overdue:
             page.staleAfter.at !== undefined && now.getTime() >= page.staleAfter.at.getTime(),
         };
-  // The first sources by name, each id and resource quoted, since either can be body text (a v0.1 citation item),
-  // and cut at 200 characters, since a frontmatter source's can be of any length; past ten, a count, so neither a
-  // long list nor a long source can crowd the body out of the result (build review I-E2, I-E3; its verification).
-  const named = page.sources
-    .slice(0, HEADER_SOURCES)
-    .map((s) =>
-      s.id === undefined
-        ? quotedSource(s.resource)
-        : `${quotedSource(s.id)} ${quotedSource(s.resource)}`,
-    );
-  const more = page.sources.length - named.length;
-  const sources =
-    page.sources.length === 0
-      ? "no sources"
-      : `sources: ${[...named, ...(more > 0 ? [`and ${more} more`] : [])].join("; ")}`;
+  const sources = headerSources(page, options.sourcesShown ?? page.sources.length);
   const facts = [
-    typeFact(page.type, options),
-    statusFact(page.status),
+    typeFact(page.type, options, HEADER_CAP),
+    statusFact(page.status, HEADER_CAP),
     page.trust,
     // The tier already says "unverified" when there is no verification to name.
-    ...(page.verified.length === 0 ? [] : [verificationPhrase(page)]),
-    recheckPhrase(recheck),
+    ...(page.verified.length === 0 ? [] : [verificationPhrase(page, HEADER_CAP)]),
+    recheckPhrase(recheck, HEADER_CAP),
     sources,
-    ...(page.resource === undefined ? [] : [`resource: ${plainOrQuoted(page.resource)}`]),
+    ...(page.resource === undefined
+      ? []
+      : [`resource: ${plainOrQuoted(page.resource, HEADER_CAP)}`]),
   ].join(", ");
-  return `${safe(page.path)} [${facts}]${deprecationSuffix(page.status, page.replacement)}`;
+  return `${printed(page.path, "path", HEADER_CAP)} [${facts}]${deprecationSuffix(page.status, page.replacement, HEADER_CAP)}`;
 }
 
 /** The header of a reserved file served through `get_page`. */
@@ -241,7 +317,7 @@ export function reservedHeader(
   folder: string,
 ): string {
   const path = folder === "" ? `${kind}.md` : `${folder}/${kind}.md`;
-  return `${safe(path)} [reserved ${kind}, ${source}]`;
+  return `${printed(path, "path")} [reserved ${kind}, ${source}]`;
 }
 
 /** The first line of a search result: counts, the terms as they were used, and what was left out. */
@@ -270,5 +346,289 @@ export function searchHeader(response: SearchResponse, dev: boolean): string {
   if (response.filtersExhausted) parts.push("the result pool is full and more matches may exist");
   if (dev) parts.push("development mode: drafts and unknown statuses admitted");
   parts.push("snippets are page text, quoted");
+  return parts.join("; ");
+}
+
+// The lines of `citations` and `provenance` (issue 5). A header line in the server's voice comes first and holds
+// no page text but the page's path, printed by its kind; after the marker, every value a page wrote (link text,
+// headings, claim blocks, footnote ids, source fields, path-field values) is quoted and escaped, so it reads as
+// data and cannot start a line of its own, but for a path plain for its kind, which is printed bare, and a status,
+// printed by P13's rule (bite b's build reviews B-A-A8, B-A-E5).
+
+/** A count with its noun. */
+const counted = (count: number, one: string, many = `${one}s`): string =>
+  `${count} ${count === 1 ? one : many}`;
+
+/**
+ * Characters of one page-written value a row of the two graph tools prints, its escapes counted, before an
+ * ellipsis after the quote; the structured output carries up to 2 000 (bite b's build reviews B-I-A3, B-A-A2).
+ */
+const ROW_CAP = 500;
+
+/** A page-written value in a row: quoted, escaped and cut at the row cap. */
+const rowQuoted = (text: string): string => quotedCut(text, ROW_CAP);
+
+/** A path in a row: bare when plain for a path and within the row cap, else quoted (B-A-A8). */
+const rowPath = (path: string): string => printed(path, "path", ROW_CAP);
+
+const under = (heading: string | undefined): string =>
+  heading === undefined ? "" : ` under ${rowQuoted(heading)}`;
+
+/**
+ * A usage window as a result carries it: with its dates, saying whether it is its page's shared one; named only, its
+ * dates being the page's window printed once in the same result (D62); or the note that replaced it past its cap
+ * (D78).
+ */
+export type WindowFact =
+  | { from: string; to: string; inherited: boolean }
+  | { inherited: true }
+  | { omitted: string };
+
+/** A source's own fields, as written, for a line. */
+export interface SourceFields {
+  id?: string | undefined;
+  title?: string | undefined;
+  author?: string | undefined;
+  usageCount?: number | undefined;
+  lastModified?: string | undefined;
+  window?: WindowFact | undefined;
+}
+
+function windowPhrase(window: WindowFact | undefined): string {
+  if (window === undefined) return "";
+  if ("omitted" in window) return ", its usage window over 2000 characters and not returned";
+  if (!("from" in window)) return ", usage window inherited from its page";
+  return `, usage window ${rowQuoted(window.from)} to ${rowQuoted(window.to)} (${window.inherited ? "inherited from its page" : "its own"})`;
+}
+
+/** A page's own usage window, printed once in a result whose sources name it rather than copy it (D62). */
+function pageWindowPhrase(window: { from: string; to: string } | { omitted: string }): string {
+  return "omitted" in window
+    ? "usage window over 2000 characters and not returned"
+    : `usage window ${rowQuoted(window.from)} to ${rowQuoted(window.to)}`;
+}
+
+/** The line after the marker that gives the cited page's own usage window, which its inheriting sources name. */
+export function pageWindowLine(window: { from: string; to: string } | { omitted: string }): string {
+  return `the page's ${pageWindowPhrase(window)}`;
+}
+
+/** A source's signals after its id or value: title, author, usage count, window, last change. */
+function sourceSignals(source: SourceFields): string {
+  return [
+    source.title === undefined ? "" : `, titled ${rowQuoted(source.title)}`,
+    source.author === undefined ? "" : `, by ${rowQuoted(source.author)}`,
+    source.usageCount === undefined ? "" : `, usage count ${source.usageCount}`,
+    windowPhrase(source.window),
+    source.lastModified === undefined ? "" : `, last modified ${rowQuoted(source.lastModified)}`,
+  ].join("");
+}
+
+/** A source of the page: its id when it has one, its resource, its signals. */
+export function sourceLine(source: SourceFields & { resource: string }): string {
+  return `- source ${source.id === undefined ? "" : `${rowQuoted(source.id)} `}${rowQuoted(source.resource)}${sourceSignals(source)}`;
+}
+
+export function mentionLine(mention: {
+  kind: string;
+  raw: string;
+  target?: string | undefined;
+  text: string;
+  heading?: string | undefined;
+}): string {
+  const where = mention.target === undefined ? rowQuoted(mention.raw) : rowPath(mention.target);
+  return `- ${mention.kind} ${where}: ${rowQuoted(mention.text)}${under(mention.heading)}`;
+}
+
+export function inboundMentionLine(mention: {
+  from: string;
+  status: string;
+  text: string;
+  heading?: string | undefined;
+}): string {
+  return `- from ${rowPath(mention.from)} [${statusFact(mention.status, ROW_CAP)}]: ${rowQuoted(mention.text)}${under(mention.heading)}`;
+}
+
+export function claimLine(claim: {
+  footnote: string;
+  block: string;
+  heading?: string | undefined;
+  sources: ReadonlyArray<SourceFields & { resource: string }>;
+  /** How many sources the reference joins; the line names the first ones and says how many there are. */
+  sourcesTotal?: number | undefined;
+}): string {
+  const joined = claim.sources
+    .map(
+      (s) =>
+        `${s.id === undefined ? "" : `${rowQuoted(s.id)} `}${rowQuoted(s.resource)}${sourceSignals(s)}`,
+    )
+    .join("; and ");
+  const total = claim.sourcesTotal ?? claim.sources.length;
+  const shown = claim.sources.length;
+  // A claim the budget cut names the sources it kept and says how many there are.
+  const which =
+    total <= shown
+      ? `its source${total === 1 ? "" : "s"} ${joined}`
+      : shown === 0
+        ? `its ${counted(total, "source")}, none within the result budget`
+        : `its ${total} sources, the first ${shown}: ${joined}`;
+  return `- footnote ${rowQuoted(claim.footnote)}: ${rowQuoted(claim.block)}${under(claim.heading)}; ${which}`;
+}
+
+export function unjoinedLine(footnote: {
+  footnote: string;
+  block: string;
+  heading?: string | undefined;
+}): string {
+  return `- footnote ${rowQuoted(footnote.footnote)}, no source: ${rowQuoted(footnote.block)}${under(footnote.heading)}`;
+}
+
+export function derivationLine(
+  derivation: { from: string; status: string; field: string; kind: string } & SourceFields,
+): string {
+  const how =
+    derivation.kind === "ambiguous" ? "ambiguous, naming this page and another" : "names this page";
+  return `- from ${rowPath(derivation.from)} [${statusFact(derivation.status, ROW_CAP)}], ${safe(derivation.field)} ${how}${sourceSignals(derivation)}`;
+}
+
+/** A list's heading after the marker: its name and total, and how many rows the result shows when that is fewer. */
+export function listHeading(name: string, total: number, shown: number): string {
+  return `${name} (${total}${shown < total ? `, ${shown} shown` : ""}):`;
+}
+
+/** The first line of `citations`: the page, by its kind, and the size of each list; no other page text. */
+export function citationsHeader(summary: {
+  path: string;
+  partial: boolean;
+  truncated: boolean;
+  totals: {
+    mentions: number;
+    inboundMentions: number;
+    claims: number;
+    bibliography: number;
+    unjoined: number;
+    inboundDerivations: number;
+  };
+  listCap: number;
+}): string {
+  const t = summary.totals;
+  const parts = [
+    `citations of ${printed(summary.path, "path")}: ${[
+      counted(t.mentions, "mention"),
+      counted(t.inboundMentions, "inbound mention"),
+      counted(t.claims, "claim"),
+      counted(t.bibliography, "bibliography entry", "bibliography entries"),
+      counted(t.unjoined, "unjoined footnote"),
+      counted(t.inboundDerivations, "inbound derivation"),
+    ].join(", ")}`,
+  ];
+  if (summary.partial)
+    parts.push(
+      "partial: only part of the body was analysed, and mentions and claims cover that part",
+    );
+  if (Object.values(t).some((total) => total > summary.listCap))
+    parts.push(`each list shows at most ${summary.listCap} rows`);
+  if (summary.truncated)
+    parts.push(
+      "truncated at the result budget: each list keeps its first rows within its share of the budget, and its total",
+    );
+  parts.push("nothing was fetched");
+  return parts.join("; ");
+}
+
+/** One page of a provenance walk, before its edges. */
+export function walkNodeLine(
+  node: {
+    path: string;
+    level: number;
+    parent?: string | undefined;
+    status: string;
+    trust: string;
+    recheck?: Recheck | undefined;
+    usageWindow?: { from: string; to: string } | { omitted: string } | undefined;
+    sourcesTotal: number;
+    atDepthLimit: boolean;
+  },
+  listCap: number,
+): string {
+  const facts = [
+    node.parent === undefined ? "start" : `level ${node.level}, from ${rowPath(node.parent)}`,
+    // A draft entered in development mode, or a deprecated page, says so (bite b's build review B-A-E5).
+    statusFact(node.status, ROW_CAP),
+    node.trust,
+    recheckPhrase(node.recheck, ROW_CAP),
+    `${sourceCount(node.sourcesTotal)}${node.sourcesTotal > listCap ? `, the first ${listCap} listed` : ""}`,
+    ...(node.usageWindow === undefined ? [] : [pageWindowPhrase(node.usageWindow)]),
+    ...(node.atDepthLimit ? ["the depth stops this branch"] : []),
+  ];
+  return `${rowPath(node.path)} [${facts.join(", ")}]`;
+}
+
+const WALK_PHRASES: Record<string, string> = {
+  entered: ", entered",
+  "listed-twice": ", listed twice on this page and entered once",
+  "already-entered": ", entered from another branch and not expanded again",
+  cycle: ", already on this branch: a cycle, not followed",
+  "depth-limit": ", not entered: the depth stops here",
+  "concept-limit": ", not entered: the walk entered its 200 concepts",
+};
+
+/** One edge of a walk: its field, the value as written, what it names, and what the walk did. */
+export function walkEdgeLine(
+  edge: {
+    role: string;
+    field: string;
+    raw: string;
+    kind: string;
+    target?: string | undefined;
+    candidates?: string[] | undefined;
+    fromRoot?: boolean | undefined;
+    walk?: string | undefined;
+  } & SourceFields,
+): string {
+  const target = edge.target === undefined ? "" : rowPath(edge.target);
+  const names: Record<string, string> = {
+    url: "a URL, not fetched",
+    scope: "a scope",
+    unresolved: "nothing in the bundle",
+    ambiguous: `ambiguous: ${(edge.candidates ?? []).map(rowPath).join(" or ")}`,
+    concept: `the page ${target}`,
+    reserved: `the reserved file ${target}`,
+    attachment: `the attachment ${target}, not opened`,
+    // The root's folder is the empty path (bite b's build review B-A-A9).
+    folder: edge.target === "" ? "the root folder" : `the folder ${target}`,
+    unserved: `${target}, a page that is not served`,
+  };
+  const contract =
+    edge.kind === "concept" && edge.role !== "resource" && edge.role !== "source"
+      ? ", not entered: a contract field"
+      : "";
+  const walk = edge.walk === undefined ? contract : (WALK_PHRASES[edge.walk] ?? "");
+  const id = edge.id === undefined ? "" : `, id ${rowQuoted(edge.id)}`;
+  // The field names the role: `resource`, `sources[i].resource`, `computation`, `executor.resource`, `attester.resource`.
+  return `- ${safe(edge.field)} ${rowQuoted(edge.raw)}: ${names[edge.kind] ?? edge.kind}${edge.fromRoot === true ? ", read from the bundle root" : ""}${walk}${id}${sourceSignals(edge)}`;
+}
+
+/** The first line of `provenance`: the start page, by its kind, the depth, the walk's size and every cut; no other page text. */
+export function provenanceHeader(summary: {
+  path: string;
+  depth: number;
+  nodesTotal: number;
+  returned: number;
+  lastCut: boolean;
+  capped: boolean;
+  branchesStopped: boolean;
+  truncated: boolean;
+}): string {
+  const parts = [
+    `provenance of ${printed(summary.path, "path")} to depth ${summary.depth}: ${counted(summary.nodesTotal, "page")} in the walk, ${counted(summary.nodesTotal - 1, "concept")} entered`,
+  ];
+  if (summary.branchesStopped) parts.push("some branches stop at the depth");
+  if (summary.capped) parts.push("capped: the walk entered its 200 concepts and entered no more");
+  if (summary.truncated)
+    parts.push(
+      `truncated at the result budget: ${summary.returned} of ${counted(summary.nodesTotal, "page")} returned${summary.lastCut ? ", the last with only its first edges" : ""}; ask for a smaller depth, or start from a page further down`,
+    );
+  parts.push("nothing was fetched, opened or run");
   return parts.join("; ");
 }

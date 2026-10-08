@@ -54,6 +54,48 @@ describe("loadBundle on the specification's example bundle", () => {
     expect(catalog.pages.get("metrics/gross-margin-legacy.md")?.status).toBe("deprecated");
   });
 
+  it("classifies the path fields of admitted pages and maps inbound mentions and derivations (D69)", () => {
+    const ytd = catalog.pages.get("computations/revenue-ytd.md");
+    expect(ytd?.pathEdges.map((e) => [e.field, e.kind, e.target, e.fromRoot])).toEqual([
+      ["sources[0].resource", "concept", "policies/revenue-recognition.md", true],
+      ["sources[1].resource", "concept", "tables/orders.md", true],
+      ["executor.resource", "concept", "skills/run-on-bq.md", true],
+      ["attester.resource", "attachment", "attesters/sql_equality.py", true],
+    ]);
+    // Five pages write their path fields from the root without a leading slash: one report each.
+    expect(
+      report.degradations
+        .filter((d) => d.code === "path-field-root-relative")
+        .map((d) => [d.path, d.field]),
+    ).toEqual([
+      ["computations/gross-margin-period.md", "sources[0].resource"],
+      ["computations/revenue-ytd.md", "sources[0].resource"],
+      ["metrics/gross-margin.md", "sources[0].resource"],
+      ["metrics/revenue.md", "sources[0].resource"],
+      ["tables/orders.md", "sources[1].resource"],
+    ]);
+    // The revenue policy is a source of both computations, both live metrics pages and the orders table.
+    const derivations = catalog.graph.inboundDerivations.get("policies/revenue-recognition.md");
+    expect(derivations?.map((d) => [d.from, d.edge.field])).toEqual([
+      ["computations/gross-margin-period.md", "sources[1].resource"],
+      ["computations/revenue-ytd.md", "sources[0].resource"],
+      ["metrics/gross-margin.md", "sources[1].resource"],
+      ["metrics/revenue.md", "sources[0].resource"],
+      ["tables/orders.md", "sources[1].resource"],
+    ]);
+    // A contract field names a page without deriving from it.
+    expect(catalog.graph.inboundDerivations.has("skills/run-on-bq.md")).toBe(false);
+    expect(
+      catalog.graph.inboundMentions
+        .get("metrics/gross-margin.md")
+        ?.map((m) => [m.from, m.link.raw]),
+    ).toEqual([
+      ["metrics/gross-margin-legacy.md", "./gross-margin.md"],
+      ["policies/margin-standard.md", "/metrics/gross-margin.md"],
+      ["policies/revenue-recognition.md", "/metrics/gross-margin.md"],
+    ]);
+  });
+
   it("checks every folder index's page links against the folder's pages", () => {
     for (const [folder, entry] of catalog.folders) {
       if (entry.indexSource !== "file" || entry.index === undefined) continue;
@@ -343,5 +385,30 @@ describe("loadBundle: review round 1 additions", () => {
       loadBundle("b", readFixture("behaviours"), options({ integrity: "none" }), NOW).report
         .integrity,
     ).toBe("skipped");
+  });
+});
+
+describe("loadBundle: path fields naming a held draft (bite b's build reviews B-I-B1, L1)", () => {
+  it("classifies a source naming a draft as unserved at load, without development mode", () => {
+    const files = {
+      "a.md":
+        "---\ntype: Note\ntitle: A\nsources:\n  - { resource: drafts/plan.md }\n  - { resource: b.md }\n---\n\nA.\n",
+      "b.md": "---\ntype: Note\ntitle: B\n---\n\nB.\n",
+      "drafts/plan.md": "---\ntype: Note\ntitle: Plan\nstatus: draft\n---\n\nPlan.\n",
+    };
+    const { catalog, report } = loadBundle(
+      "b",
+      Object.entries(files).map(([path, text]) => ({ path, bytes: Buffer.from(text) })),
+      options({ integrity: "none" }),
+      NOW,
+    );
+    expect(report.excludedByStatus).toBe(1);
+    expect(catalog.pages.has("drafts/plan.md")).toBe(false);
+    expect(catalog.pages.get("a.md")?.pathEdges.map((e) => [e.kind, e.target])).toEqual([
+      ["unserved", "drafts/plan.md"],
+      ["concept", "b.md"],
+    ]);
+    // An unserved edge derives nothing: only the served page has an inbound derivation.
+    expect([...catalog.graph.inboundDerivations.keys()]).toEqual(["b.md"]);
   });
 });

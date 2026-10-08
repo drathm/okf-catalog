@@ -62,6 +62,7 @@ const page = (patch: Partial<Page> = {}): Page => ({
   sources: [],
   links: [],
   footnoteReferences: [],
+  pathEdges: [],
   frontmatter: {},
   body: "",
   degradations: [],

@@ -49,8 +49,11 @@ const waitForFile = async (path: string, ms: number): Promise<boolean> => {
   return existsSync(path);
 };
 
+/** The tools the server lists, in name order. */
+const SIX_TOOLS = ["catalog", "citations", "get_page", "provenance", "search", "status"];
+
 describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
-  it("serves the four tools to the SDK client, with the private cache under the sandbox and stderr piped", async () => {
+  it("serves the six tools to the SDK client, with the private cache under the sandbox and stderr piped", async () => {
     const b = box();
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -66,7 +69,7 @@ describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
     const client = new Client({ name: "test", version: "0.0.0" });
     await client.connect(transport);
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(tools).toEqual(["catalog", "get_page", "search", "status"]);
+    expect(tools).toEqual(SIX_TOOLS);
     const search = (await client.callTool({
       name: "search",
       arguments: { question: "acme retail" },
@@ -123,7 +126,7 @@ describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
     expect(await waitForFile(lockFile(b), 5000)).toBe(true);
     run.send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
     const list = await run.waitFor(2);
-    expect((list.result as { tools: unknown[] }).tools).toHaveLength(4);
+    expect((list.result as { tools: unknown[] }).tools).toHaveLength(6);
     run.send({
       jsonrpc: "2.0",
       id: 3,
@@ -337,7 +340,7 @@ describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
     expect(existsSync(companyDir(b))).toBe(false);
     run.send({ jsonrpc: "2.0", id: 2, method: "tools/list" });
     const list = await run.waitFor(2);
-    expect((list.result as { tools: unknown[] }).tools).toHaveLength(4);
+    expect((list.result as { tools: unknown[] }).tools).toHaveLength(6);
     expect(await waitForFile(lockFile(b), 5000)).toBe(true);
     const exit = await run.end();
     expect(exit.code).toBe(0);
@@ -357,7 +360,7 @@ describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
     );
     await client.connect(transport);
     const tools = (await client.listTools()).tools.map((t) => t.name).sort();
-    expect(tools).toEqual(["catalog", "get_page", "search", "status"]);
+    expect(tools).toEqual(SIX_TOOLS);
     expect(await waitForFile(lockFile(b), 5000)).toBe(true);
     await client.close();
   });

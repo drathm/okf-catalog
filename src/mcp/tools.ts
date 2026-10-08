@@ -1,24 +1,32 @@
 import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod/v4";
+import type { Page } from "../bundle/model.js";
 import { byCodeUnit } from "../bundle/paths.js";
+import { citationsOf, DEFAULT_DEPTH, MAX_DEPTH, walkProvenance } from "../catalog/graph.js";
 import { type Catalog, listStatuses, listTags, listTypes } from "../catalog/model.js";
 import {
   CatalogOutputSchema,
+  CitationsOutputSchema,
+  citationsText,
   type PageOutput,
   PageOutputSchema,
+  ProvenanceOutputSchema,
   projectCatalog,
+  projectCitations,
   projectPage,
   projectReserved,
   projectSearch,
   projectStatus,
+  projectWalk,
   refusingText,
   SearchOutputSchema,
   StatusOutputSchema,
   statusSummary,
+  walkText,
 } from "../catalog/outputs.js";
-import { resolvePageName } from "../catalog/resolve.js";
+import { type Found, resolvePageName } from "../catalog/resolve.js";
 import type { Generation, Runtime, ToolOptions } from "../catalog/runtime.js";
-import { cutEscaped, DATA_SENTENCE, safe } from "../catalog/text.js";
+import { cutEscaped, DATA_SENTENCE, printed, safe } from "../catalog/text.js";
 import type { Log } from "../log.js";
 import type { Engine } from "../search/engine.js";
 import { search } from "../search/search.js";
@@ -86,7 +94,7 @@ function refused(generation: Generation): ToolResult | undefined {
   const fatal = generation.report.fatal;
   if (fatal === undefined) return undefined;
   return fail(
-    `the bundle was refused and nothing is served: ${safe(fatal.rule)}${fatal.path ? ` (${safe(fatal.path)})` : ""}: ${safe(fatal.detail)}`,
+    `the bundle was refused and nothing is served: ${safe(fatal.rule)}${fatal.path ? ` (${printed(fatal.path, "path")})` : ""}: ${safe(fatal.detail)}`,
   );
 }
 
@@ -100,12 +108,65 @@ function pageText(output: PageOutput): string {
 
 const describeType = (text: string): string => `${text} ${DATA_SENTENCE}`;
 
+/** The input every name-taking tool shares: the path, or the concept id, `get_page` takes. */
+const PAGE_NAME = z
+  .string()
+  .min(1)
+  .max(1024)
+  .describe(
+    "The page's path in the bundle, as a search result or a catalog lists it, or its concept id (the path without .md). An exact path is ambiguous when a sibling page X.md.md exists, X.md being that page's concept id too; the error then names each page, with a name that means it alone where there is one.",
+  );
+
+/**
+ * A page name resolved as `get_page` resolves it (D60), with `get_page`'s errors word for word: the file found, or
+ * the error to answer with. One resolver serves `get_page`, `citations` and `provenance`.
+ */
+function resolveName(generation: Generation, value: string): Found | ToolResult {
+  const resolution = resolvePageName(
+    [{ bundle: generation.catalog.company, catalog: generation.catalog }],
+    value,
+  );
+  if (resolution.ok) return resolution.found;
+  switch (resolution.reason) {
+    case "ambiguous":
+      return fail(
+        `${JSON.stringify(safe(resolution.name))} names more than one page: ${resolution.candidates
+          .map(
+            (c) =>
+              `${printed(c.path, "path")} (${c.ask === undefined ? "no name reaches it alone" : `ask for ${JSON.stringify(safe(c.ask))}`})`,
+          )
+          .join(", ")}`,
+      );
+    case "not-found":
+      return fail(
+        `no page at ${JSON.stringify(safe(resolution.name))}; the nearest served paths are: ${resolution.nearest.map((path) => printed(path, "path")).join(", ") || "(none)"}`,
+      );
+    case "unknown-bundle":
+    case "refused-bundle":
+      // Unreachable while no tool takes a bundle argument (issue 3 adds it): the resolver is handed one bundle.
+      return fail(`the bundle ${JSON.stringify(safe(resolution.bundle))} is not served`);
+  }
+}
+
+/** Whether a value is an answer to send back as it is, rather than what was asked for. */
+const isAnswer = (value: object): value is ToolResult => "content" in value;
+
+/** The admitted page a graph tool answers for, or the error: a reserved file is served by get_page but is no page. */
+function resolveGraphPage(generation: Generation, value: string): Page | ToolResult {
+  const found = resolveName(generation, value);
+  if (isAnswer(found)) return found;
+  if (found.kind === "page") return found.page;
+  return fail(
+    `${JSON.stringify(safe(found.path))} is a reserved ${found.file.kind} file, not a page: citations and provenance answer for pages`,
+  );
+}
+
 /** The one sentence every tool answers with while the server cannot serve: the fix, never a path the model has no business with. */
 const refusingSentence = (refusing: string): string =>
   `the server is refusing every request until its configuration is fixed: ${refusingText(refusing)}`;
 
 /**
- * The four tools. Every handler runs under a lease on the current generation, answers in both channels, and
+ * The six tools. Every handler runs under a lease on the current generation, answers in both channels, and
  * turns anything it cannot repair into a fixed sentence; the detail goes to the log, never to the model.
  */
 export function registerTools(
@@ -303,13 +364,7 @@ export function registerTools(
         "Returns one page whole, with its provenance header first: path, type, status, trust tier, verifier, recheck date and deprecation. Takes the path, or the concept id (the path without .md); a name that is one page's path and another's concept id is an error naming both. Reserved files (index.md, log.md) are served too. A long page is cut at the result budget and says where to continue.",
       ),
       inputSchema: z.strictObject({
-        path: z
-          .string()
-          .min(1)
-          .max(1024)
-          .describe(
-            "The page's path in the bundle, as a search result or a catalog lists it, or its concept id (the path without .md). An exact path is ambiguous when a sibling page X.md.md exists, X.md being that page's concept id too; the error then names each page, with a name that means it alone where there is one.",
-          ),
+        path: PAGE_NAME,
         offset: z
           .number()
           .int()
@@ -324,39 +379,69 @@ export function registerTools(
       const stop = refused(generation);
       if (stop !== undefined) return stop;
       const offset = args.offset ?? 0;
-      const resolution = resolvePageName(
-        [{ bundle: generation.catalog.company, catalog: generation.catalog }],
-        args.path,
-      );
-      if (resolution.ok) {
-        const found = resolution.found;
-        const output =
-          found.kind === "page"
-            ? projectPage(found.page, clock(), offset, options.resultBudget, {
-                undeclaredTypes: new Set(generation.report.unknownTypes),
-              })
-            : projectReserved(found.file, found.source, offset, options.resultBudget);
-        return ok(pageText(output), output);
-      }
-      switch (resolution.reason) {
-        case "ambiguous":
-          return fail(
-            `${JSON.stringify(safe(resolution.name))} names more than one page: ${resolution.candidates
-              .map(
-                (c) =>
-                  `${safe(c.path)} (${c.ask === undefined ? "no name reaches it alone" : `ask for ${JSON.stringify(safe(c.ask))}`})`,
-              )
-              .join(", ")}`,
-          );
-        case "not-found":
-          return fail(
-            `no page at ${JSON.stringify(safe(resolution.name))}; the nearest served paths are: ${resolution.nearest.map(safe).join(", ") || "(none)"}`,
-          );
-        case "unknown-bundle":
-        case "refused-bundle":
-          // Unreachable while get_page takes no bundle argument (issue 3 adds it): the resolver is handed one bundle.
-          return fail(`the bundle ${JSON.stringify(safe(resolution.bundle))} is not served`);
-      }
+      const found = resolveName(generation, args.path);
+      if (isAnswer(found)) return found;
+      const output =
+        found.kind === "page"
+          ? projectPage(found.page, clock(), offset, options.resultBudget, {
+              undeclaredTypes: new Set(generation.report.unknownTypes),
+            })
+          : projectReserved(found.file, found.source, offset, options.resultBudget);
+      return ok(pageText(output), output);
+    }),
+  );
+
+  server.registerTool(
+    "citations",
+    {
+      title: "What a page cites, and what cites it",
+      description: describeType(
+        "Answers what a page cites and what cites it, from what the bundle states; nothing is fetched. Six lists: mentions (the page's body links, each with its text, its nearest heading and what it points at; a link to a page that is not served says unserved), inbound mentions (the body links that point here, the page's links to itself included, each with its page's status), claims (each footnote reference joined to the sources whose id it matches, case ignored, the first 50 with their total, with the sentence that carries it and each source's author, usage count, last change and usage window), bibliography (the sources no footnote cites), unjoined footnotes (footnotes with no source) and inbound derivations (pages whose resource or sources name this one, each with its status). A footnote reference counts only when its definition exists, as GFM reads it, and one written inside a footnote's definition is no claim. Takes the path or the concept id get_page takes. Each list carries at most 50 rows with its total, and each value at most 2 000 characters; a result over the budget gives each list a share of it, keeps each list's first rows within its share, and says truncated.",
+      ),
+      inputSchema: z.strictObject({ path: PAGE_NAME }),
+      outputSchema: CitationsOutputSchema,
+      annotations: { readOnlyHint: true },
+    },
+    guarded("citations", (args, generation) => {
+      const stop = refused(generation);
+      if (stop !== undefined) return stop;
+      const page = resolveGraphPage(generation, args.path);
+      if (isAnswer(page)) return page;
+      const output = projectCitations(citationsOf(generation.catalog, page), options.resultBudget);
+      return ok(citationsText(output), output);
+    }),
+  );
+
+  server.registerTool(
+    "provenance",
+    {
+      title: "Where a page's sources lead",
+      description: describeType(
+        "Walks where a page's sources lead inside the bundle, without fetching, opening or running anything. Lists the page's resource, its sources and its contract fields (computation, executor, attester), each classified as a URL, a page, a reserved file, an attachment, a folder, a scope, ambiguous, unserved, or nothing in the bundle. A resource or source that names a page enters it and lists that page's sources in turn, breadth first, each page once, to the depth asked (0 to 8, 4 when omitted; at most 200 pages entered); a contract field is never entered. Each page carries its status, trust tier and recheck date, and each source its author, usage count, last change and usage window; a page lists at most 50 sources with their total, and a source with whitespace in its value is a scope, not a path. A result over the budget is cut in walk order and says truncated: ask for a smaller depth, or start from a page further down.",
+      ),
+      inputSchema: z.strictObject({
+        path: PAGE_NAME,
+        depth: z
+          .number()
+          .int()
+          .min(0)
+          .max(MAX_DEPTH)
+          .optional()
+          .describe(
+            "How many pages deep to follow sources, 0 to 8; 4 when omitted. 0 lists the page's own edges and enters nothing.",
+          ),
+      }),
+      outputSchema: ProvenanceOutputSchema,
+      annotations: { readOnlyHint: true },
+    },
+    guarded("provenance", (args, generation) => {
+      const stop = refused(generation);
+      if (stop !== undefined) return stop;
+      const page = resolveGraphPage(generation, args.path);
+      if (isAnswer(page)) return page;
+      const walk = walkProvenance(generation.catalog, page, args.depth ?? DEFAULT_DEPTH, clock());
+      const output = projectWalk(walk, options.resultBudget);
+      return ok(walkText(output), output);
     }),
   );
 
@@ -402,7 +487,7 @@ export function registerTools(
         output.truncated && output.nextOffset !== undefined
           ? `\n[truncated at the result budget; continue with offset ${output.nextOffset}]`
           : "";
-      const head = `catalog of ${folder === "" ? "the bundle root" : safe(folder)} (${output.source} index, ${output.entries.length} pages)`;
+      const head = `catalog of ${folder === "" ? "the bundle root" : printed(folder, "path")} (${output.source} index, ${output.entries.length} pages)`;
       return ok(`${head}\n${output.notice}\n${output.text}${tail}`, output);
     }),
   );

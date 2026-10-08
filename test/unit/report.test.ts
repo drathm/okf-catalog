@@ -74,3 +74,25 @@ describe("renderReport: detail lines (review round 1)", () => {
     expect(text).toMatch(/integrity was not checked/i);
   });
 });
+
+describe("renderReport: undeclared types (bite a's verification, by bite b's shared helper)", () => {
+  it("prints an undeclared type bare only when it is a plain word, else quoted", () => {
+    const { report } = loadBundle(
+      "b",
+      readFixture("behaviours"),
+      {
+        admit: ["stable", "deprecated"],
+        dev: false,
+        integrity: "none",
+        specText: "2026-08-15",
+        caps: DEFAULT_CAPS,
+      },
+      NOW,
+    );
+    const text = renderReport({
+      ...report,
+      unknownTypes: ["Widget", "Business Metric", "Note, human-reviewed"],
+    });
+    expect(text).toContain('Undeclared types: Widget, "Business Metric", "Note, human-reviewed"');
+  });
+});

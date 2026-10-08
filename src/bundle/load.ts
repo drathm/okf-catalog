@@ -23,6 +23,7 @@ import type {
   ReservedFile,
 } from "./model.js";
 import { decideReplacement, parsePage } from "./page.js";
+import { type PathFieldIndex, pathEdgesOf } from "./path-field.js";
 import { byCodeUnit, byCodeUnit as byPath, folderOf, isSafeRelativePath } from "./paths.js";
 import { parseReserved, reservedKind } from "./reserved.js";
 
@@ -248,6 +249,19 @@ export function loadBundle(
     }
   }
   const admittedPaths = new Set<PagePath>(admitted.map((p) => p.path));
+  // Path fields are classified once admission is known (D69, D70): a held page that is not admitted is unserved.
+  const pathIndex: PathFieldIndex = {
+    admitted: admittedPaths,
+    pages: linkIndex.pages,
+    reserved: linkIndex.reserved,
+    attachments: linkIndex.attachments,
+    folders: linkIndex.folders,
+  };
+  for (const page of admitted) {
+    const classified = pathEdgesOf(page, pathIndex);
+    page.pathEdges = classified.edges;
+    if (classified.degradation !== undefined) page.degradations.push(classified.degradation);
+  }
   const extra: Degradation[] = [];
   for (const page of admitted) {
     const decision = decideReplacement(page, admittedPaths);

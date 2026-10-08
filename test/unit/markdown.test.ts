@@ -37,10 +37,45 @@ describe("readBody", () => {
     ]);
   });
 
-  it("collects footnote reference identifiers and does not count them as links", () => {
+  it("records footnote references with their block and heading", () => {
     const facts = readBody("Claim.[^alpha-handbook]\n\n[^alpha-handbook]: The handbook\n");
-    expect(facts.footnoteReferences).toEqual(["alpha-handbook"]);
+    expect(facts.footnoteReferences).toEqual([{ id: "alpha-handbook", block: "Claim." }]);
     expect(facts.links).toEqual([]);
+    // Two references in one block are two entries with the same prose; GFM records the identifier lower-cased.
+    // The block is the smallest one holding the reference: a list item's or a quotation's paragraph, a table
+    // cell, a heading; never the list, the quotation or the table around it.
+    const body = [
+      "# Scope",
+      "",
+      "First claim.[^a] Second claim.[^Ga4-Schema]",
+      "",
+      "- an item claim[^c]",
+      "- another item",
+      "",
+      "> a quoted claim[^d]",
+      "",
+      "| column | other |",
+      "|---|---|",
+      "| a cell claim[^e] | beside |",
+      "",
+      "## A heading claim[^f]",
+      "",
+      "[^a]: A.",
+      "[^ga4-schema]: Schema.",
+      "[^c]: C.",
+      "[^d]: D.",
+      "[^e]: E.",
+      "[^f]: F.",
+      "",
+    ].join("\n");
+    expect(readBody(body).footnoteReferences).toEqual([
+      { id: "a", block: "First claim. Second claim.", heading: "Scope" },
+      { id: "ga4-schema", block: "First claim. Second claim.", heading: "Scope" },
+      { id: "c", block: "an item claim", heading: "Scope" },
+      { id: "d", block: "a quoted claim", heading: "Scope" },
+      { id: "e", block: "a cell claim", heading: "Scope" },
+      { id: "f", block: "A heading claim", heading: "A heading claim" },
+    ]);
   });
 
   it("counts block HTML and flags script-like elements", () => {
@@ -118,5 +153,125 @@ describe("readBody: the OKF 0.1 citations list (R6)", () => {
     ]);
     expect(readBody("# Citations\n\n## Sub\n\n- https://x.test/a\n").citations).toEqual([]);
     expect(readBody("Body with no such heading.\n").citations).toEqual([]);
+  });
+});
+
+// Issue 5: what citations needs from a body, stored at load (D69).
+describe("readBody: link text, headings and claim blocks (#5)", () => {
+  it("keeps link text and the nearest heading at or before the link", () => {
+    const body = [
+      "Before any [heading](/a.md) there is none.",
+      "",
+      "# Top with [a link](/b.md)",
+      "",
+      "Text with [**strong** words](/c.md) and [a reference][r].",
+      "",
+      "#",
+      "",
+      "After an empty heading, [no text](/e.md).",
+      "",
+      "## Sub",
+      "",
+      "- [listed](/f.md)",
+      "",
+      "[r]: /d.md",
+      "",
+    ].join("\n");
+    expect(readBody(body).links).toEqual([
+      { url: "/a.md", text: "heading" },
+      { url: "/b.md", text: "a link", heading: "Top with a link" },
+      { url: "/c.md", text: "strong words", heading: "Top with a link" },
+      { url: "/d.md", text: "a reference", heading: "Top with a link" },
+      { url: "/e.md", text: "no text" },
+      { url: "/f.md", text: "listed", heading: "Sub" },
+    ]);
+  });
+
+  it("cuts link text and headings at 500 characters with an ellipsis, a setext heading too (bite b's build reviews B-I-A3, B-A-A2)", () => {
+    const heading = "h".repeat(41_000);
+    const text = "l".repeat(50_000);
+    // A paragraph followed by --- with no blank line is a setext heading, and every link below it carries it.
+    const paragraph = "A long introductory paragraph that runs on. ".repeat(40).trim();
+    const facts = readBody(
+      `# ${heading}\n\n[${text}](/a.md) and [short](/b.md)\n\n${paragraph}\n---\n\n[under](/c.md) a claim.[^x]\n\n[^x]: X.\n`,
+    );
+    expect(facts.links).toEqual([
+      { url: "/a.md", text: `${"l".repeat(500)}…`, heading: `${"h".repeat(500)}…` },
+      { url: "/b.md", text: "short", heading: `${"h".repeat(500)}…` },
+      { url: "/c.md", text: "under", heading: `${paragraph.slice(0, 500)}…` },
+    ]);
+    expect(facts.footnoteReferences[0]?.heading).toBe(`${paragraph.slice(0, 500)}…`);
+    // A value at the cap is whole.
+    const whole = readBody(`# ${"w".repeat(500)}\n\n[${"t".repeat(500)}](/d.md)\n`);
+    expect(whole.links).toEqual([
+      { url: "/d.md", text: "t".repeat(500), heading: "w".repeat(500) },
+    ]);
+  });
+
+  it("takes the smallest block holding a reference, cut at 500, never the definition", () => {
+    const long = `${"word ".repeat(120)}claim.`;
+    const facts = readBody(
+      `# H\n\n${long}[^n]\n\nShort.[^m]\n\n${"a".repeat(499)}${"😀".repeat(3)}[^p]\n\n[^n]: See [d](/d.md).\n[^m]: The definition prose.\n[^p]: P.\n`,
+    );
+    const [first, second, third] = facts.footnoteReferences;
+    // A cut block says so with an ellipsis (bite b's build reviews B-I-A3, B-A-A2).
+    expect(first).toEqual({ id: "n", block: `${long.slice(0, 500)}…`, heading: "H" });
+    expect(second).toEqual({ id: "m", block: "Short.", heading: "H" });
+    // The cut never splits a surrogate pair.
+    expect(third?.block).toBe(`${"a".repeat(499)}…`);
+    for (const reference of facts.footnoteReferences) {
+      expect(reference.block).not.toContain("See d");
+      expect(reference.block).not.toContain("definition prose");
+    }
+    // A link inside a definition is still a link, and the definition's prose is still the body's prose.
+    expect(facts.links.map((l) => l.url)).toEqual(["/d.md"]);
+    expect(facts.prose).toContain("The definition prose.");
+  });
+});
+
+describe("readBody: bite b's build reviews (B-I-A5, B-I-A6, B-A-E8)", () => {
+  it("reads a hard line break as a space in a claim's block and a link's text", () => {
+    const facts = readBody(
+      "line one  \nline two.[^f]\n\nback\\\nslash.[^g]\n\n[first  \nsecond](/x.md)\n\n[^f]: F.\n[^g]: G.\n",
+    );
+    expect(facts.footnoteReferences.map((r) => r.block)).toEqual([
+      "line one line two.",
+      "back slash.",
+    ]);
+    expect(facts.links.map((l) => l.text)).toEqual(["first second"]);
+  });
+
+  it("records no reference written inside a footnote's definition, its own or another's", () => {
+    const other = readBody("Claim.[^a]\n\n[^a]: Defined, see[^b].\n\n[^b]: B def.\n");
+    expect(other.footnoteReferences).toEqual([{ id: "a", block: "Claim." }]);
+    const own = readBody("Claim.[^a]\n\n[^a]: See also[^a] here.\n");
+    expect(own.footnoteReferences).toEqual([{ id: "a", block: "Claim." }]);
+    // A link inside a definition is still a link.
+    expect(readBody("Claim.[^a]\n\n[^a]: See [d](/d.md).\n").links.map((l) => l.url)).toEqual([
+      "/d.md",
+    ]);
+  });
+
+  it("reads a footnote mark with no definition as plain text, as GFM does", () => {
+    const facts = readBody(
+      "A claim.[^s1] And [^nodef] without a definition.\n\n[^s1]: The definition.\n",
+    );
+    expect(facts.footnoteReferences.map((r) => r.id)).toEqual(["s1"]);
+    expect(facts.prose).toContain("[^nodef]");
+  });
+});
+
+describe("readBody: the smallest block, in nested blocks (bite b's build reviews B-I-B2, MD4)", () => {
+  it("takes the paragraph, the inner item, the quoted paragraph or the cell, never the block around it", () => {
+    const defs = "\n\n[^a]: A.\n[^b]: B.\n[^c]: C.\n[^d]: D.\n[^e]: E.\n";
+    const block = (body: string): string | undefined =>
+      readBody(body + defs).footnoteReferences[0]?.block;
+    expect(block("- first para of the item.[^a]\n\n  second para of the item.")).toBe(
+      "first para of the item.",
+    );
+    expect(block("- outer item\n  - inner item claim[^b]")).toBe("inner item claim");
+    expect(block("> quoted one.[^c]\n>\n> quoted two.")).toBe("quoted one.");
+    expect(block("| a | b |\n|---|---|\n| cell one[^d] | two |")).toBe("cell one");
+    expect(block("- item\n  > quoted[^e] text")).toBe("quoted text");
   });
 });

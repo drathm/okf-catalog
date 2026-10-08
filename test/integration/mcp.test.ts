@@ -81,10 +81,17 @@ const session = async (...args: Parameters<typeof connect>) => {
 
 describe("the server over both protocol eras", () => {
   for (const era of ["current", "legacy"] as const) {
-    it(`${era}: lists four read-only tools with output schemas and hands the client the instructions`, async () => {
+    it(`${era}: lists six read-only tools with output schemas and hands the client the instructions`, async () => {
       const s = await session(fakeRuntime(stable), options, era);
       const tools = (await s.client.listTools()).tools;
-      expect(tools.map((t) => t.name).sort()).toEqual(["catalog", "get_page", "search", "status"]);
+      expect(tools.map((t) => t.name).sort()).toEqual([
+        "catalog",
+        "citations",
+        "get_page",
+        "provenance",
+        "search",
+        "status",
+      ]);
       for (const tool of tools) {
         expect(tool.annotations?.readOnlyHint, tool.name).toBe(true);
         expect(tool.outputSchema, tool.name).toBeDefined();
@@ -192,7 +199,8 @@ describe("search", () => {
     // A recheck date that does not parse is never overdue, so fresh keeps the page.
     const eta = await s.call("search", { question: "eta", freshness: "fresh" });
     expect(text(eta)).toContain("terms/eta.md");
-    expect(text(eta)).toContain("recheck date unparseable (soon)");
+    // Quoted however plain, since it is the company's own text (bite b's build review B-I-A4).
+    expect(text(eta)).toContain('recheck date unparseable ("soon")');
     for (const args of [
       { question: "x".repeat(201) },
       { question: "alpha", limit: 0 },
@@ -612,6 +620,8 @@ describe("catalog and status", () => {
       ["get_page", { path: "a.md" }],
       ["catalog", {}],
       ["status", {}],
+      ["citations", { path: "a.md" }],
+      ["provenance", { path: "a.md" }],
     ] as const) {
       const r = await refusing.call(name, args);
       expect(r.isError, name).toBe(true);
@@ -728,6 +738,8 @@ describe("bite 4 build review, round 2", () => {
       ["search", { question: "alpha" }],
       ["get_page", { path: "a.md" }],
       ["catalog", {}],
+      ["citations", { path: "a.md" }],
+      ["provenance", { path: "a.md" }],
     ] as const) {
       const r = await s.call(name, args);
       expect(r.isError, name).toBe(true);
@@ -853,6 +865,67 @@ describe("get_page and the concept id (R7)", () => {
     expect(miss.isError).toBe(true);
     expect(text(miss)).toMatch(
       /^no page at "guides\/b"; the nearest served paths are: guides\/a\.md/,
+    );
+  });
+});
+
+describe("paths in the errors of the three name-taking tools (bite b's build review B-A-A8)", () => {
+  it("prints a path plain for its kind bare and any other quoted, in the ambiguity and not-found errors", async () => {
+    const page = (title: string) =>
+      Buffer.from(`---\ntype: Guide\ntitle: ${title}\nstatus: stable\n---\n\nThe body.\n`);
+    const generation = loadGeneration(
+      [
+        { path: "x; y.md", bytes: page("Odd") },
+        { path: "x; y.md.md", bytes: page("Odd twice") },
+        { path: "plain.md", bytes: page("Plain") },
+      ],
+      { integrity: "none" },
+      NOW,
+    );
+    const s = await session(fakeRuntime(generation));
+    for (const tool of ["get_page", "citations", "provenance"]) {
+      const both = await s.call(tool, { path: "x; y.md" });
+      expect(both.isError, tool).toBe(true);
+      expect(text(both), tool).toBe(
+        '"x; y.md" names more than one page: "x; y.md" (ask for "x; y"), "x; y.md.md" (ask for "x; y.md.md")',
+      );
+      const miss = await s.call(tool, { path: "x; z.md" });
+      expect(text(miss), tool).toBe(
+        'no page at "x; z.md"; the nearest served paths are: "x; y.md", "x; y.md.md", index.md',
+      );
+    }
+  });
+
+  it("prints catalog's folder and a refused bundle's path by the path kind (the verification of bite b's fix pass)", async () => {
+    const page = (title: string) =>
+      Buffer.from(`---\ntype: Guide\ntitle: ${title}\nstatus: stable\n---\n\nThe body.\n`);
+    const generation = loadGeneration(
+      [
+        { path: "x; y/odd.md", bytes: page("Odd") },
+        { path: "plain/a.md", bytes: page("Plain") },
+      ],
+      { integrity: "none" },
+      NOW,
+    );
+    const s = await session(fakeRuntime(generation));
+    const odd = await s.call("catalog", { folder: "x; y" });
+    expect(text(odd).split("\n")[0]).toBe('catalog of "x; y" (generated index, 1 pages)');
+    const plain = await s.call("catalog", { folder: "plain" });
+    expect(text(plain).split("\n")[0]).toBe("catalog of plain (generated index, 1 pages)");
+    const refusedAt = (path: string) => ({
+      ...generation,
+      report: {
+        ...generation.report,
+        fatal: { path, rule: "manifest-missing" as const, detail: "no manifest.json" },
+      },
+    });
+    const refused = await session(fakeRuntime(refusedAt('x; y "z".md')));
+    expect(text(await refused.call("search", { question: "body" }))).toBe(
+      'the bundle was refused and nothing is served: manifest-missing ("x; y \\"z\\".md"): no manifest.json',
+    );
+    const refusedPlain = await session(fakeRuntime(refusedAt("plain/a.md")));
+    expect(text(await refusedPlain.call("search", { question: "body" }))).toBe(
+      "the bundle was refused and nothing is served: manifest-missing (plain/a.md): no manifest.json",
     );
   });
 });
@@ -1010,5 +1083,132 @@ describe("the readiness ledger (D59)", () => {
       resource: "https://example.test/full",
     });
     expect((provenance.frontmatter as Record<string, unknown>).custom_key).toBe("kept as written");
+  });
+});
+
+// Issue 5: the two graph tools over one bundle (D69 to D71, D82).
+describe("citations and provenance (#5)", () => {
+  it("citations and provenance take get_page's names and errors and leave out the replacement hint", async () => {
+    const s = await session(fakeRuntime(stable));
+    for (const tool of ["citations", "provenance"]) {
+      const byPath = await s.call(tool, { path: "/terms/alpha.md" });
+      expect(byPath.isError, tool).not.toBe(true);
+      expect((byPath.structuredContent as { path: string }).path, tool).toBe("terms/alpha.md");
+      expect(text(byPath).split("\n")[0], tool).toMatch(new RegExp(`^${tool} of terms/alpha\\.md`));
+      expect(text(byPath).split("\n")[1], tool).toContain(MARKER);
+      const byId = await s.call(tool, { path: "terms/alpha" });
+      expect((byId.structuredContent as { path: string }).path, tool).toBe("terms/alpha.md");
+      // A miss is get_page's miss, word for word, nearest paths and all.
+      const miss = await s.call(tool, { path: "terms/alpa.md" });
+      expect(miss.isError, tool).toBe(true);
+      expect(miss.structuredContent, tool).toBeUndefined();
+      expect(text(miss), tool).toBe(text(await s.call("get_page", { path: "terms/alpa.md" })));
+      expect(text(miss), tool).toContain("terms/alpha.md");
+      // A reserved file is served by get_page but is no page: it cites nothing and has no sources.
+      const log = await s.call(tool, { path: "log.md" });
+      expect(log.isError, tool).toBe(true);
+      expect(text(log), tool).toBe(
+        '"log.md" is a reserved log file, not a page: citations and provenance answer for pages',
+      );
+      // The deprecated page's replacement hint stays on get_page alone.
+      const deprecated = await s.call(tool, { path: "terms/delta.md" });
+      expect(deprecated.isError, tool).not.toBe(true);
+      expect(JSON.stringify(deprecated.structuredContent), tool).not.toContain("replacement");
+      expect(text(deprecated), tool).not.toContain("replaced by");
+    }
+    expect(text(await s.call("get_page", { path: "terms/delta.md" }))).toContain(
+      "replaced by terms/alpha.md",
+    );
+    // The ambiguity error is get_page's too.
+    const page = (title: string) =>
+      Buffer.from(`---\ntype: Guide\ntitle: ${title}\nstatus: stable\n---\n\nBody.\n`);
+    const twins = loadGeneration(
+      [
+        { path: "foo.md", bytes: page("Foo") },
+        { path: "foo.md.md", bytes: page("Foo twice") },
+      ],
+      { integrity: "none" },
+      NOW,
+    );
+    const t = await session(fakeRuntime(twins));
+    const getPage = text(await t.call("get_page", { path: "foo.md" }));
+    for (const tool of ["citations", "provenance"]) {
+      const both = await t.call(tool, { path: "foo.md" });
+      expect(both.isError, tool).toBe(true);
+      expect(text(both), tool).toBe(getPage);
+    }
+    // depth is 0 to 8, 4 when omitted; anything else fails at the schema.
+    const walk = await s.call("provenance", { path: "terms/alpha.md" });
+    expect((walk.structuredContent as { depth: number }).depth).toBe(4);
+    for (const depth of [9, -1, 1.5]) {
+      const bad = await s.call("provenance", { path: "terms/alpha.md", depth });
+      expect(bad.isError, String(depth)).toBe(true);
+      expect(text(bad), String(depth)).toMatch(/Input validation error/);
+    }
+    expect((await s.call("citations", { path: "terms/alpha.md", depth: 2 })).isError).toBe(true);
+  });
+
+  it("caps each list at 50 with its total", async () => {
+    const links = Array.from({ length: 51 }, (_, i) => `[link ${i}](/p${i}.md)`).join(" ");
+    const generation = loadGeneration(
+      [
+        {
+          path: "hub.md",
+          bytes: Buffer.from(`---\ntype: Guide\ntitle: Hub\nstatus: stable\n---\n\n${links}\n`),
+        },
+      ],
+      { integrity: "none" },
+      NOW,
+    );
+    const s = await session(fakeRuntime(generation));
+    const r = await s.call("citations", { path: "hub.md" });
+    expect(r.isError).not.toBe(true);
+    const structured = r.structuredContent as {
+      mentions: { total: number; rows: Array<{ kind: string; text: string }> };
+      truncated: boolean;
+    };
+    expect(structured.mentions.total).toBe(51);
+    expect(structured.mentions.rows).toHaveLength(50);
+    expect(structured.mentions.rows.at(-1)?.text).toBe("link 49");
+    expect(structured.mentions.rows.every((m) => m.kind === "broken")).toBe(true);
+    expect(structured.truncated).toBe(false);
+    expect(text(r).split("\n")[0]).toContain("51 mentions");
+    expect(text(r)).toContain("mentions (51, 50 shown):");
+  });
+
+  it("answers the specification's own example: four edges, two concepts entered once, five derivations", async () => {
+    const example = loadGeneration(readFixture("spec-example"), {}, NOW);
+    const s = await session(fakeRuntime(example));
+    const walk = await s.call("provenance", { path: "computations/revenue-ytd.md" });
+    expect(walk.isError).not.toBe(true);
+    const nodes = (
+      walk.structuredContent as {
+        nodes: Array<{ path: string; edges: Array<{ role: string; kind: string; walk?: string }> }>;
+      }
+    ).nodes;
+    expect(nodes.map((n) => n.path)).toEqual([
+      "computations/revenue-ytd.md",
+      "policies/revenue-recognition.md",
+      "tables/orders.md",
+    ]);
+    expect(nodes[0]?.edges.map((e) => [e.role, e.kind, e.walk ?? null])).toEqual([
+      ["source", "concept", "entered"],
+      ["source", "concept", "entered"],
+      ["executor", "concept", null],
+      ["attester", "attachment", null],
+    ]);
+    expect(nodes[2]?.edges.at(-1)?.walk).toBe("already-entered");
+    const cited = await s.call("citations", { path: "policies/revenue-recognition.md" });
+    expect(
+      (
+        cited.structuredContent as { inboundDerivations: { rows: Array<{ from: string }> } }
+      ).inboundDerivations.rows.map((d) => d.from),
+    ).toEqual([
+      "computations/gross-margin-period.md",
+      "computations/revenue-ytd.md",
+      "metrics/gross-margin.md",
+      "metrics/revenue.md",
+      "tables/orders.md",
+    ]);
   });
 });

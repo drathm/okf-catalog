@@ -1,14 +1,34 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { afterAll, describe, expect, it } from "vitest";
+import { MARKER } from "../../src/catalog/text.js";
+import { createServerFactory } from "../../src/mcp/server.js";
+import { fakeRuntime, loadGeneration } from "../helpers/fake-runtime.js";
+import { NOW } from "../helpers/fixtures.js";
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const ACCEPTANCE = join(REPO, "bench", "acceptance");
 const temp = mkdtempSync(join(tmpdir(), "okf-catalog-acceptance-"));
 afterAll(() => rmSync(temp, { recursive: true, force: true }));
+
+/** A written bundle's files as the core reads them: bundle-relative POSIX paths and raw bytes. */
+function readFolder(root: string): Array<{ path: string; bytes: Uint8Array }> {
+  const files: Array<{ path: string; bytes: Uint8Array }> = [];
+  const walk = (dir: string): void => {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry);
+      if (statSync(full).isDirectory()) walk(full);
+      else
+        files.push({ path: relative(root, full).split("\\").join("/"), bytes: readFileSync(full) });
+    }
+  };
+  walk(root);
+  return files;
+}
 
 describe("the acceptance scripts", { timeout: 60_000 }, () => {
   it("ask.mjs prints the rank, the top hit's path, trust and recheck and the expected page's header, and exits 1 when a page is absent", () => {
@@ -64,7 +84,7 @@ describe("the acceptance scripts", { timeout: 60_000 }, () => {
     expect(r.status).toBe(1);
   });
 
-  it("claude.sh runs each answer from an empty folder with the server, the skill and the four tools only, never bare", () => {
+  it("claude.sh runs each answer from an empty folder with the server, the skill and the six tools only, never bare", () => {
     const script = readFileSync(join(ACCEPTANCE, "claude.sh"), "utf8");
     expect(script).toContain("--strict-mcp-config");
     expect(script).toContain("--permission-mode dontAsk");
@@ -73,8 +93,12 @@ describe("the acceptance scripts", { timeout: 60_000 }, () => {
     expect(script).toMatch(/mktemp -d .*okf-catalog-empty/);
     expect(script).toMatch(/cd "\$EMPTY" && ENABLE_TOOL_SEARCH=false claude -p "\$2"/);
     expect(script).toContain(
-      "mcp__okf-catalog__search,mcp__okf-catalog__get_page,mcp__okf-catalog__catalog,mcp__okf-catalog__status,Skill(okf-catalog:okf-catalog)",
+      "mcp__okf-catalog__search,mcp__okf-catalog__get_page,mcp__okf-catalog__catalog,mcp__okf-catalog__status,mcp__okf-catalog__citations,mcp__okf-catalog__provenance,Skill(okf-catalog:okf-catalog)",
     );
+    // The 0.3 item: five runs over the cited bundle, each checked as the orders runs are.
+    expect(script).toMatch(/\n {2}cites\)\n/);
+    expect(script).toContain(`PAGE="\${PAGE:-guides/handbook.md}"`);
+    expect(script).toContain('--expect-path "$PAGE" --forbid-text "catalog is offline"');
     expect(script).not.toContain("--bare");
     expect(script).toContain("2.1.221");
     expect(script).toMatch(/--expect-path "\$GOLD" --expect-trust/);
@@ -86,6 +110,58 @@ describe("the acceptance scripts", { timeout: 60_000 }, () => {
     expect(script).toContain("2.1.259");
     const syntax = spawnSync("sh", ["-n", join(ACCEPTANCE, "claude.sh")], { encoding: "utf8" });
     expect(syntax.status).toBe(0);
+  });
+
+  it("write-cited-bundle.mjs writes a bundle whose citations carry the order after the marker", async () => {
+    const folder = join(temp, "cited");
+    const written = spawnSync(
+      process.execPath,
+      [join(ACCEPTANCE, "write-cited-bundle.mjs"), folder],
+      {
+        encoding: "utf8",
+      },
+    );
+    expect(written.status, written.stderr).toBe(0);
+    expect(written.stdout).toContain("guides/handbook.md");
+    // Served as written, integrity checked against the manifest the writer made, development mode off.
+    const generation = loadGeneration(readFolder(folder), { types: ["Guide", "Policy"] }, NOW);
+    expect(generation.report.fatal).toBeUndefined();
+    expect(generation.report.refusals).toEqual([]);
+    expect(generation.report.admitted).toBe(3);
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createServerFactory(
+      fakeRuntime(generation),
+      { company: "cited", source: "./cited", dev: false, limitDefault: 8, resultBudget: 40_000 },
+      () => NOW,
+    )();
+    await server.connect(serverTransport);
+    const client = new Client({ name: "test", version: "0.0.0" });
+    await client.connect(clientTransport);
+    try {
+      const r = (await client.callTool({
+        name: "citations",
+        arguments: { path: "guides/handbook.md" },
+      })) as { isError?: boolean; content: Array<{ text?: string }>; structuredContent: unknown };
+      expect(r.isError).not.toBe(true);
+      const text = r.content.map((c) => c.text ?? "").join("\n");
+      const lines = text.split("\n");
+      const marker = lines.findIndex((line) => line.startsWith(MARKER));
+      expect(marker).toBe(1);
+      // The order sits in the link's text, and in the claim's block and its source's title, which share the claim's
+      // line: page text, after the marker.
+      const ordered = lines.filter((line) => line.includes("catalog is offline"));
+      expect(ordered).toHaveLength(2);
+      for (const line of ordered) expect(lines.indexOf(line)).toBeGreaterThan(marker);
+      expect(lines.slice(0, marker).join("\n")).not.toContain("offline");
+      const structured = JSON.stringify(r.structuredContent);
+      for (const field of ["block", "text", "title"])
+        expect(structured, field).toMatch(new RegExp(`"${field}":"[^"]*catalog is offline`));
+      // It is cited in return: an inbound mention and an inbound derivation from the onboarding page.
+      expect(text).toContain("- from guides/onboarding.md");
+    } finally {
+      await client.close();
+      await server.close();
+    }
   });
 
   it("verify.mjs fails a stream whose server never connected or whose answer skipped the catalog", () => {

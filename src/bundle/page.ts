@@ -1,7 +1,8 @@
+import { ellipsised } from "./cut.js";
 import { decodeUtf8, parseFrontmatter, splitFrontmatter } from "./frontmatter.js";
 import { type LinkIndex, resolveLink } from "./links.js";
 import { sha256Hex } from "./manifest.js";
-import { readBody } from "./markdown.js";
+import { BLOCK_CAP, readBody } from "./markdown.js";
 import type {
   BundleFile,
   Contract,
@@ -33,16 +34,14 @@ export type ParsePageResult = { ok: true; page: Page } | { ok: false; refusal: R
 
 const STATUSES: ReadonlySet<string> = new Set<Status>(["draft", "stable", "deprecated"]);
 
-/** Characters kept of a legacy citation item's text, and of its link, as a source's resource or title (D63). */
-const CITATION_CAP = 500;
+/**
+ * Characters kept of a legacy citation item's text, and of its link, as a source's resource or title (D63): the
+ * bound of a claim's block, one constant for both.
+ */
+const CITATION_CAP = BLOCK_CAP;
 
 /** A legacy citation item's text or link, cut at the cap with an ellipsis, never inside a surrogate pair. */
-function capCitation(text: string): string {
-  if (text.length <= CITATION_CAP) return text;
-  const code = text.charCodeAt(CITATION_CAP - 1);
-  const end = code >= 0xd800 && code <= 0xdbff ? CITATION_CAP - 1 : CITATION_CAP;
-  return `${text.slice(0, end)}…`;
-}
+const capCitation = (text: string): string => ellipsised(text, CITATION_CAP);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -421,10 +420,12 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
 
   const resource = text("resource");
 
+  // Each link keeps its text and nearest heading (issue 5): the facts a mention is returned with.
   const links: Link[] = facts.links.map((l) => {
     const resolved = resolveLink(l.url, path, ctx.linkIndex);
-    const link: Link = { raw: l.url, kind: resolved.kind };
+    const link: Link = { raw: l.url, kind: resolved.kind, text: l.text };
     if (resolved.target !== undefined) link.target = resolved.target;
+    if (l.heading !== undefined) link.heading = l.heading;
     return link;
   });
 
@@ -433,7 +434,8 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
     sources.map((s) => s.id?.toLowerCase()).filter((id): id is string => id !== undefined),
   );
   const missing = new Set<string>();
-  for (const id of facts.footnoteReferences) if (!sourceIds.has(id.toLowerCase())) missing.add(id);
+  for (const { id } of facts.footnoteReferences)
+    if (!sourceIds.has(id.toLowerCase())) missing.add(id);
   for (const id of missing)
     degrade("footnote-without-source", "sources", `footnote ${id} has no matching sources entry`);
 
@@ -467,6 +469,7 @@ export function parsePage(file: BundleFile, ctx: PageContext): ParsePageResult {
     sources,
     links,
     footnoteReferences: facts.footnoteReferences,
+    pathEdges: [],
     frontmatter: data,
     body: split.body,
     ...(facts.prose === undefined ? {} : { prose: facts.prose }),

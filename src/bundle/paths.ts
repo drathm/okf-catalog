@@ -11,7 +11,7 @@ export const byCodeUnit = (a: string, b: string): number => (a < b ? -1 : a > b 
 
 /**
  * The two files a name can mean (§2): the path as written, and the file whose concept id it is, the path with
- * `.md` removed. The one two-name rule: `get_page`'s resolver uses it, and the path-field classifier will (D60).
+ * `.md` removed. The one two-name rule: `get_page`'s resolver and the path-field classifier use it (D60, D70).
  */
 export const conceptNames = (name: string): [string, string] => [name, `${name}.md`];
 
