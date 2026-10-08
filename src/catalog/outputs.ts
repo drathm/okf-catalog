@@ -257,6 +257,8 @@ export const StatusOutputSchema = z.strictObject({
   degradations: list(z.strictObject({ path: z.string(), code: z.string(), field: z.string() })),
   unknownTypes: list(z.string()),
   unknownStatuses: list(z.strictObject({ path: z.string(), value: z.string() })),
+  /** The admission list's words, other than the known statuses, that no page carries (D77). */
+  unmatchedAdmits: list(z.string()),
   brokenLinks: list(z.strictObject({ from: z.string(), raw: z.string() })),
   linksToUnserved: list(z.strictObject({ from: z.string(), raw: z.string(), target: z.string() })),
   foldersWithoutIndex: list(z.string()),
@@ -858,6 +860,7 @@ export function projectStatus(
     ),
     unknownTypes: capped(r.unknownTypes),
     unknownStatuses: capped(r.unknownStatuses),
+    unmatchedAdmits: capped(r.unmatchedAdmits),
     brokenLinks: capped(r.brokenLinks),
     linksToUnserved: capped(r.linksToUnserved),
     foldersWithoutIndex: capped(r.foldersWithoutIndex),
@@ -940,7 +943,7 @@ export function statusSummary(out: StatusOutput): string {
     ...(out.engine.resetOnOpen === null
       ? []
       : [`engine store rebuilt at open: ${out.engine.resetOnOpen}`]),
-    `${n(out.unknownTypes.count, "unknown type")}, ${n(out.unknownStatuses.count, "unknown status", "unknown statuses")}, ${n(out.brokenLinks.count, "broken link")}, ${n(out.linksToUnserved.count, "link to an unserved page", "links to an unserved page")}, ${n(out.foldersWithoutIndex.count, "folder without an index", "folders without an index")}, ${n(out.missingOnDisk.count, "manifest entry missing on disk", "manifest entries missing on disk")}`,
+    `${n(out.unknownTypes.count, "unknown type")}, ${n(out.unknownStatuses.count, "unknown status", "unknown statuses")}, ${n(out.brokenLinks.count, "broken link")}, ${n(out.linksToUnserved.count, "link to an unserved page", "links to an unserved page")}, ${n(out.foldersWithoutIndex.count, "folder without an index", "folders without an index")}, ${n(out.missingOnDisk.count, "manifest entry missing on disk", "manifest entries missing on disk")}, ${n(out.unmatchedAdmits.count, "admitted status that matches no page", "admitted statuses that match no page")}`,
   ];
   if (out.lastAttempt !== null)
     parts.push(`last attempt ${out.lastAttempt.outcome} at ${out.lastAttempt.at}`);

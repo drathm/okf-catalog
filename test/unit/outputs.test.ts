@@ -505,6 +505,21 @@ describe("result bounds (bite 4 build review)", () => {
     expect(out.engine.encodedFolders.first).toHaveLength(50);
   });
 
+  it("carries the admitted words no page matches, in the structured output and on the text line (bite a's verification)", () => {
+    const words = Array.from({ length: 52 }, (_, i) => `typo-${i}`);
+    const out = projectStatus(
+      { ...generation, report: { ...generation.report, unmatchedAdmits: words } },
+      { lock: "exclusive", loaded: true },
+      { company: "b", source: "./kb", dev: false, limitDefault: 8, resultBudget: RESULT_BUDGET },
+      NOW,
+    );
+    expect(() => StatusOutputSchema.parse(out)).not.toThrow();
+    expect(out.unmatchedAdmits).toEqual({ count: 52, first: words.slice(0, 50) });
+    expect(statusSummary(out)).toContain("52 admitted statuses that match no page");
+    const one = statusSummary({ ...out, unmatchedAdmits: { count: 1, first: ["depreciated"] } });
+    expect(one).toContain("1 admitted status that matches no page");
+  });
+
   it("puts the last attempt and the list counts on the status text line", () => {
     const out = projectStatus(
       generation,
