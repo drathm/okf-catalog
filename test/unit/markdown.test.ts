@@ -228,3 +228,35 @@ describe("readBody: link text, headings and claim blocks (#5)", () => {
     expect(facts.prose).toContain("The definition prose.");
   });
 });
+
+describe("readBody: bite b's build reviews (B-I-A5, B-I-A6, B-A-E8)", () => {
+  it("reads a hard line break as a space in a claim's block and a link's text", () => {
+    const facts = readBody(
+      "line one  \nline two.[^f]\n\nback\\\nslash.[^g]\n\n[first  \nsecond](/x.md)\n\n[^f]: F.\n[^g]: G.\n",
+    );
+    expect(facts.footnoteReferences.map((r) => r.block)).toEqual([
+      "line one line two.",
+      "back slash.",
+    ]);
+    expect(facts.links.map((l) => l.text)).toEqual(["first second"]);
+  });
+
+  it("records no reference written inside a footnote's definition, its own or another's", () => {
+    const other = readBody("Claim.[^a]\n\n[^a]: Defined, see[^b].\n\n[^b]: B def.\n");
+    expect(other.footnoteReferences).toEqual([{ id: "a", block: "Claim." }]);
+    const own = readBody("Claim.[^a]\n\n[^a]: See also[^a] here.\n");
+    expect(own.footnoteReferences).toEqual([{ id: "a", block: "Claim." }]);
+    // A link inside a definition is still a link.
+    expect(readBody("Claim.[^a]\n\n[^a]: See [d](/d.md).\n").links.map((l) => l.url)).toEqual([
+      "/d.md",
+    ]);
+  });
+
+  it("reads a footnote mark with no definition as plain text, as GFM does", () => {
+    const facts = readBody(
+      "A claim.[^s1] And [^nodef] without a definition.\n\n[^s1]: The definition.\n",
+    );
+    expect(facts.footnoteReferences.map((r) => r.id)).toEqual(["s1"]);
+    expect(facts.prose).toContain("[^nodef]");
+  });
+});

@@ -115,13 +115,20 @@ function isParent(node: Nodes): node is Nodes & Parent {
   return "children" in node && Array.isArray((node as Parent).children);
 }
 
-/** The prose of a node, leaving out HTML and footnote marks, whitespace collapsed. */
+/**
+ * The prose of a node, leaving out HTML and footnote marks, whitespace collapsed; a hard line break is a space, so
+ * the words on either side of it stay apart (bite b's build review B-I-A5).
+ */
 function proseOf(node: Nodes): string {
   const parts: string[] = [];
   const stack: Nodes[] = [node];
   while (stack.length > 0) {
     const current = stack.pop() as Nodes;
     if (current.type === "html" || current.type === "footnoteReference") continue;
+    if (current.type === "break") {
+      parts.push(" ");
+      continue;
+    }
     if ("value" in current && typeof current.value === "string") parts.push(current.value);
     else if (isParent(current))
       for (let i = current.children.length - 1; i >= 0; i--)
@@ -144,13 +151,20 @@ const BLOCKS = new Set([
   "footnoteDefinition",
 ]);
 
-/** The whole tree's prose, one space between blocks, HTML and footnote marks left out, whitespace collapsed. */
+/**
+ * The whole tree's prose, one space between blocks and at a hard line break, HTML and footnote marks left out,
+ * whitespace collapsed.
+ */
 function proseWithBlocks(tree: Nodes): string {
   const parts: string[] = [];
   const stack: Nodes[] = [tree];
   while (stack.length > 0) {
     const current = stack.pop() as Nodes;
     if (current.type === "html" || current.type === "footnoteReference") continue;
+    if (current.type === "break") {
+      parts.push(" ");
+      continue;
+    }
     if (BLOCKS.has(current.type)) parts.push(" ");
     if ("value" in current && typeof current.value === "string") parts.push(current.value);
     else if (isParent(current)) {
@@ -275,10 +289,12 @@ export function readBody(body: string): BodyFacts {
     node: Nodes;
     parent: Nodes | undefined;
     skipped: boolean;
+    /** Inside a footnote definition, whose prose is never a claim's sentence. */
+    defining: boolean;
     block: Nodes | undefined;
-  }> = [{ node: tree, parent: undefined, skipped: false, block: undefined }];
+  }> = [{ node: tree, parent: undefined, skipped: false, defining: false, block: undefined }];
   while (stack.length > 0) {
-    const { node, parent, skipped, block } = stack.pop() as (typeof stack)[number];
+    const { node, parent, skipped, defining, block } = stack.pop() as (typeof stack)[number];
     switch (node.type) {
       case "definition":
         definitions.set(node.identifier, node.url);
@@ -307,6 +323,9 @@ export function readBody(body: string): BodyFacts {
         );
         break;
       case "footnoteReference": {
+        // A reference written inside a footnote's definition, its own or another's, supports no sentence of the
+        // page: the definition's prose is never a claim's (issue 5; bite b's build reviews B-I-A6, B-A-A9).
+        if (defining) break;
         let prose = "";
         if (block !== undefined) {
           prose = blockProse.get(block) ?? ellipsised(proseOf(block), BLOCK_CAP);
@@ -325,10 +344,16 @@ export function readBody(body: string): BodyFacts {
     }
     if (isParent(node)) {
       const skip = skipped || node.type === "footnoteDefinition" || node.type === "table";
-      // A footnote definition is never a reference's block; the blocks inside it are, for a reference written there.
+      const inDefinition = defining || node.type === "footnoteDefinition";
       const inner = CLAIM_BLOCKS.has(node.type) ? node : block;
       for (let i = node.children.length - 1; i >= 0; i--)
-        stack.push({ node: node.children[i] as Nodes, parent: node, skipped: skip, block: inner });
+        stack.push({
+          node: node.children[i] as Nodes,
+          parent: node,
+          skipped: skip,
+          defining: inDefinition,
+          block: inner,
+        });
     }
   }
   for (const ref of references) {
