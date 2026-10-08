@@ -147,7 +147,6 @@ describe("loadBundle on the behaviours bundle", () => {
   });
 });
 
-// The readiness ledger (issue 2's "Holds", D59, row 31): an unknown okf_version degrades, it never refuses.
 describe("loadBundle: admitted words that match no page (D77, build review A-E1)", () => {
   it("reports each admitted word outside the three known statuses that no page carries, once, as written", () => {
     const { report } = loadBundle(
@@ -180,6 +179,7 @@ describe("loadBundle: admitted words that match no page (D77, build review A-E1)
   });
 });
 
+// The readiness ledger (issue 2's "Holds", D59, row 31): an unknown okf_version degrades, it never refuses.
 describe("loadBundle: the readiness ledger (D59)", () => {
   it("serves a bundle whose root index declares an unknown okf_version", () => {
     const files = readFixture("behaviours").map((f) =>

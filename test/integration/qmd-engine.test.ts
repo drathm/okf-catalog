@@ -336,7 +336,6 @@ describe("QmdEngine: collisions, odd names and housekeeping (bite 3 build review
   });
 });
 
-// The readiness ledger (issue 2's "Holds", D59, row 27): index.md and log.md are reserved, served, never indexed.
 describe("QmdEngine: the exhausted flags (build review A-A4)", () => {
   it("says the pool is full only when the real engine had more matches past the cap", async () => {
     // The adversarial reviewer's probe: n pages hold kiwi; one more, without it, carries the tag; limit 8.
@@ -390,6 +389,7 @@ describe("QmdEngine: the exhausted flags (build review A-A4)", () => {
   });
 });
 
+// The readiness ledger (issue 2's "Holds", D59, row 27): index.md and log.md are reserved, served, never indexed.
 describe("QmdEngine: the readiness ledger (D59)", () => {
   it("keeps reserved files out of the index", async () => {
     const dir = mkdtempSync(join(tmpdir(), "okf-catalog-qmd-reserved-"));
