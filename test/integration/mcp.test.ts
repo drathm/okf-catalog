@@ -152,6 +152,10 @@ describe("search", () => {
       expect(text(r).split("\n")[0], JSON.stringify(args)).toContain("1 stale page left out");
       expect((r.structuredContent as { filteredOut: { stale: number } }).filteredOut.stale).toBe(1);
     }
+    // A recheck date that does not parse is never overdue, so fresh keeps the page.
+    const eta = await s.call("search", { question: "eta", freshness: "fresh" });
+    expect(text(eta)).toContain("terms/eta.md");
+    expect(text(eta)).toContain("recheck date unparseable (soon)");
     for (const args of [
       { question: "x".repeat(201) },
       { question: "alpha", limit: 0 },
