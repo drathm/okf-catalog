@@ -2,7 +2,7 @@ import type { Report } from "../bundle/model.js";
 import type { Engine, IndexResult } from "../search/engine.js";
 import type { Catalog } from "./model.js";
 
-/** One loaded and indexed state of the bundle: what every tool call reads, whole, for its duration. */
+/** Where a repository bundle's generation came from. */
 export interface PublishedInfo {
   /** The fetched commit of the published branch. */
   commit: string;
@@ -25,6 +25,7 @@ export interface PollerStatus {
   lastOutcome?: PollerOutcome;
 }
 
+/** One loaded and indexed state of one bundle. A refused bundle has one too, whose report carries the refusal. */
 export interface Generation {
   /** For a repository source: the commit this generation came from, and when it was fetched. */
   published?: PublishedInfo;
@@ -36,6 +37,22 @@ export interface Generation {
   integrity: "checked" | "skipped";
 }
 
+/** One bundle of the network as a tool call reads it: its id and its current generation. */
+export interface ServedBundle {
+  id: string;
+  generation: Generation;
+}
+
+/**
+ * The network as every tool call reads it, whole, for its duration (D72): each configured bundle, in the
+ * configuration's order, at its current generation; a bundle that is refused, or whose source failed at the first
+ * load, is there with a generation whose report carries the refusal.
+ */
+export interface Network {
+  bundles: readonly ServedBundle[];
+}
+
+/** One bundle's refresh. */
 export type RefreshOutcome =
   | { outcome: "swapped"; generation: Generation }
   /** The reloaded bundle was refused; the previous generation stays. */
@@ -51,23 +68,32 @@ export interface LastRefusal {
   detail: string;
 }
 
-export interface RuntimeStatus {
-  lock: "exclusive" | "private";
-  /** Whether a generation is published; false before the first load lands or while it keeps failing. */
+/** One bundle's part of the runtime's state (D75). */
+export interface BundleRuntimeStatus {
+  id: string;
+  /** Whether the bundle has a generation published, a refusal included. */
   loaded: boolean;
-  /** Whether the published generation is itself a refusal (D39), which a poller tick keeps retrying. */
-  fatal?: boolean;
+  /** Whether that generation is itself a refusal (D39), which a poller tick keeps retrying. */
+  fatal: boolean;
   /** The last commit or load the loader refused, and why; a fixed publish clears it. */
   lastRefusal?: LastRefusal;
   lastAttempt?: { at: Date; outcome: "swapped" | "fatal" | "failed" };
-  /** The fixed sentence every tool answers with while the server cannot serve. */
+  /** The bundle's poller, for a repository bundle; null when it has none. */
+  poller?: PollerStatus | null;
+}
+
+export interface RuntimeStatus {
+  lock: "exclusive" | "private";
+  /** Whether every bundle has a generation published; false before the first load lands or while it keeps failing. */
+  loaded: boolean;
+  /** The fixed sentence every tool answers with while the network cannot serve. */
   refusing?: string;
   /** Why the engine rebuilt its store at open, when it did (D48). */
   resetOnOpen?: string;
-  /** The process holding the company lock, when this one runs in the private fallback; null when not applicable. */
+  /** The process holding the network's lock, when this one runs in the private fallback; null when not applicable. */
   lockOwner?: LockOwnerStatus | null;
-  /** The poller's state, for a repository source. */
-  poller?: PollerStatus | null;
+  /** Each bundle's state, in the configuration's order. */
+  bundles: BundleRuntimeStatus[];
 }
 
 /** Plain values the tools need from the configuration, so the adapter never imports the configuration module. */
@@ -87,11 +113,12 @@ export interface ToolOptions {
 export interface Runtime {
   /** Begins the first load if it has not begun; idempotent. The adapter calls it when a connection completes `initialize`. */
   start?(): void;
-  /** Resolves when the first generation is published; rejects when the server is refusing. */
-  ready(): Promise<Generation>;
-  /** Runs `fn` against the current generation and its engine, holding them for the call's duration. */
-  lease<T>(fn: (generation: Generation, engine: Engine) => Promise<T>): Promise<T>;
-  refresh(): Promise<RefreshOutcome>;
+  /** Resolves with the network as it stands once every bundle's first load has run; rejects while it refuses. */
+  ready(): Promise<Network>;
+  /** Runs `fn` against the network's current generations and its engine, holding them for the call's duration. */
+  lease<T>(fn: (network: Network, engine: Engine) => Promise<T>): Promise<T>;
+  /** Refreshes one bundle; the id may be left out only when the network holds one bundle. */
+  refresh(bundle?: string): Promise<RefreshOutcome>;
   status(): RuntimeStatus;
   shutdown(): Promise<void>;
 }

@@ -708,8 +708,9 @@ describe("bite 4 build review, round 2", () => {
               lock: "exclusive",
               loaded: false,
               refusing: "the bundle folder ./kb does not exist or cannot be read",
+              bundles: [],
             }
-          : { lock: "exclusive", loaded: false },
+          : { lock: "exclusive", loaded: false, bundles: [] },
       async shutdown() {},
     };
     const s = await session(runtime);

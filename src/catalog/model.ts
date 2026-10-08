@@ -27,7 +27,8 @@ export interface Graph {
 
 /** The immutable view of one loaded bundle: admitted pages only, folders with their index and log, pages by type. */
 export interface Catalog {
-  company: string;
+  /** The bundle's id in its network (D72); two bundles are two catalogs, never one. */
+  bundle: string;
   commit?: string;
   loadedAt: Date;
   okfVersion?: string;
@@ -65,7 +66,7 @@ function buildGraph(pages: ReadonlyMap<PagePath, Page>): Graph {
 }
 
 export function buildCatalog(input: {
-  company: string;
+  bundle: string;
   commit?: string;
   loadedAt: Date;
   okfVersion?: string;
@@ -80,7 +81,7 @@ export function buildCatalog(input: {
   }
   for (const list of byType.values()) list.sort();
   const catalog: Catalog = {
-    company: input.company,
+    bundle: input.bundle,
     loadedAt: input.loadedAt,
     pages: input.pages,
     folders: input.folders,

@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import type { BundleFile, LoadOptions } from "../../src/bundle/model.js";
 import { DEFAULT_CAPS } from "../../src/bundle/model.js";
-import type { Generation } from "../../src/catalog/runtime.js";
+import type {
+  BundleRuntimeStatus,
+  Generation,
+  Network,
+  Runtime,
+} from "../../src/catalog/runtime.js";
 import { renderDocument } from "../../src/engine/qmd-render.js";
 import type { WalkResult } from "../../src/fs/walk.js";
-import type { Engine, IndexResult } from "../../src/search/engine.js";
+import type { Engine, EngineHit, IndexResult } from "../../src/search/engine.js";
 import { search } from "../../src/search/search.js";
 import { createRuntime } from "../../src/serve/runtime.js";
 import type { Loaded, Source } from "../../src/source/source.js";
@@ -40,65 +45,101 @@ function memorySource(initial: BundleFile[]) {
   };
 }
 
-/** An engine over the rendered documents it is given: prefix match on every term, counting the calls, failing once on request; `slowLexMs` makes every query yield to the loop first and read the index as it stands afterwards. */
-function countingEngine(slowLexMs = 0): Engine & {
+/**
+ * An engine over the rendered documents it is given, a part per bundle: prefix match on every term, counting the
+ * calls, failing once on request; `slowLexMs` makes every query yield to the loop first and read the index as it
+ * stands afterwards, and `slowIndexMs` every index or drop. `overlaps` counts any engine call that began while a
+ * write (an index or a drop) was running, and any write that began while another call was running.
+ */
+function countingEngine(
+  slowLexMs = 0,
+  slowIndexMs = 0,
+): Engine & {
   indexCalls: number;
   closeCalls: number;
   failNext: boolean;
   failAgain: boolean;
   docs: string[];
+  calls: Array<{ call: "index" | "drop"; bundle: string }>;
+  byBundle: Map<string, string[]>;
+  overlaps: number;
 } {
-  let texts = new Map<string, string[]>();
+  const texts = new Map<string, Map<string, string[]>>();
+  let writing = 0;
+  let reading = 0;
   const state = {
     indexCalls: 0,
     closeCalls: 0,
     failNext: false,
     failAgain: false,
     docs: [] as string[],
-    async index(_bundle: string, docs: Parameters<Engine["index"]>[1]): Promise<IndexResult> {
-      state.indexCalls += 1;
-      if (state.failNext) {
-        state.failNext = state.failAgain;
-        state.failAgain = false;
-        throw new Error("the store broke");
+    calls: [] as Array<{ call: "index" | "drop"; bundle: string }>,
+    byBundle: new Map<string, string[]>(),
+    overlaps: 0,
+    async index(bundle: string, docs: Parameters<Engine["index"]>[1]): Promise<IndexResult> {
+      if (writing > 0 || reading > 0) state.overlaps += 1;
+      writing += 1;
+      try {
+        state.indexCalls += 1;
+        state.calls.push({ call: docs.length === 0 ? "drop" : "index", bundle });
+        if (slowIndexMs > 0) await new Promise((r) => setTimeout(r, slowIndexMs));
+        if (state.failNext) {
+          state.failNext = state.failAgain;
+          state.failAgain = false;
+          throw new Error("the store broke");
+        }
+        state.docs = docs.map((d) => d.path).sort();
+        state.byBundle.set(bundle, state.docs);
+        texts.set(
+          bundle,
+          new Map(
+            docs.map((d) => [
+              d.path,
+              `${d.path} ${renderDocument(d)}`
+                .toLowerCase()
+                .split(/[^\p{L}\p{N}\p{M}-]+/u)
+                .filter((w) => w.length > 0),
+            ]),
+          ),
+        );
+        return {
+          documents: docs.length,
+          indexed: docs.length,
+          updated: 0,
+          unchanged: 0,
+          removed: 0,
+          skipped: 0,
+          notIndexed: [],
+          collisions: [],
+          encodedFolders: [],
+        };
+      } finally {
+        writing -= 1;
       }
-      state.docs = docs.map((d) => d.path).sort();
-      texts = new Map(
-        docs.map((d) => [
-          d.path,
-          `${d.path} ${renderDocument(d)}`
-            .toLowerCase()
-            .split(/[^\p{L}\p{N}\p{M}-]+/u)
-            .filter((w) => w.length > 0),
-        ]),
-      );
-      return {
-        documents: docs.length,
-        indexed: docs.length,
-        updated: 0,
-        unchanged: 0,
-        removed: 0,
-        skipped: 0,
-        notIndexed: [],
-        collisions: [],
-        encodedFolders: [],
-      };
     },
     async lex(terms: readonly string[], limit: number) {
-      if (slowLexMs > 0) await new Promise((r) => setTimeout(r, slowLexMs));
-      const hits = [];
-      for (const [path, words] of texts) {
-        let bm25 = 0;
-        let all = true;
-        for (const term of terms) {
-          const n = words.filter((w) => w.startsWith(term)).length;
-          if (n === 0) all = false;
-          bm25 += n;
+      if (writing > 0) state.overlaps += 1;
+      reading += 1;
+      try {
+        if (slowLexMs > 0) await new Promise((r) => setTimeout(r, slowLexMs));
+        const hits: EngineHit[] = [];
+        for (const [bundle, pages] of texts) {
+          for (const [path, words] of pages) {
+            let bm25 = 0;
+            let all = true;
+            for (const term of terms) {
+              const n = words.filter((w) => w.startsWith(term)).length;
+              if (n === 0) all = false;
+              bm25 += n;
+            }
+            if (all && terms.length > 0)
+              hits.push({ bundle, path, bm25, score: bm25 / (1 + bm25) });
+          }
         }
-        if (all && terms.length > 0)
-          hits.push({ bundle: "b", path, bm25, score: bm25 / (1 + bm25) });
+        return hits.sort((a, b) => b.bm25 - a.bm25 || (a.path < b.path ? -1 : 1)).slice(0, limit);
+      } finally {
+        reading -= 1;
       }
-      return hits.sort((a, b) => b.bm25 - a.bm25 || (a.path < b.path ? -1 : 1)).slice(0, limit);
     },
     async drop(bundle: string): Promise<IndexResult> {
       return state.index(bundle, []);
@@ -113,6 +154,19 @@ function countingEngine(slowLexMs = 0): Engine & {
   return state;
 }
 
+/** The generation a network serves for a bundle, the only one by default. */
+const generationOf = (network: Network, id = "b"): Generation => {
+  const found = network.bundles.find((bundle) => bundle.id === id);
+  if (found === undefined) throw new Error(`no bundle ${id}`);
+  return found.generation;
+};
+/** A bundle's part of the runtime's status, the only one by default. */
+const own = (runtime: Runtime, id = "b"): BundleRuntimeStatus => {
+  const found = runtime.status().bundles.find((bundle) => bundle.id === id);
+  if (found === undefined) throw new Error(`no bundle ${id}`);
+  return found;
+};
+
 function build(
   source: ReturnType<typeof memorySource>,
   engine: Engine,
@@ -120,18 +174,48 @@ function build(
 ) {
   let prepared = 0;
   const runtime = createRuntime({
-    company: "b",
-    source,
+    bundles: [{ id: "b", source, load: { ...options, ...patch } }],
     prepare: async () => {
       prepared += 1;
       return { engine, lock: "exclusive" as const };
     },
-    load: { ...options, ...patch },
     clock: () => NOW,
     log: quiet,
   });
   return { runtime, prepared: () => prepared };
 }
+
+/** A network of two bundles, `a` and `b`, over one engine. */
+function network(
+  a: ReturnType<typeof memorySource>,
+  b: ReturnType<typeof memorySource>,
+  engine: Engine,
+) {
+  return createRuntime({
+    bundles: [
+      { id: "a", source: a, load: options },
+      { id: "b", source: b, load: options },
+    ],
+    prepare: async () => ({ engine, lock: "exclusive" as const }),
+    clock: () => NOW,
+    log: quiet,
+  });
+}
+
+/**
+ * The engine's rows for a question that a served bundle's catalog holds: what a search admits (the search over
+ * several catalogs has tests of its own).
+ */
+const searchIn = (runtime: Runtime, question: string) =>
+  runtime.lease(async (served, eng) => {
+    const catalogs = new Map(
+      served.bundles
+        .filter((bundle) => bundle.generation.report.fatal === undefined)
+        .map((bundle) => [bundle.id, bundle.generation.catalog]),
+    );
+    const rows = await eng.lex(question.split(" "), 50);
+    return { hits: rows.filter((row) => catalogs.get(row.bundle)?.pages.has(row.path) === true) };
+  });
 
 describe("createRuntime", () => {
   it("does nothing until started, then prepares once and publishes the first generation", async () => {
@@ -140,11 +224,12 @@ describe("createRuntime", () => {
     await new Promise((r) => setTimeout(r, 20));
     expect(prepared()).toBe(0);
     runtime.start();
-    const generation = await runtime.ready();
+    const generation = generationOf(await runtime.ready());
     expect(prepared()).toBe(1);
     expect(generation.catalog.pages.size).toBeGreaterThan(0);
+    expect(generation.catalog.bundle).toBe("b");
     expect(generation.integrity).toBe("checked");
-    expect(runtime.status().lastAttempt?.outcome).toBe("swapped");
+    expect(own(runtime).lastAttempt?.outcome).toBe("swapped");
     runtime.start();
     await runtime.ready();
     expect(prepared()).toBe(1);
@@ -174,9 +259,9 @@ describe("createRuntime", () => {
     const refreshing = runtime.refresh();
     const during = await Promise.all(
       Array.from({ length: 5 }, () =>
-        runtime.lease(async (generation: Generation, eng: Engine) =>
+        runtime.lease(async (served: Network, eng: Engine) =>
           search(
-            generation.catalog,
+            generationOf(served).catalog,
             eng,
             { question: "term glossary", includeStale: true, limit: 5 },
             NOW,
@@ -195,30 +280,34 @@ describe("createRuntime", () => {
     const engine = countingEngine();
     const { runtime } = build(source, engine);
     runtime.start();
-    const first = await runtime.ready();
+    const first = generationOf(await runtime.ready());
     source.set(files.filter((f) => f.path !== "manifest.json"));
     const fatal = await runtime.refresh();
     expect(fatal.outcome).toBe("fatal");
-    expect(await runtime.ready()).toBe(first);
-    expect(runtime.status().lastAttempt?.outcome).toBe("fatal");
+    expect(generationOf(await runtime.ready())).toBe(first);
+    expect(own(runtime).lastAttempt?.outcome).toBe("fatal");
     source.set(files);
     engine.failNext = true;
     const failed = await runtime.refresh();
     expect(failed.outcome).toBe("failed");
-    expect(await runtime.ready()).toBe(first);
+    expect(generationOf(await runtime.ready())).toBe(first);
     // One call failed, then one re-aligned the index with the generation still served.
     expect(engine.indexCalls).toBe(3);
     expect(engine.docs).toEqual([...first.catalog.pages.keys()].sort());
     await runtime.shutdown();
   });
 
-  it("publishes a refused bundle as a generation with the fatal report, so status can show it", async () => {
+  it("publishes a refused bundle as a generation with the fatal report, so status can show it, and takes its pages out of the index", async () => {
     const source = memorySource(readFixture("no-manifest"));
-    const { runtime } = build(source, countingEngine());
+    const engine = countingEngine();
+    const { runtime } = build(source, engine);
     runtime.start();
-    const generation = await runtime.ready();
+    const generation = generationOf(await runtime.ready());
     expect(generation.report.fatal?.rule).toBe("manifest-missing");
     expect(generation.catalog.pages.size).toBe(0);
+    // A bundle refused at first load, with no tree to fall back on, leaves the index (D75).
+    expect(engine.calls).toEqual([{ call: "drop", bundle: "b" }]);
+    expect(own(runtime)).toMatchObject({ loaded: true, fatal: true });
     await runtime.shutdown();
   });
 
@@ -259,7 +348,7 @@ describe("createRuntime: the readiness ledger (D59)", () => {
     const engine = countingEngine();
     const { runtime } = build(memorySource(readFixture("behaviours")), engine);
     runtime.start();
-    const generation = await runtime.ready();
+    const generation = generationOf(await runtime.ready());
     expect(engine.docs).toEqual([...generation.catalog.pages.keys()].sort());
     expect(engine.docs).toHaveLength(17);
     for (const path of [
@@ -307,12 +396,10 @@ describe("createRuntime (bite 4 build review, round 2)", () => {
     process.on("unhandledRejection", onRejection);
     try {
       const runtime = createRuntime({
-        company: "b",
-        source: memorySource(readFixture("behaviours")),
+        bundles: [{ id: "b", source: memorySource(readFixture("behaviours")), load: options }],
         prepare: async () => {
           throw new Error("the cache root cannot be read (EACCES)");
         },
-        load: options,
         clock: () => NOW,
         log: quiet,
       });
@@ -338,8 +425,13 @@ describe("createRuntime (bite 4 build review, round 2)", () => {
     const refreshing = runtime.refresh();
     const during = await Promise.all(
       Array.from({ length: 5 }, () =>
-        runtime.lease(async (generation: Generation, eng: Engine) =>
-          search(generation.catalog, eng, { question: "note", includeStale: true, limit: 8 }, NOW),
+        runtime.lease(async (served: Network, eng: Engine) =>
+          search(
+            generationOf(served).catalog,
+            eng,
+            { question: "note", includeStale: true, limit: 8 },
+            NOW,
+          ),
         ),
       ),
     );
@@ -354,7 +446,7 @@ describe("createRuntime (bite 4 build review, round 2)", () => {
     runtime.start();
     await runtime.shutdown();
     expect(engine.closeCalls).toBe(1);
-    expect(runtime.status().lastAttempt?.outcome).toBe("swapped");
+    expect(own(runtime).lastAttempt?.outcome).toBe("swapped");
     await expect(runtime.lease(async () => 1)).rejects.toThrow(/shut down/);
   });
 });
@@ -380,7 +472,7 @@ describe("createRuntime (bite 5: a source that fails, falls back and reports)", 
     expect(recovered.outcome).toBe("swapped");
     expect(runtime.status()).toMatchObject({ loaded: true });
     expect(runtime.status().refusing).toBeUndefined();
-    expect((await runtime.ready()).catalog.pages.size).toBeGreaterThan(0);
+    expect(generationOf(await runtime.ready()).catalog.pages.size).toBeGreaterThan(0);
     await runtime.shutdown();
   });
 
@@ -388,14 +480,12 @@ describe("createRuntime (bite 5: a source that fails, falls back and reports)", 
     let attempts = 0;
     const engine = countingEngine();
     const runtime = createRuntime({
-      company: "b",
-      source: memorySource(files),
+      bundles: [{ id: "b", source: memorySource(files), load: options }],
       prepare: async () => {
         attempts += 1;
         if (attempts === 1) throw new Error("the cache root cannot be read (EACCES)");
         return { engine, lock: "exclusive" as const, resetOnOpen: "the store was rebuilt" };
       },
-      load: options,
       clock: () => NOW,
       log: quiet,
     });
@@ -438,10 +528,10 @@ describe("createRuntime (bite 5: a source that fails, falls back and reports)", 
     };
     const { runtime } = build(source as ReturnType<typeof memorySource>, countingEngine());
     runtime.start();
-    const generation = await runtime.ready();
+    const generation = generationOf(await runtime.ready());
     expect(generation.catalog.pages.size).toBeGreaterThan(0);
     expect(generation.published?.commit).toBe("a".repeat(40));
-    expect(runtime.status().lastAttempt?.outcome).toBe("fatal");
+    expect(own(runtime).lastAttempt?.outcome).toBe("fatal");
     expect(served).toEqual(["a".repeat(40)]);
     await runtime.shutdown();
   });
@@ -464,7 +554,7 @@ describe("createRuntime (bite 5: a source that fails, falls back and reports)", 
     };
     const { runtime } = build(source as ReturnType<typeof memorySource>, countingEngine());
     runtime.start();
-    expect((await runtime.ready()).published?.commit).toBe("1".repeat(40));
+    expect(generationOf(await runtime.ready()).published?.commit).toBe("1".repeat(40));
     commit = "2".repeat(40);
     const r = await runtime.refresh();
     expect(r.outcome === "swapped" && r.generation.published?.commit).toBe("2".repeat(40));
@@ -473,17 +563,15 @@ describe("createRuntime (bite 5: a source that fails, falls back and reports)", 
     expect(aborted).toBe(1);
   });
 
-  it("merges the command's status fields (lock owner, poller) into its own", async () => {
+  it("merges the command's status fields (lock owner, each bundle's poller) into its own", async () => {
     const runtime = createRuntime({
-      company: "b",
-      source: memorySource(files),
+      bundles: [{ id: "b", source: memorySource(files), load: options }],
       prepare: async () => ({ engine: countingEngine(), lock: "private" as const }),
-      load: options,
       clock: () => NOW,
       log: quiet,
       extra: () => ({
         lockOwner: { pid: 4242, startedAt: "2026-10-07T00:00:00Z", alive: true },
-        poller: { intervalMs: 60_000, lastOutcome: "unchanged" },
+        pollers: { b: { intervalMs: 60_000, lastOutcome: "unchanged" } },
       }),
     });
     runtime.start();
@@ -492,8 +580,8 @@ describe("createRuntime (bite 5: a source that fails, falls back and reports)", 
       lock: "private",
       loaded: true,
       lockOwner: { pid: 4242, alive: true },
-      poller: { intervalMs: 60_000, lastOutcome: "unchanged" },
     });
+    expect(own(runtime).poller).toEqual({ intervalMs: 60_000, lastOutcome: "unchanged" });
     await runtime.shutdown();
   });
 
@@ -507,18 +595,25 @@ describe("createRuntime (bite 5: a source that fails, falls back and reports)", 
       debug() {},
     };
     const runtime = createRuntime({
-      company: "b",
-      source: memorySource(readFixture("behaviours")),
+      bundles: [
+        {
+          id: "b",
+          source: memorySource(readFixture("behaviours")),
+          load: { ...options, admit: ["stable", "deprecated", "depreciated"] },
+        },
+      ],
       prepare: async () => ({ engine: countingEngine(), lock: "exclusive" as const }),
-      load: { ...options, admit: ["stable", "deprecated", "depreciated"] },
       clock: () => NOW,
       log,
     });
     runtime.start();
-    const generation = await runtime.ready();
+    const generation = generationOf(await runtime.ready());
     expect(generation.report.unmatchedAdmits).toEqual(["depreciated"]);
     expect(records).toEqual([
-      { event: "serve.admit", fields: { word: "depreciated", detail: "matches no page" } },
+      {
+        event: "serve.admit",
+        fields: { bundle: "b", word: "depreciated", detail: "matches no page" },
+      },
     ]);
     // A refresh that swaps loads again and says so again; the configuration has not changed.
     expect((await runtime.refresh()).outcome).toBe("swapped");
@@ -552,10 +647,8 @@ describe("createRuntime (bite 5: a source that fails, falls back and reports)", 
       describe: () => "r",
     };
     const runtime = createRuntime({
-      company: "b",
-      source,
+      bundles: [{ id: "b", source, load: options }],
       prepare: async () => ({ engine: countingEngine(), lock: "exclusive" as const }),
-      load: options,
       clock: () => NOW,
       log,
     });
@@ -566,6 +659,7 @@ describe("createRuntime (bite 5: a source that fails, falls back and reports)", 
     const record = records.find((r) => r.event === "refresh.failed");
     expect(record?.fields.error).toMatch(/could not be fetched/);
     expect(record?.fields.detail).toMatch(/HTTP 401/);
+    expect(record?.fields.bundle).toBe("b");
     await runtime.shutdown();
   });
 
@@ -603,19 +697,148 @@ describe("createRuntime (bite 5: a source that fails, falls back and reports)", 
     const { runtime } = build(source as ReturnType<typeof memorySource>, countingEngine());
     runtime.start();
     await runtime.ready();
-    expect(runtime.status().lastRefusal).toMatchObject({
+    expect(own(runtime).lastRefusal).toMatchObject({
       commit: "b".repeat(40),
       rule: "symlink",
       path: "link.md",
     });
-    expect(runtime.status().fatal).toBe(false);
+    expect(own(runtime).fatal).toBe(false);
     expect(discarded).toEqual(["b".repeat(40)]);
     await runtime.shutdown();
     const nothingServed: Source = { ...source, loadServed: async () => undefined };
     const bare = build(nothingServed as ReturnType<typeof memorySource>, countingEngine());
     bare.runtime.start();
     await bare.runtime.ready();
-    expect(bare.runtime.status()).toMatchObject({ loaded: true, fatal: true });
+    expect(bare.runtime.status()).toMatchObject({ loaded: true });
+    expect(own(bare.runtime)).toMatchObject({ loaded: true, fatal: true });
     await bare.runtime.shutdown();
+  });
+});
+
+// Issue 3 and D75: each bundle loads, fails and refreshes on its own, in one index, one engine call at a time.
+describe("createRuntime: a network of bundles (D75)", () => {
+  it("serves the other bundles when one has no manifest", async () => {
+    const engine = countingEngine();
+    const runtime = network(
+      memorySource(readFixture("behaviours")),
+      memorySource(readFixture("no-manifest")),
+      engine,
+    );
+    runtime.start();
+    const served = await runtime.ready();
+    expect(served.bundles.map((bundle) => bundle.id)).toEqual(["a", "b"]);
+    expect(generationOf(served, "a").report.fatal).toBeUndefined();
+    expect(generationOf(served, "b").report.fatal?.rule).toBe("manifest-missing");
+    expect(runtime.status().refusing).toBeUndefined();
+    expect(own(runtime, "a")).toMatchObject({ loaded: true, fatal: false });
+    expect(own(runtime, "b")).toMatchObject({ loaded: true, fatal: true });
+    // The refused bundle's pages leave the index (D75); the other's are searched.
+    expect(engine.byBundle.get("b")).toEqual([]);
+    const hits = (await searchIn(runtime, "alpha glossary")).hits;
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits.every((hit) => hit.bundle === "a")).toBe(true);
+    await runtime.shutdown();
+    // A bundle whose source throws at first load is published as refused, and the others serve.
+    const failing = memorySource(readFixture("spec-example"));
+    failing.fail("the bundle folder ./gone does not exist or cannot be read");
+    const half = network(memorySource(readFixture("behaviours")), failing, countingEngine());
+    half.start();
+    const partial = await half.ready();
+    expect(generationOf(partial, "b").report.fatal).toEqual({
+      path: "",
+      rule: "load-failed",
+      detail: "the bundle folder ./gone does not exist or cannot be read",
+    });
+    expect(own(half, "b")).toMatchObject({
+      loaded: true,
+      fatal: true,
+      lastAttempt: { outcome: "failed" },
+    });
+    expect(half.status().refusing).toBeUndefined();
+    expect((await searchIn(half, "alpha")).hits.length).toBeGreaterThan(0);
+    // Its source back, a refresh of that bundle serves it.
+    failing.fail(undefined);
+    expect((await half.refresh("b")).outcome).toBe("swapped");
+    expect((await searchIn(half, "revenue")).hits.some((hit) => hit.bundle === "b")).toBe(true);
+    await half.shutdown();
+    // Only when every bundle's first load throws does the network refuse, naming each.
+    const none = memorySource(readFixture("behaviours"));
+    none.fail("the bundle folder ./one does not exist or cannot be read");
+    const neither = memorySource(readFixture("behaviours"));
+    neither.fail("the bundle folder ./two does not exist or cannot be read");
+    const down = network(none, neither, countingEngine());
+    down.start();
+    await expect(down.ready()).rejects.toThrow(/\.\/one.*\.\/two/);
+    expect(down.status().refusing).toMatch(/a: .*\.\/one.*; b: .*\.\/two/);
+    await down.shutdown();
+  });
+
+  it("refreshes one bundle and keeps its previous generation on failure", async () => {
+    const engine = countingEngine();
+    const a = memorySource(readFixture("behaviours"));
+    const specExample = readFixture("spec-example");
+    const b = memorySource(specExample);
+    const runtime = network(a, b, engine);
+    runtime.start();
+    const first = await runtime.ready();
+    const firstB = generationOf(first, "b");
+    const firstA = generationOf(first, "a");
+    const pagesOfA = engine.byBundle.get("a");
+    const calls = engine.calls.length;
+    // A refused reload of b keeps b's previous generation, and both bundles stay searchable.
+    b.set(specExample.filter((f) => f.path !== "manifest.json"));
+    expect((await runtime.refresh("b")).outcome).toBe("fatal");
+    expect(generationOf(await runtime.ready(), "b")).toBe(firstB);
+    // A reload of b that fails in the engine is re-aligned with b's previous pages; a is never touched.
+    b.set(specExample);
+    engine.failNext = true;
+    expect((await runtime.refresh("b")).outcome).toBe("failed");
+    expect(generationOf(await runtime.ready(), "b")).toBe(firstB);
+    expect(engine.byBundle.get("b")).toEqual([...firstB.catalog.pages.keys()].sort());
+    // A reload of b whose source throws keeps it too.
+    b.fail("the bundle folder ./b does not exist or cannot be read");
+    expect((await runtime.refresh("b")).outcome).toBe("failed");
+    expect(generationOf(await runtime.ready(), "b")).toBe(firstB);
+    expect(engine.calls.slice(calls).every((call) => call.bundle === "b")).toBe(true);
+    expect(engine.byBundle.get("a")).toEqual(pagesOfA);
+    expect(generationOf(await runtime.ready(), "a")).toBe(firstA);
+    const both = await searchIn(runtime, "revenue");
+    expect(both.hits.some((hit) => hit.bundle === "b")).toBe(true);
+    expect((await searchIn(runtime, "alpha glossary")).hits[0]?.bundle).toBe("a");
+    expect(own(runtime, "b").lastAttempt?.outcome).toBe("failed");
+    expect(own(runtime, "a").lastAttempt?.outcome).toBe("swapped");
+    // A refresh names its bundle once the network holds more than one; an unknown bundle is refused.
+    await expect(runtime.refresh()).rejects.toThrow(/name the bundle.*a, b/);
+    await expect(runtime.refresh("zz")).rejects.toThrow(/no bundle "zz"/);
+    await runtime.shutdown();
+  });
+
+  it("keeps refresh single-flight per bundle and commits one at a time", async () => {
+    const engine = countingEngine(2, 15);
+    const a = memorySource(readFixture("behaviours"));
+    const b = memorySource(readFixture("spec-example"));
+    const runtime = network(a, b, engine);
+    runtime.start();
+    await runtime.ready();
+    // The first load indexed both bundles, one call after the other.
+    expect(engine.calls).toEqual([
+      expect.objectContaining({ call: "index" }),
+      expect.objectContaining({ call: "index" }),
+    ]);
+    expect(engine.overlaps).toBe(0);
+    const before = engine.calls.length;
+    const first = runtime.refresh("a");
+    const second = runtime.refresh("a");
+    const other = runtime.refresh("b");
+    const searches = Array.from({ length: 4 }, () => searchIn(runtime, "term"));
+    const outcomes = await Promise.all([first, second, other]);
+    await Promise.all(searches);
+    expect(outcomes.map((o) => o.outcome)).toEqual(["swapped", "swapped", "swapped"]);
+    // Two refreshes of one bundle ran one index(); the other bundle's ran its own; no engine call overlapped.
+    const made = engine.calls.slice(before);
+    expect(made.filter((call) => call.bundle === "a")).toHaveLength(1);
+    expect(made.filter((call) => call.bundle === "b")).toHaveLength(1);
+    expect(engine.overlaps).toBe(0);
+    await runtime.shutdown();
   });
 });

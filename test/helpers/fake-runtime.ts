@@ -3,6 +3,7 @@ import { type BundleFile, DEFAULT_CAPS, type LoadOptions } from "../../src/bundl
 import type { Catalog } from "../../src/catalog/model.js";
 import type {
   Generation,
+  Network,
   RefreshOutcome,
   Runtime,
   RuntimeStatus,
@@ -53,7 +54,7 @@ export function fakeEngine(catalog: Catalog): Engine {
           bm25 += n * weight(term);
         }
         if (all && terms.length > 0)
-          hits.push({ bundle: catalog.company, path, bm25, score: bm25 / (1 + bm25) });
+          hits.push({ bundle: catalog.bundle, path, bm25, score: bm25 / (1 + bm25) });
       }
       return hits.sort((a, b) => b.bm25 - a.bm25 || (a.path < b.path ? -1 : 1)).slice(0, limit);
     },
@@ -91,29 +92,43 @@ export function loadGeneration(
   };
 }
 
-/** A runtime over one fixed generation, or one that refuses with a fix. */
+/** A runtime over one fixed generation, a network of one bundle named as its catalog is, or one that refuses with a fix. */
 export function fakeRuntime(
   generation: Generation | undefined,
   refusing?: string,
 ): Runtime & { leases: number } {
   const engine = generation === undefined ? undefined : fakeEngine(generation.catalog);
+  const network: Network | undefined =
+    generation === undefined
+      ? undefined
+      : { bundles: [{ id: generation.catalog.bundle, generation }] };
+  const bundles: RuntimeStatus["bundles"] =
+    generation === undefined
+      ? []
+      : [
+          {
+            id: generation.catalog.bundle,
+            loaded: true,
+            fatal: generation.report.fatal !== undefined,
+          },
+        ];
   const status: RuntimeStatus =
     refusing === undefined
-      ? { lock: "exclusive", loaded: generation !== undefined }
-      : { lock: "exclusive", loaded: false, refusing };
+      ? { lock: "exclusive", loaded: generation !== undefined, bundles }
+      : { lock: "exclusive", loaded: false, refusing, bundles };
   const runtime: Runtime & { leases: number } = {
     leases: 0,
     async ready() {
-      if (generation === undefined || refusing !== undefined)
+      if (network === undefined || refusing !== undefined)
         throw new Error(refusing ?? "no generation");
-      return generation;
+      return network;
     },
     async lease(fn) {
-      if (generation === undefined || engine === undefined || refusing !== undefined) {
+      if (network === undefined || engine === undefined || refusing !== undefined) {
         throw new Error(refusing ?? "no generation");
       }
       runtime.leases += 1;
-      return fn(generation, engine);
+      return fn(network, engine);
     },
     async refresh(): Promise<RefreshOutcome> {
       return { outcome: "failed", error: "the fake runtime does not refresh" };

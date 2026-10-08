@@ -4,6 +4,8 @@ import type { Source } from "../source/source.js";
 
 export interface PollerDeps {
   runtime: Runtime;
+  /** The repository bundle this poller asks for; the runtime refreshes that bundle alone (D75). */
+  bundle: string;
   /** The source, once `prepare()` has built it; undefined until then, when every tick is a retry through the runtime. */
   source: () => Source | undefined;
   intervalMs: number;
@@ -25,9 +27,10 @@ export interface Poller {
 }
 
 /**
- * Asks the source whether the remote moved, one whole tick at a time on a chained timer, and refreshes when it
- * did or when the first load has not succeeded yet (D44). It runs from its timer and never from a lease, backs
- * off no further than its interval, never keeps the process alive, and is stopped before the runtime drains.
+ * Asks one repository bundle's source whether the remote moved, one whole tick at a time on a chained timer at that
+ * bundle's own interval, and refreshes that bundle when it did, when its generation is a refusal, or while the
+ * network has not loaded or refuses (D44, D75). It runs from its timer and never from a lease, backs off no
+ * further than its interval, never keeps the process alive, and is stopped before the runtime drains.
  */
 export function createPoller(deps: PollerDeps): Poller {
   let timer: NodeJS.Timeout | undefined;
@@ -44,10 +47,12 @@ export function createPoller(deps: PollerDeps): Poller {
     let detail: string | undefined;
     try {
       const status = deps.runtime.status();
+      const own = status.bundles.find((bundle) => bundle.id === deps.bundle);
       const source = deps.source();
       let shouldRefresh =
-        !status.loaded ||
-        status.fatal === true ||
+        own === undefined ||
+        !own.loaded ||
+        own.fatal ||
         status.refusing !== undefined ||
         source === undefined;
       if (!shouldRefresh && source?.changed !== undefined) {
@@ -58,7 +63,7 @@ export function createPoller(deps: PollerDeps): Poller {
       if (stopped) return "skipped";
       if (outcome !== "gone") {
         if (shouldRefresh) {
-          const result = await deps.runtime.refresh();
+          const result = await deps.runtime.refresh(deps.bundle);
           outcome = result.outcome === "swapped" ? "refreshed" : "failed";
           if (result.outcome === "failed") error = result.error;
           if (result.outcome === "fatal") error = result.report.fatal?.rule;
@@ -73,6 +78,7 @@ export function createPoller(deps: PollerDeps): Poller {
     lastTick = deps.clock();
     lastOutcome = outcome;
     const fields = {
+      bundle: deps.bundle,
       outcome,
       ms: Math.round(performance.now() - started),
       ...(error === undefined ? {} : { error }),

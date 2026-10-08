@@ -134,7 +134,7 @@ function refusingRuntime(problem: string, log: Log): Runtime {
     ready: reject,
     lease: reject,
     refresh: reject,
-    status: () => ({ lock: "exclusive", loaded: false, refusing: problem }),
+    status: () => ({ lock: "exclusive", loaded: false, refusing: problem, bundles: [] }),
     shutdown: async () => undefined,
   };
 }
@@ -259,8 +259,20 @@ export async function runServe(argv: string[]): Promise<number> {
       };
       let lockKind: "exclusive" | "private" = "exclusive";
       const serving = createRuntime({
-        company: config.id,
-        source,
+        bundles: [
+          {
+            id: config.id,
+            source,
+            load: {
+              admit: config.serve.admit,
+              dev: config.serve.dev,
+              integrity: config.integrity,
+              specText: config.specText,
+              caps: config.caps,
+              ...(config.types === undefined ? {} : { types: config.types }),
+            },
+          },
+        ],
         prepare: async () => {
           const ensured = ensureCache(dir, root.root, {
             uid: process.getuid?.() ?? 0,
@@ -332,24 +344,18 @@ export async function runServe(argv: string[]): Promise<number> {
               clock,
               log,
             });
-            result = { ...result, source: gitSource };
+            result = { ...result, sources: new Map([[config.id, gitSource]]) };
           }
-        },
-        load: {
-          admit: config.serve.admit,
-          dev: config.serve.dev,
-          integrity: config.integrity,
-          specText: config.specText,
-          caps: config.caps,
-          ...(config.types === undefined ? {} : { types: config.types }),
         },
         clock,
         log,
         extra: () => ({
           lockOwner: lockKind === "private" ? (readLockOwner(dir) ?? null) : null,
-          poller:
-            poller?.state() ??
-            (configured.kind === "git" ? { intervalMs: config.serve.pullIntervalMs } : null),
+          pollers: {
+            [config.id]:
+              poller?.state() ??
+              (configured.kind === "git" ? { intervalMs: config.serve.pullIntervalMs } : null),
+          },
         }),
       });
       // The poller starts once the first load has run, whatever its outcome, and ticks at once when the load
@@ -367,6 +373,7 @@ export async function runServe(argv: string[]): Promise<number> {
             if (closing !== undefined) return;
             poller = createPoller({
               runtime: serving,
+              bundle: config.id,
               source: () => gitSource,
               intervalMs: config.serve.pullIntervalMs,
               log,
@@ -385,9 +392,9 @@ export async function runServe(argv: string[]): Promise<number> {
         },
       };
       log.info("serve.start", {
-        company: network.network,
-        source: described,
-        dev: config.serve.dev,
+        network: network.network,
+        form: network.form,
+        bundles: network.bundles.map((bundle) => bundle.id),
         node: process.versions.node,
         configRule: found.rule,
         ...(root.note === undefined ? {} : { note: root.note }),

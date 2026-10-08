@@ -206,7 +206,13 @@ export type RefusalRule =
   | "oversize"
   | "too-many-files"
   | "tree-too-large"
-  | "bundle-path-missing";
+  | "bundle-path-missing"
+  /**
+   * The bundle could not be loaded at the network's first load while another bundle could (its source threw: a
+   * folder that is gone, a repository that cannot be fetched; or its index could not be written): it is published
+   * as refused, so the network serves the others (D75). Never a loader's rule; the detail is the failure's sentence.
+   */
+  | "load-failed";
 
 export interface Refusal {
   path: string;
@@ -300,6 +306,8 @@ export interface LoadOptions {
 export interface Report {
   loadedAt: Date;
   commit?: string;
+  /** The manifest's `published_at`, as written, when the manifest was read (D74); never the git fetch time. */
+  publishedAt?: string;
   /** A bundle-level refusal; when set, nothing should be served. */
   fatal?: Refusal;
   /** Whether the manifest was verified against the files, or integrity was not required. */

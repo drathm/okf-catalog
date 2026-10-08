@@ -48,7 +48,7 @@ function ancestors(folder: string): string[] {
  * leave the catalog empty. A page that fails to parse for any reason is a refusal, never an exception.
  */
 export function loadBundle(
-  company: string,
+  bundle: string,
   files: BundleFile[],
   options: LoadOptions,
   now: Date,
@@ -74,7 +74,7 @@ export function loadBundle(
   const empty = (fatal: Refusal): LoadResult => {
     report.fatal = fatal;
     return {
-      catalog: buildCatalog({ company, loadedAt: now, pages: new Map(), folders: new Map() }),
+      catalog: buildCatalog({ bundle, loadedAt: now, pages: new Map(), folders: new Map() }),
       report,
     };
   };
@@ -157,6 +157,7 @@ export function loadBundle(
   }
   if (manifest !== undefined) {
     report.commit = manifest.commit;
+    report.publishedAt = manifest.published_at;
     if (options.integrity === "require-manifest") {
       for (const problem of verifyManifest(manifest, sorted, presentButUnread)) {
         if (problem.problem === "missing-on-disk") report.missingOnDisk.push(problem.path);
@@ -384,7 +385,7 @@ export function loadBundle(
   const pageMap = new Map<PagePath, Page>(admitted.map((p) => [p.path, p]));
   const okfVersion = reserved.get("index.md")?.okfVersion;
   const input: Parameters<typeof buildCatalog>[0] = {
-    company,
+    bundle,
     loadedAt: now,
     pages: pageMap,
     folders,

@@ -14,7 +14,13 @@ import {
 } from "./graph.js";
 import type { Catalog } from "./model.js";
 import { type DatedWindow, type EffectiveWindow, provenanceOf } from "./provenance.js";
-import type { Generation, RuntimeStatus, ToolOptions } from "./runtime.js";
+import type {
+  BundleRuntimeStatus,
+  Generation,
+  LockOwnerStatus,
+  RuntimeStatus,
+  ToolOptions,
+} from "./runtime.js";
 import {
   citationsHeader,
   claimLine,
@@ -825,9 +831,13 @@ const capped = <T>(items: readonly T[]): { count: number; first: T[] } => ({
   first: items.slice(0, STATUS_LIST_CAP),
 });
 
+/** What the status projection reads of the runtime: the network's lock and refusal, and the bundle's attempts and poller. */
+export type StatusFacts = Omit<RuntimeStatus, "bundles" | "loaded"> &
+  Partial<Omit<BundleRuntimeStatus, "id">> & { lockOwner?: LockOwnerStatus | null };
+
 export function projectStatus(
   generation: Generation,
-  runtime: RuntimeStatus,
+  runtime: StatusFacts,
   options: ToolOptions,
   now: Date,
 ): StatusOutput {

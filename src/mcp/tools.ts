@@ -25,7 +25,7 @@ import {
   walkText,
 } from "../catalog/outputs.js";
 import { type Found, resolvePageName } from "../catalog/resolve.js";
-import type { Generation, Runtime, ToolOptions } from "../catalog/runtime.js";
+import type { Generation, Network, Runtime, ToolOptions } from "../catalog/runtime.js";
 import { cutEscaped, DATA_SENTENCE, printed, safe } from "../catalog/text.js";
 import type { Log } from "../log.js";
 import type { Engine } from "../search/engine.js";
@@ -123,7 +123,7 @@ const PAGE_NAME = z
  */
 function resolveName(generation: Generation, value: string): Found | ToolResult {
   const resolution = resolvePageName(
-    [{ bundle: generation.catalog.company, catalog: generation.catalog }],
+    [{ bundle: generation.catalog.bundle, catalog: generation.catalog }],
     value,
   );
   if (resolution.ok) return resolution.found;
@@ -186,8 +186,8 @@ export function registerTools(
       const refusing = runtime.status().refusing;
       if (refusing !== undefined) return fail(refusingSentence(refusing));
       try {
-        const { logFields, ...result } = await runtime.lease<ToolResult>(
-          async (generation, engine) => fn(args, generation, engine),
+        const { logFields, ...result } = await runtime.lease<ToolResult>(async (network, engine) =>
+          fn(args, (network.bundles[0] as Network["bundles"][number]).generation, engine),
         );
         const hits = (result.structuredContent as { hits?: unknown[] } | undefined)?.hits?.length;
         log?.info("tool.call", {
@@ -504,7 +504,13 @@ export function registerTools(
       annotations: { readOnlyHint: true },
     },
     guarded("status", (_args, generation) => {
-      const output = projectStatus(generation, runtime.status(), options, clock());
+      const status = runtime.status();
+      const output = projectStatus(
+        generation,
+        { ...status, ...status.bundles[0] },
+        options,
+        clock(),
+      );
       return ok(statusSummary(output), output);
     }),
   );
