@@ -127,6 +127,7 @@ const quotedSource = (text: string): string => quotedCut(text, HEADER_CAP);
  * with an ellipsis after the closing quote when cut.
  */
 function quotedCut(text: string, cap: number): string {
+  if (!Number.isFinite(cap)) return quoted(text);
   const { kept, cut } = cutEscaped(collapse(text), cap);
   return `"${escapeQuotes(kept)}"${cut ? "…" : ""}`;
 }

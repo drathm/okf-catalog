@@ -501,12 +501,16 @@ const HEADER_FIELD_CAP = 200;
 /** A value cut at the field cap with an ellipsis. */
 export const capField = (value: string): string => ellipsised(value, FIELD_CAP);
 
-/** A copy of a row with the named string fields cut at the field cap; absent fields stay absent. */
-function capFields<T extends object, K extends keyof T>(row: T, keys: readonly K[]): T {
+/** A copy of a row with the named string fields cut at `cap`, the field cap unless said; absent fields stay absent. */
+function capFields<T extends object, K extends keyof T>(
+  row: T,
+  keys: readonly K[],
+  cap: number = FIELD_CAP,
+): T {
   const out = { ...row };
   for (const key of keys) {
     const value = out[key];
-    if (typeof value === "string") out[key] = capField(value) as T[K];
+    if (typeof value === "string") out[key] = ellipsised(value, cap) as T[K];
   }
   return out;
 }
@@ -548,24 +552,15 @@ function latestVerified<T>(page: Page, entries: readonly T[]): T[] {
  */
 function projectProvenance(page: Page, now: Date, cap: number): ProjectedProvenance {
   const { sources, usageWindow, contract, timestamp, ...rest } = provenanceOf(page, now);
-  const cut = (value: string): string => ellipsised(value, cap);
-  const capped = <T extends object, K extends keyof T>(row: T, keys: readonly K[]): T => {
-    const out = { ...row };
-    for (const key of keys) {
-      const value = out[key];
-      if (typeof value === "string") out[key] = cut(value) as T[K];
-    }
-    return out;
-  };
+  const capped = <T extends object, K extends keyof T>(row: T, keys: readonly K[]): T =>
+    capFields(row, keys, cap);
   const projected: ProjectedProvenance = {
     ...capped(rest, ["path", "title", "type", "status", "resource", "replacement"]),
     ...(rest.generated === undefined ? {} : { generated: capped(rest.generated, ["by", "at"]) }),
     ...(rest.latestVerification === undefined
       ? {}
       : { latestVerification: capped(rest.latestVerification, ["by", "at"]) }),
-    ...(rest.staleAfter === undefined
-      ? {}
-      : { staleAfter: { ...rest.staleAfter, raw: cut(rest.staleAfter.raw) } }),
+    ...(rest.staleAfter === undefined ? {} : { staleAfter: capped(rest.staleAfter, ["raw"]) }),
     // Each row's page-written values cut too, so one long value never crowds out the rest (B-I-A3).
     verified: latestVerified(page, rest.verified).map((v) => capped(v, ["by", "at"])),
     sources: sources.map(({ effectiveWindow, usageWindow: own, ...source }) => ({

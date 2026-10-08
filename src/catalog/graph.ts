@@ -350,7 +350,7 @@ function walkEdge(edge: PathEdge, page: Page): WalkEdge {
  * fields, and does not expand it; an edge to the page itself or an ancestor on its branch is a cycle, recorded
  * and not followed; an edge to a page this page's earlier edge entered says it is listed twice. `depth` (0 to 8)
  * counts the concepts entered on a branch; a branch it stops is `atDepthLimit`.
- * At most 200 concepts are entered, then the walk is `capped`. Each page carries its trust tier and recheck date;
+ * At most 200 concepts are entered, then the walk is `capped`. Each page carries its status, trust tier and recheck date;
  * `usage_count` is returned and orders nothing. Nothing is fetched, opened or run.
  */
 export function walkProvenance(catalog: Catalog, start: Page, depth: number, now: Date): Walk {
