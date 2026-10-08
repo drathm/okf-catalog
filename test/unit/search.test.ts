@@ -749,6 +749,43 @@ describe("search: the filters (issue 4)", () => {
     expect(small.filtersExhausted).toBe(false);
   });
 
+  it("sets filtersExhausted and topicExhausted only when the engine had more past the cap (build review A-A4)", async () => {
+    // n pages hold kiwi in their bodies; one page without it carries the tag and the status and sits in folder q,
+    // whose one-letter name adds no token to the query.
+    const kiwis = (n: number): Catalog =>
+      catalogOf([
+        ...Array.from({ length: n }, (_, i) => ({
+          path: `p/p${String(i).padStart(4, "0")}.md`,
+          body: `${"kiwi ".repeat((i % 7) + 1)}filler${i}`,
+        })),
+        {
+          path: "q/tagged.md",
+          front: "tags: [rare]\nstatus: deprecated\n",
+          body: "unrelated words",
+        },
+      ]);
+    const run = (catalog: Catalog, patch: Partial<Parameters<typeof search>[2]>) =>
+      search(catalog, fakeEngine(catalog), request("kiwi", { includeStale: true, ...patch }), NOW);
+    // 300 matches: the pool is raised to the cap, but the engine runs out under it, so every match was examined.
+    const ran = kiwis(300);
+    for (const patch of [{ tags: ["rare"] }, { status: "deprecated" }, { topic: "q" }]) {
+      const r = await run(ran, patch);
+      expect(r.pool, JSON.stringify(patch)).toBe(500);
+      expect(r.considered, JSON.stringify(patch)).toBe(300);
+      expect(r.hits, JSON.stringify(patch)).toEqual([]);
+      expect(r.filtersExhausted, JSON.stringify(patch)).toBe(false);
+      expect(r.topicExhausted, JSON.stringify(patch)).toBe(false);
+    }
+    // 700 matches: the engine had more past the cap, so a matching page may sit there.
+    const full = kiwis(700);
+    for (const patch of [{ tags: ["rare"] }, { status: "deprecated" }, { topic: "q" }]) {
+      const r = await run(full, patch);
+      expect(r.pool, JSON.stringify(patch)).toBe(500);
+      expect(r.filtersExhausted, JSON.stringify(patch)).toBe(true);
+      expect(r.topicExhausted, JSON.stringify(patch)).toBe("topic" in patch);
+    }
+  });
+
   it("carries all seven counts on every return", async () => {
     const seven = ["stale", "status", "tag", "topic", "trust", "type", "unknown"];
     const none = await search(base, fakeEngine(base), request("the of and"), NOW);
