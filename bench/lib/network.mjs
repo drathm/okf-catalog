@@ -137,7 +137,7 @@ export function renderNetworkNote(result) {
     "",
     "## Each folder alone against the network",
     "",
-    "The measurement D-D accepts and asks for. Each question is asked of its gold page's folder indexed alone, a store of its own holding that bundle only, and of the network, the four folders' bundles in one store: the gold page's rank and score alone are paired with its rank and score among every bundle's pages. The network columns count the questions whose gold rank is better, worse or the same there; the last column counts, of the answers that found the gold page in both runs, those that gave it another score.",
+    "The measurement D-D asks for: the shift it accepts when other bundles join a bundle's index. Each question is asked of its gold page's folder indexed alone, a store of its own holding that bundle only, and of the network, the four folders' bundles in one store: the gold page's rank and score alone are paired with its rank and score among every bundle's pages. The network columns count the questions whose gold rank is better, worse or the same there; the last column counts, of the answers that found the gold page in both runs, those that gave it another score. A score moves for one reason, the statistics the bundles share (the page's `filepath` is `<id>/<path>` in both stores); a rank moves for that reason and a second, which this pairing does not separate: the other bundles' pages compete for the first five.",
     "",
     "| Configuration | alone hit@1 | hit@3 | MRR@5 | network hit@1 | hit@3 | MRR@5 | network better | worse | same | gold score changed |",
     "|---|---|---|---|---|---|---|---|---|---|---|",

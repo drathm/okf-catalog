@@ -179,6 +179,13 @@ describe("the network measurement's arithmetic (bench/lib/network.mjs)", () => {
       "| question/relaxed | 12/25 | 15/25 | 0.50 | 10/25 | 15/25 | 0.50 | 0 | 2 | 23 | 17 of 20 |",
     );
     expect(note.slice(alone, split)).toContain("Q3: 1 → 2; Q9: 4 → miss");
+    // What moves a score, and what moves a rank besides, which the pairing does not separate.
+    expect(note.slice(alone, split)).toContain(
+      "A score moves for one reason, the statistics the bundles share",
+    );
+    expect(note.slice(alone, split)).toContain(
+      "the other bundles' pages compete for the first five",
+    );
     // The split pairing says what it is: the same pages, which no statistic of the table tells apart.
     expect(note.slice(split)).toContain("near no-op by construction");
     expect(note.slice(split)).toContain(
