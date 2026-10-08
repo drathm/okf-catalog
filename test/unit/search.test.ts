@@ -507,14 +507,14 @@ describe("search: the readiness ledger (D59)", () => {
 // Issue 4 (D64): tag, status and trust filters, applied after the engine returns, in the order unknown, type, topic,
 // tag, status, trust, stale; nothing is added to either rung; every return carries seven counts.
 describe("search: the filters (issue 4)", () => {
-  type Spec = { path: string; front?: string; body?: string };
+  type Spec = { path: string; front?: string; body?: string; type?: string };
   const catalogOf = (specs: Spec[], admit = ["stable", "deprecated"]): Catalog =>
     loadBundle(
       "f",
       specs.map((s) => ({
         path: s.path,
         bytes: Buffer.from(
-          `---\ntype: Note\ntitle: ${s.path}\ndescription: A page.\n${s.front ?? ""}---\n\n${s.body ?? "quokka"}\n`,
+          `---\ntype: ${s.type ?? "Note"}\ntitle: ${s.path}\ndescription: A page.\n${s.front ?? ""}---\n\n${s.body ?? "quokka"}\n`,
         ),
       })),
       {
@@ -538,17 +538,23 @@ describe("search: the filters (issue 4)", () => {
       { path: "list-one.md", front: "tags: [1]\n" },
       { path: "lone-one.md", front: "tags: 1\n" },
       { path: "short.md", front: "tags: [x, the]\n" },
+      // One of two requested tags is not enough (build review A-B1); a stored tag in mixed case is lower-cased
+      // before the comparison, as the request is (A-B4).
+      { path: "finance-only.md", front: "tags: [finance]\n" },
+      { path: "mixed.md", front: "tags: [Data-Mesh]\n" },
     ]);
     const run = (tags: string[]) =>
       search(catalog, fakeEngine(catalog), request("quokka", { tags, limit: 25 }), NOW);
     const ml = await run(["Machine-Learning"]);
     expect(paths(ml)).toEqual(["ml.md"]);
-    expect(ml.filteredOut.tag).toBe(7);
+    expect(ml.filteredOut.tag).toBe(9);
     expect(paths(await run(["machine"]))).toEqual([]);
     expect(paths(await run(["learning"]))).toEqual([]);
     expect(paths(await run(["finance", "revenue"]))).toEqual(["two-tags.md"]);
     expect(paths(await run(["finance revenue"]))).toEqual(["one-tag.md"]);
-    expect(paths(await run(["finance", "FINANCE"]))).toEqual(["two-tags.md"]);
+    expect(paths(await run(["finance", "FINANCE"]))).toEqual(["finance-only.md", "two-tags.md"]);
+    expect(paths(await run(["data-mesh"]))).toEqual(["mixed.md"]);
+    expect(paths(await run(["DATA-MESH"]))).toEqual(["mixed.md"]);
     expect(paths(await run(["1"]))).toEqual(["list-one.md"]);
     expect(paths(await run(["x"]))).toEqual(["short.md"]);
     expect(paths(await run(["the"]))).toEqual(["short.md"]);
@@ -670,6 +676,78 @@ describe("search: the filters (issue 4)", () => {
     });
   });
 
+  it("pins D64's whole order with pages that fail two checks at once (build review I-B2, A-B2)", async () => {
+    const verified = "verified: { by: 'process:x', at: 2026-01-01T00:00:00Z }\n";
+    const overdue = "stale_after: 2000-01-01\n";
+    const catalog = catalogOf([
+      // Each page fails the two adjacent checks its name gives, and is counted under the first.
+      { path: "elsewhere/type-topic.md", type: "Widget", front: "tags: [kept]\n" },
+      { path: "elsewhere/topic-tag.md" },
+      { path: "notes/tag-status.md", front: "status: deprecated\n" },
+      { path: "notes/status-trust.md", front: "tags: [kept]\nstatus: deprecated\n" },
+      { path: "notes/trust-stale.md", front: `tags: [kept]\n${overdue}` },
+      { path: "notes/stale.md", front: `tags: [kept]\n${verified}${overdue}` },
+      { path: "notes/kept.md", front: `tags: [kept]\n${verified}` },
+    ]);
+    // The engine returns every row whatever the terms, a path the catalog does not hold first.
+    const everything: Engine = {
+      ...fakeEngine(catalog),
+      async lex(_terms, limit) {
+        return ["ghost/gone.md", ...catalog.pages.keys()]
+          .map((path) => ({ path, bm25: 1, score: 0.5 }))
+          .slice(0, limit);
+      },
+    };
+    const r = await search(
+      catalog,
+      everything,
+      request("quokka", {
+        type: "Note",
+        topic: "notes",
+        tags: ["kept"],
+        status: "stable",
+        minTrust: "machine-confirmed",
+        includeStale: false,
+        limit: 25,
+      }),
+      NOW,
+    );
+    expect(paths(r)).toEqual(["notes/kept.md"]);
+    expect(r.filteredOut).toEqual({
+      type: 1,
+      topic: 1,
+      tag: 1,
+      status: 1,
+      trust: 1,
+      stale: 1,
+      unknown: 1,
+    });
+  });
+
+  it("never sends a filter value on the relaxed rung either, query by query (build review I-B3)", async () => {
+    // No page holds both words, so the first rung comes back short and the relaxed rung asks for each word alone.
+    const catalog = catalogOf([
+      { path: "notes/a.md", front: "tags: [zebra]\n", body: "quokka" },
+      { path: "notes/b.md", body: "wombat" },
+    ]);
+    const engine = fakeEngine(catalog);
+    await search(
+      catalog,
+      engine,
+      request("quokka wombat", {
+        type: "Note",
+        topic: "notes",
+        tags: ["zebra"],
+        status: "stable",
+        minTrust: "machine-confirmed",
+        includeStale: false,
+      }),
+      NOW,
+    );
+    // Type and topic add their words to the first rung only; nothing else reaches the engine on either rung.
+    expect(engine.queries).toEqual([["quokka", "wombat", "notes", "note"], ["quokka"], ["wombat"]]);
+  });
+
   /** 600 pages that answer `common word` with distinct scores, and two tagged ones that rank last. */
   const wide = (): Catalog =>
     catalogOf([
@@ -747,6 +825,51 @@ describe("search: the filters (issue 4)", () => {
       NOW,
     );
     expect(small.filtersExhausted).toBe(false);
+  });
+
+  it("counts each of the six filters as restrictive (build review I-B1, A-B3)", async () => {
+    // #4: a type, a topic, a tag, a status, a min_trust above unverified, or fresh. Each, alone, leaves the answer
+    // short at the cap while the engine had more, and must say so; without a filter, nothing is said.
+    const many = (patch: { type?: string; front?: string; body?: string }): Catalog =>
+      catalogOf([
+        ...Array.from({ length: 600 }, (_, i) => ({
+          path: `a/p${String(i).padStart(3, "0")}.md`,
+          body: `${"common word ".repeat(i + 3)}${patch.body ?? ""}`,
+          ...(patch.front === undefined ? {} : { front: patch.front }),
+        })),
+        { path: "z/w1.md", type: "Widget", body: "common word" },
+        { path: "z/w2.md", type: "Widget", body: "common word common word" },
+      ]);
+    const plain = many({});
+    // The Note pages say widget in their bodies, so the type's word does not narrow the query to the Widgets.
+    const widgets = many({ body: " widget" });
+    const overdue = many({ front: "stale_after: 2000-01-01\n" });
+    const cases: Array<[string, Catalog, Partial<Parameters<typeof search>[2]>]> = [
+      ["type", widgets, { type: "Widget" }],
+      ["topic", plain, { topic: "z" }],
+      ["tag", plain, { tags: ["rare"] }],
+      ["status", plain, { status: "deprecated" }],
+      ["min_trust", plain, { minTrust: "machine-confirmed" }],
+      ["fresh", overdue, { includeStale: false }],
+    ];
+    for (const [kind, catalog, patch] of cases) {
+      const r = await search(
+        catalog,
+        fakeEngine(catalog),
+        request("common word", { includeStale: true, ...patch }),
+        NOW,
+      );
+      expect(r.pool, kind).toBe(500);
+      expect(r.hits.length, kind).toBeLessThan(8);
+      expect(r.filtersExhausted, kind).toBe(true);
+    }
+    const open = await search(
+      plain,
+      fakeEngine(plain),
+      request("common word", { includeStale: true }),
+      NOW,
+    );
+    expect(open.filtersExhausted).toBe(false);
   });
 
   it("sets filtersExhausted and topicExhausted only when the engine had more past the cap (build review A-A4)", async () => {
