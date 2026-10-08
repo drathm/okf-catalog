@@ -1931,3 +1931,76 @@ describe("a bundle's own status within the result budget (D82)", () => {
     }
   });
 });
+
+// Bite c's verification: status with a bundle that serves nothing of a load of its own (its first load failed or has
+// not landed, or its index is broken) printed version 0's line for it, "integrity checked … loaded null"; the
+// network's row already names the state instead (C-A-D3).
+describe("a bundle's own status when it serves nothing of its own load (C-A-D3)", () => {
+  it("names the bundle's state and why, its lock, poller and attempts, never its counts or a load time", () => {
+    for (const [rule, detail] of [
+      ["loading", "the bundle's first load has not finished; it is served when it lands"],
+      ["load-failed", "the bundle folder ./b1 does not exist or cannot be read"],
+      [
+        "index-broken",
+        "the index could not be brought in line with this bundle's pages; it is tried again at the bundle's next poll, and the log has the detail",
+      ],
+    ] as const) {
+      const standing = loadBundle(
+        "b1",
+        [],
+        {
+          admit: ["stable", "deprecated"],
+          dev: false,
+          integrity: "require-manifest",
+          specText: "2026-08-15",
+          caps: DEFAULT_CAPS,
+          walkFatal: { path: "", rule, detail },
+        },
+        NOW,
+      );
+      const of: Generation = {
+        ...generation,
+        ...standing,
+        index: { ...generation.index, documents: 0 },
+      };
+      const out = projectStatus(
+        {
+          bundles: [
+            { id: "b1", generation: of },
+            { id: "b2", generation },
+          ],
+        },
+        {
+          lock: "exclusive",
+          loaded: true,
+          bundles: [
+            {
+              id: "b1",
+              loaded: rule !== "loading",
+              fatal: true,
+              lastAttempt: { at: NOW, outcome: "failed" },
+              poller: { intervalMs: 600_000 },
+            },
+            { id: "b2", loaded: true, fatal: false },
+          ],
+        },
+        {
+          network: "acme",
+          bundles: [
+            { id: "b1", source: "git@example.test:acme/b1.git", sourceKind: "git" as const },
+            { id: "b2", source: "./b2", sourceKind: "local" as const },
+          ],
+          limitDefault: 8,
+          resultBudget: RESULT_BUDGET,
+        },
+        NOW,
+        "b1",
+      );
+      if ("network" in out) throw new Error("expected one bundle's shape");
+      expect(out.loadedAt, rule).toBeNull();
+      expect(statusSummary(out), rule).toBe(
+        `b1: ${rule}: ${detail}; lock exclusive; poller every 600 s, no tick yet; last attempt failed at ${NOW.toISOString()}`,
+      );
+    }
+  });
+});

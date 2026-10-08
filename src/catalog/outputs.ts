@@ -1468,9 +1468,22 @@ export function statusSummary(out: StatusOutput): string {
         : []),
     ].join("\n");
   }
-  const parts = bundleParts(out.bundle ?? out.company, out, lockPart(out));
+  const name = out.bundle ?? out.company;
+  const state = runtimeStateOf(out.fatal);
+  // A bundle that serves nothing of a load of its own, asked for by name, reads as its row does (C-A-D3).
+  const [head, ...rest] =
+    state === undefined
+      ? bundleParts(name, out, lockPart(out))
+      : standingParts({ ...out, id: name, state });
+  const parts = state === undefined ? [head, ...rest] : [head, lockPart(out), ...rest];
   if (out.refusing !== null) parts.push(`refusing: ${safe(out.refusing)}`);
   return parts.join("; ");
+}
+
+/** The runtime's own state a bundle's refusal names, when it is one (a first load that threw or has not landed, a broken index). */
+function runtimeStateOf(fatal: { rule: string } | null): ServingState | undefined {
+  const rule = fatal?.rule;
+  return rule === "load-failed" || rule === "index-broken" || rule === "loading" ? rule : undefined;
 }
 
 /** The room the network's catalog gives one bundle's root index: the longest cut whose line and string fit the share. */

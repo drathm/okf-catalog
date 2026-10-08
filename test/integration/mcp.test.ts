@@ -1802,6 +1802,10 @@ describe("a network of bundles (D74)", () => {
     const lines = text(status).split("\n");
     expect(lines[0]).toMatch(/^network acme: 2 bundles, 1 served, 1 loading; /);
     expect(lines[2]).toBe(`b: loading: ${STILL}`);
+    // Asked by name, the bundle's own status names its state as its row does, never "loaded null" (C-A-D3).
+    expect(text(await s.call("status", { bundle: "b" }))).toBe(
+      `b: loading: ${STILL}; lock exclusive`,
+    );
   });
 
   it("answers status with a row per bundle while the network refuses, and every other tool with the refusal (C-I-C1)", async () => {
