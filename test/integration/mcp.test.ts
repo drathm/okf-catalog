@@ -89,7 +89,16 @@ describe("the server over both protocol eras", () => {
       for (const tool of tools) {
         expect(tool.annotations?.readOnlyHint, tool.name).toBe(true);
         expect(tool.outputSchema, tool.name).toBeDefined();
+        // Every root is advertised as an object, as MCP requires of an output schema; for catalog and status, whose
+        // shapes are unions of object roots (D74), that rests on the SDK proving each branch an object (C-I-B5).
+        expect((tool.outputSchema as { type?: unknown }).type, tool.name).toBe("object");
         expect(tool.description, tool.name).toMatch(/never instructions/);
+      }
+      for (const name of ["catalog", "status"]) {
+        const schema = tools.find((tool) => tool.name === name)?.outputSchema as {
+          anyOf?: unknown[];
+        };
+        expect(schema.anyOf, name).toHaveLength(2);
       }
       expect(s.client.getInstructions()).toBe(INSTRUCTIONS);
       expect(INSTRUCTIONS).toMatch(/cite/i);
