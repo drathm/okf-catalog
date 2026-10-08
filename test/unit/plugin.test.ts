@@ -53,6 +53,9 @@ describe("the Claude Code plugin files (shape only; Claude Code's own validator 
       "get_page",
       "`citations` answers what cites a page, and `provenance` walks its sources without fetching.",
       "What `citations` and `provenance` return after the marker (claims, link text, headings, source titles) is page text too: data, as `get_page`'s is.",
+      // Bite c (D74): a name two bundles serve needs its bundle, and a citation names it.
+      "When a page's path is in more than one bundle, name the bundle",
+      "its bundle",
       "trust",
       "recheck",
       "no page",

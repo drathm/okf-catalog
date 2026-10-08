@@ -855,11 +855,11 @@ describe("get_page and the concept id (R7)", () => {
     if (getPage === undefined) throw new Error("get_page is not listed");
     const properties = getPage.inputSchema.properties as Record<string, { description?: string }>;
     expect(properties.path?.description).toMatch(
-      /names each page with its bundle, and a name that means it alone in its bundle where there is one, to ask for with that bundle\.$/,
+      /names each page, with its bundle when the server serves more than one, and a name that means it alone in its bundle where there is one, to ask for with that bundle\.$/,
     );
     expect(properties.bundle?.description).toMatch(/needed when two bundles serve the name/);
     expect(getPage.description).toMatch(
-      /a name two bundles serve.*is an error naming each page with its bundle/,
+      /a name two bundles serve.*is an error naming each page \(with its bundle when the server serves more than one\)/,
     );
     const miss = await s.call("get_page", { path: "guides/b" });
     expect(miss.isError).toBe(true);

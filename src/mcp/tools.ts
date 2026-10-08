@@ -185,7 +185,7 @@ const PAGE_NAME = z
   .min(1)
   .max(1024)
   .describe(
-    "The page's path in its bundle, as a search result or a catalog lists it, or its concept id (the path without .md). A name is ambiguous when two bundles serve it, or, in one bundle, when a sibling page X.md.md exists, X.md being that page's concept id too; the error then names each page with its bundle, and a name that means it alone in its bundle where there is one, to ask for with that bundle.",
+    "The page's path in its bundle, as a search result or a catalog lists it, or its concept id (the path without .md). A name is ambiguous when two bundles serve it, or, in one bundle, when a sibling page X.md.md exists, X.md being that page's concept id too; the error then names each page, with its bundle when the server serves more than one, and a name that means it alone in its bundle where there is one, to ask for with that bundle.",
   );
 
 /** The bundle a name-taking tool reads alone: the id a hit, a catalog or an ambiguity error names (D74). */
@@ -474,7 +474,7 @@ export function registerTools(
     {
       title: "Read a page",
       description: describeType(
-        "Returns one page whole, with its provenance header first: path, type, status, trust tier, verifier, recheck date and deprecation. Takes the path, or the concept id (the path without .md), and the bundle when more than one bundle serves the name: a name two bundles serve, or that is one page's path and another's concept id, is an error naming each page with its bundle and a name to ask for with that bundle. Reserved files (index.md, log.md) are served too. A long page is cut at the result budget and says where to continue.",
+        "Returns one page whole, with its provenance header first: path, type, status, trust tier, verifier, recheck date and deprecation. Takes the path, or the concept id (the path without .md), and the bundle when more than one bundle serves the name: a name two bundles serve, or that is one page's path and another's concept id, is an error naming each page (with its bundle when the server serves more than one) and a name to ask for with that bundle. Reserved files (index.md, log.md) are served too. A long page is cut at the result budget and says where to continue.",
       ),
       inputSchema: z.strictObject({
         path: PAGE_NAME,
