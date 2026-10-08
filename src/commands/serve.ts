@@ -296,7 +296,7 @@ export async function runServe(argv: string[]): Promise<number> {
           let result: PrepareResult;
           // Imported here, after stdout is reserved, so nothing the engine's modules do at load can reach the channel.
           const { QmdEngine } = await import("../engine/qmd.js");
-          const engine = await QmdEngine.open({ company: config.company, dir: work });
+          const engine = await QmdEngine.open({ bundles: [config.company], dir: work });
           if (engine.resetOnOpen !== undefined)
             log.warn("engine.reset", { detail: engine.resetOnOpen });
           result = {

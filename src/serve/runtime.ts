@@ -219,13 +219,13 @@ export function createRuntime(deps: RuntimeDeps): ServingRuntime {
       await whenDrained();
       let index: IndexResult;
       try {
-        index = await live.index(prepared.docs);
+        index = await live.index(deps.company, prepared.docs);
       } catch (error) {
         // The engine may now hold the new tree while the old catalog stays served: put them back together. If
         // that fails too, nothing may be served until a refresh succeeds (D39).
         if (current !== undefined) {
           try {
-            await live.index([...current.catalog.pages.values()].map(deriveDocument));
+            await live.index(deps.company, [...current.catalog.pages.values()].map(deriveDocument));
           } catch (again) {
             refusing = `the index could not be re-aligned with the served pages after a failed refresh (${(again as Error).message}); nothing is served until a refresh succeeds`;
           }

@@ -52,9 +52,13 @@ export function fakeEngine(catalog: Catalog): Engine {
           if (n === 0) all = false;
           bm25 += n * weight(term);
         }
-        if (all && terms.length > 0) hits.push({ path, bm25, score: bm25 / (1 + bm25) });
+        if (all && terms.length > 0)
+          hits.push({ bundle: catalog.company, path, bm25, score: bm25 / (1 + bm25) });
       }
       return hits.sort((a, b) => b.bm25 - a.bm25 || (a.path < b.path ? -1 : 1)).slice(0, limit);
+    },
+    async drop(): Promise<IndexResult> {
+      return EMPTY_INDEX;
     },
     async status() {
       return { documents: texts.size };

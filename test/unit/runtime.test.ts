@@ -55,7 +55,7 @@ function countingEngine(slowLexMs = 0): Engine & {
     failNext: false,
     failAgain: false,
     docs: [] as string[],
-    async index(docs: Parameters<Engine["index"]>[0]): Promise<IndexResult> {
+    async index(_bundle: string, docs: Parameters<Engine["index"]>[1]): Promise<IndexResult> {
       state.indexCalls += 1;
       if (state.failNext) {
         state.failNext = state.failAgain;
@@ -95,9 +95,13 @@ function countingEngine(slowLexMs = 0): Engine & {
           if (n === 0) all = false;
           bm25 += n;
         }
-        if (all && terms.length > 0) hits.push({ path, bm25, score: bm25 / (1 + bm25) });
+        if (all && terms.length > 0)
+          hits.push({ bundle: "b", path, bm25, score: bm25 / (1 + bm25) });
       }
       return hits.sort((a, b) => b.bm25 - a.bm25 || (a.path < b.path ? -1 : 1)).slice(0, limit);
+    },
+    async drop(bundle: string): Promise<IndexResult> {
+      return state.index(bundle, []);
     },
     async status() {
       return { documents: state.docs.length };

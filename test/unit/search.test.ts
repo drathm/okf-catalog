@@ -60,9 +60,13 @@ function fakeEngine(
           if (n === 0) all = false;
           bm25 += n * weight(term);
         }
-        if (all && terms.length > 0) hits.push({ path, bm25, score: bm25 / (1 + bm25) });
+        if (all && terms.length > 0)
+          hits.push({ bundle: catalog.company, path, bm25, score: bm25 / (1 + bm25) });
       }
       return hits.sort((a, b) => b.bm25 - a.bm25 || (a.path < b.path ? -1 : 1)).slice(0, limit);
+    },
+    async drop(): Promise<IndexResult> {
+      return this.index("", []);
     },
     async status() {
       return { documents: texts.size };
@@ -233,10 +237,13 @@ describe("search: ties at the engine's cut", () => {
         const start = calls++ % tied.length;
         const rotated = [...tied.slice(start), ...tied.slice(0, start)];
         const rows = [
-          ...rotated.map((path) => ({ path, bm25: 5, score: 5 / 6 })),
-          { path: tail, bm25: 1, score: 0.5 },
+          ...rotated.map((path) => ({ bundle: "b", path, bm25: 5, score: 5 / 6 })),
+          { bundle: "b", path: tail, bm25: 1, score: 0.5 },
         ];
         return rows.slice(0, limit);
+      },
+      async drop(): Promise<IndexResult> {
+        return this.index("", []);
       },
       async status() {
         return { documents: tied.length + 1 };
@@ -413,10 +420,14 @@ describe("search: frequency floor, limits and filters (bite 3 build review)", ()
       },
       async lex(terms) {
         if (terms.length !== 1) return [];
-        if (terms[0] === "alpha") return [{ path: p1, bm25: 100, score: 100 / 101 }];
-        if (terms[0] === "beta") return [{ path: p2, bm25: 0.5, score: 0.5 / 1.5 }];
-        if (terms[0] === "ghost") return [{ path: "nowhere/ghost.md", bm25: 3, score: 0.75 }];
+        if (terms[0] === "alpha") return [{ bundle: "b", path: p1, bm25: 100, score: 100 / 101 }];
+        if (terms[0] === "beta") return [{ bundle: "b", path: p2, bm25: 0.5, score: 0.5 / 1.5 }];
+        if (terms[0] === "ghost")
+          return [{ bundle: "b", path: "nowhere/ghost.md", bm25: 3, score: 0.75 }];
         return [];
+      },
+      async drop() {
+        return empty;
       },
       async status() {
         return { documents: 0 };
@@ -456,12 +467,20 @@ describe("search: the readiness ledger (D59)", () => {
     async lex(_terms, limit) {
       return rows.slice(0, limit);
     },
+    async drop(): Promise<IndexResult> {
+      return this.index("", []);
+    },
     async status() {
       return { documents: rows.length };
     },
     async close() {},
   });
-  const row = (path: string, bm25: number): EngineHit => ({ path, bm25, score: bm25 / (1 + bm25) });
+  const row = (path: string, bm25: number): EngineHit => ({
+    bundle: "b",
+    path,
+    bm25,
+    score: bm25 / (1 + bm25),
+  });
 
   it("orders by trust only within 1e-9 of the score", async () => {
     expect(base.pages.get("terms/alpha.md")?.trust).toBe("human-reviewed");
@@ -654,7 +673,7 @@ describe("search: the filters (issue 4)", () => {
       ...fakeEngine(catalog),
       async lex(_terms, limit) {
         return [...catalog.pages.keys()]
-          .map((path) => ({ path, bm25: 1, score: 0.5 }))
+          .map((path) => ({ bundle: "f", path, bm25: 1, score: 0.5 }))
           .slice(0, limit);
       },
     };
@@ -694,7 +713,7 @@ describe("search: the filters (issue 4)", () => {
       ...fakeEngine(catalog),
       async lex(_terms, limit) {
         return ["ghost/gone.md", ...catalog.pages.keys()]
-          .map((path) => ({ path, bm25: 1, score: 0.5 }))
+          .map((path) => ({ bundle: "f", path, bm25: 1, score: 0.5 }))
           .slice(0, limit);
       },
     };
@@ -801,6 +820,7 @@ describe("search: the filters (issue 4)", () => {
       ...fakeEngine(catalog),
       async lex(terms, limit) {
         const rows = Array.from({ length: 600 }, (_, i) => ({
+          bundle: "f",
           path: `ghost/g${i}.md`,
           bm25: 1000 - i,
           score: 0.5,

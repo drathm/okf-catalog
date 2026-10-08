@@ -54,8 +54,8 @@ let work: string;
 let engine: QmdEngine;
 beforeAll(async () => {
   work = mkdtempSync(join(tmpdir(), "okf-catalog-rank-guard-"));
-  engine = await QmdEngine.open({ company: "behaviours", dir: work });
-  await engine.index([...catalog.pages.values()].map(deriveDocument));
+  engine = await QmdEngine.open({ bundles: ["behaviours"], dir: work });
+  await engine.index("behaviours", [...catalog.pages.values()].map(deriveDocument));
 });
 afterAll(async () => {
   await engine.close();

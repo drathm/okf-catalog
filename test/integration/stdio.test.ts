@@ -104,7 +104,10 @@ describe("okf-catalog serve over stdio", { timeout: 60_000 }, () => {
       structuredContent: { admitted: number };
     };
     expect(status.structuredContent.admitted).toBe(17);
-    const copy = readFileSync(join(companyDir(b), "derived", "terms", "alpha.md"), "utf8");
+    const copy = readFileSync(
+      join(companyDir(b), "bundles", "fixture", "derived", "terms", "alpha.md"),
+      "utf8",
+    );
     expect(copy.startsWith("# Alpha\n")).toBe(true);
     expect(copy).not.toContain("qmd:");
     expect(copy).not.toContain("metadata:");

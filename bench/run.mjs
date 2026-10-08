@@ -318,9 +318,9 @@ if (report.fatal !== undefined)
   fail(EXIT_USAGE, `the bundle was refused: ${report.fatal.rule} ${report.fatal.path}`);
 memory.afterLoad = rss();
 const docs = [...catalog.pages.values()].map(deriveDocument);
-const engine = await QmdEngine.open({ company: "bench", dir: work });
+const engine = await QmdEngine.open({ bundles: ["bench"], dir: work });
 const indexStarted = performance.now();
-const indexed = await engine.index(docs);
+const indexed = await engine.index("bench", docs);
 const indexMs = Math.round(performance.now() - indexStarted);
 memory.afterIndex = rss();
 
@@ -542,7 +542,11 @@ if (modes.length > 0) {
     const dbBytesBefore = statSync(dbPath).size;
     store = await createStore({
       dbPath,
-      config: { collections: { bench: { path: join(work, "derived"), pattern: "**/*.md" } } },
+      config: {
+        collections: {
+          bench: { path: join(work, "bundles", "bench", "derived"), pattern: "**/*.md" },
+        },
+      },
     });
     if (stub !== null) stub.intoStore(store);
     const llm = store.internal.llm;
@@ -691,7 +695,7 @@ if (modes.length > 0) {
       };
     }
     const derivedText = (path) => {
-      const file = join(work, "derived", encodePath(path));
+      const file = join(work, "bundles", "bench", "derived", encodePath(path));
       if (!existsSync(file)) throw new Error(`no derived document for ${path} at ${file}`);
       return readFileSync(file, "utf8");
     };

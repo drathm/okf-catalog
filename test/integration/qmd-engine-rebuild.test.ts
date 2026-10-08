@@ -39,7 +39,7 @@ describe("QmdEngine.open on a damaged store (D48)", () => {
     );
     writeFileSync(join(dir, "index.sqlite-wal"), Buffer.from("stale wal"));
     writeFileSync(join(dir, "index.sqlite-shm"), Buffer.from("stale shm"));
-    const engine = await QmdEngine.open({ company: "acme", dir });
+    const engine = await QmdEngine.open({ bundles: ["acme"], dir });
     try {
       expect(engine.resetOnOpen).toMatch(/not a database|SQLITE_NOTADB/);
       expect(engine.resetOnOpen).toMatch(/rebuilt/);
@@ -51,7 +51,7 @@ describe("QmdEngine.open on a damaged store (D48)", () => {
           ? readFileSync(join(dir, "index.sqlite-shm")).toString()
           : "",
       ).not.toBe("stale shm");
-      const result = await engine.index([]);
+      const result = await engine.index("acme", []);
       expect(result.documents).toBe(0);
     } finally {
       await engine.close();
@@ -62,7 +62,7 @@ describe("QmdEngine.open on a damaged store (D48)", () => {
     const dir = temp();
     const planted = Buffer.from("planted, unreadable, not corruption");
     writeFileSync(join(dir, "index.sqlite"), planted, { mode: 0o000 });
-    await expect(QmdEngine.open({ company: "acme", dir })).rejects.toThrow();
+    await expect(QmdEngine.open({ bundles: ["acme"], dir })).rejects.toThrow();
     chmodSync(join(dir, "index.sqlite"), 0o600);
     expect(readFileSync(join(dir, "index.sqlite")).equals(planted)).toBe(true);
   });
@@ -76,10 +76,10 @@ describe("QmdEngine.open on a damaged store (D48)", () => {
     for (let i = 0; i < 400; i++) insert.run("x".repeat(200));
     db.close();
     truncateSync(join(dir, "index.sqlite"), 4096 + 512);
-    const engine = await QmdEngine.open({ company: "acme", dir });
+    const engine = await QmdEngine.open({ bundles: ["acme"], dir });
     try {
       expect(engine.resetOnOpen).toMatch(/rebuilt/);
-      expect((await engine.index([])).documents).toBe(0);
+      expect((await engine.index("acme", [])).documents).toBe(0);
     } finally {
       await engine.close();
     }
