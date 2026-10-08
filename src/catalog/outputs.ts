@@ -3,24 +3,36 @@ import type { Page, ReservedFile } from "../bundle/model.js";
 import { byCodeUnit } from "../bundle/paths.js";
 import type { SearchResponse } from "../search/search.js";
 import { snippet } from "../search/snippet.js";
+import { type Citations, LIST_CAP, type Walk, type WalkEdge, type WalkNode } from "./graph.js";
 import type { Catalog } from "./model.js";
-import { provenanceOf } from "./provenance.js";
+import { type EffectiveWindow, provenanceOf } from "./provenance.js";
 import type { Generation, RuntimeStatus, ToolOptions } from "./runtime.js";
 import {
+  citationsHeader,
+  claimLine,
   DATA_SENTENCE,
+  derivationLine,
   hitLine,
+  inboundMentionLine,
   type LineOptions,
+  listHeading,
   MARKER,
+  mentionLine,
   pageHeader,
+  provenanceHeader,
   reservedHeader,
   safe,
   searchHeader,
+  sourceLine,
+  unjoinedLine,
+  walkEdgeLine,
+  walkNodeLine,
 } from "./text.js";
 
 /** Characters a result may carry before it is cut and told where to continue (Claude Code saves longer results to a file). */
 export const RESULT_BUDGET = 40_000;
-/** Entries a status list carries beside its count. */
-export const STATUS_LIST_CAP = 50;
+/** Entries a status list carries beside its count; the citation lists and a provenance node's sources share it. */
+export const STATUS_LIST_CAP = LIST_CAP;
 /** The most characters of a refusing text that reach the model, after escaping. */
 export const REFUSING_CAP = 1_000;
 
@@ -77,6 +89,10 @@ const Verification = z.strictObject({ by: z.string(), at: z.string().optional() 
 const Omitted = z.strictObject({ omitted: z.string() });
 const orOmitted = <T extends z.ZodTypeAny>(schema: T) => z.union([schema, Omitted]);
 const Window = z.strictObject({ from: z.string(), to: z.string() });
+/** The window that frames a source's count, its own or the page's (D62), or its note past the cap (D78). */
+const EffectiveWindowSchema = orOmitted(
+  z.strictObject({ from: z.string(), to: z.string(), inherited: z.boolean() }),
+);
 const SourceSchema = z.strictObject({
   resource: z.string(),
   id: z.string().optional(),
@@ -85,9 +101,7 @@ const SourceSchema = z.strictObject({
   usageCount: z.number().optional(),
   lastModified: z.string().optional(),
   usageWindow: Window.optional(),
-  effectiveWindow: orOmitted(
-    z.strictObject({ from: z.string(), to: z.string(), inherited: z.boolean() }),
-  ).optional(),
+  effectiveWindow: EffectiveWindowSchema.optional(),
 });
 const ContractSchema = z.strictObject({
   runtime: orOmitted(z.string()).optional(),
@@ -118,6 +132,9 @@ export const ProvenanceSchema = z.strictObject({
   latestVerification: Verification.optional(),
   staleAfter: z.strictObject({ raw: z.string(), form: Form, overdue: z.boolean() }).optional(),
   sources: z.array(SourceSchema),
+  /** How many verifications and sources the page has; the lists hold those that fit half the result budget (D82). */
+  verifiedTotal: z.number(),
+  sourcesTotal: z.number(),
   usageWindow: orOmitted(Window).optional(),
   contract: ContractSchema.optional(),
   timestamp: orOmitted(z.string()).optional(),
@@ -257,6 +274,128 @@ export const StatusOutputSchema = z.strictObject({
 });
 export type StatusOutput = z.infer<typeof StatusOutputSchema>;
 
+/** A list of `citations`: at most 50 rows, in its order, beside the total it had before any cut (issue 5, D82). */
+const cappedList = <T extends z.ZodTypeAny>(row: T) =>
+  z.strictObject({ total: z.number(), rows: z.array(row) });
+const SourceFactsSchema = z.strictObject({
+  id: z.string().optional(),
+  resource: z.string(),
+  title: z.string().optional(),
+  author: z.string().optional(),
+  usageCount: z.number().optional(),
+  lastModified: z.string().optional(),
+  window: EffectiveWindowSchema.optional(),
+});
+
+export const CitationsOutputSchema = z.strictObject({
+  path: z.string(),
+  summary: z.string(),
+  notice: z.string(),
+  /** The body was not analysed, or only its first part: mentions and claims cover what was. */
+  partial: z.boolean(),
+  /** The result budget cut rows: each list keeps its order and its total. */
+  truncated: z.boolean(),
+  mentions: cappedList(
+    z.strictObject({
+      kind: z.enum([
+        "page",
+        "unserved",
+        "folder",
+        "reserved",
+        "attachment",
+        "anchor",
+        "external",
+        "broken",
+      ]),
+      raw: z.string(),
+      target: z.string().optional(),
+      text: z.string(),
+      heading: z.string().optional(),
+    }),
+  ),
+  inboundMentions: cappedList(
+    z.strictObject({ from: z.string(), text: z.string(), heading: z.string().optional() }),
+  ),
+  claims: cappedList(
+    z.strictObject({
+      footnote: z.string(),
+      block: z.string(),
+      heading: z.string().optional(),
+      sources: z.array(SourceFactsSchema),
+    }),
+  ),
+  bibliography: cappedList(SourceFactsSchema),
+  unjoined: cappedList(
+    z.strictObject({ footnote: z.string(), block: z.string(), heading: z.string().optional() }),
+  ),
+  inboundDerivations: cappedList(
+    z.strictObject({
+      from: z.string(),
+      field: z.string(),
+      kind: z.enum(["concept", "ambiguous"]),
+      author: z.string().optional(),
+      usageCount: z.number().optional(),
+      lastModified: z.string().optional(),
+      window: EffectiveWindowSchema.optional(),
+    }),
+  ),
+});
+export type CitationsOutput = z.infer<typeof CitationsOutputSchema>;
+
+const WalkEdgeSchema = z.strictObject({
+  role: z.enum(["resource", "source", "computation", "executor", "attester"]),
+  field: z.string(),
+  raw: z.string(),
+  kind: z.enum([
+    "url",
+    "concept",
+    "reserved",
+    "attachment",
+    "folder",
+    "ambiguous",
+    "unserved",
+    "scope",
+    "unresolved",
+  ]),
+  target: z.string().optional(),
+  candidates: z.array(z.string()).optional(),
+  fromRoot: z.boolean().optional(),
+  id: z.string().optional(),
+  title: z.string().optional(),
+  author: z.string().optional(),
+  usageCount: z.number().optional(),
+  lastModified: z.string().optional(),
+  window: EffectiveWindowSchema.optional(),
+  walk: z.enum(["entered", "already-entered", "cycle", "depth-limit", "concept-limit"]).optional(),
+});
+
+export const ProvenanceOutputSchema = z.strictObject({
+  path: z.string(),
+  depth: z.number(),
+  summary: z.string(),
+  notice: z.string(),
+  /** The walk's pages in the order they were entered; the start page first. */
+  nodes: z.array(
+    z.strictObject({
+      path: z.string(),
+      level: z.number(),
+      parent: z.string().optional(),
+      trust: Trust,
+      recheck: z.strictObject({ raw: z.string(), form: Form, overdue: z.boolean() }).optional(),
+      sourcesTotal: z.number(),
+      /** The depth stopped this branch. */
+      truncated: z.boolean(),
+      edges: z.array(WalkEdgeSchema),
+    }),
+  ),
+  nodesTotal: z.number(),
+  /** The walk entered its 200 concepts and entered no more (D71). */
+  capped: z.boolean(),
+  /** The result budget cut the walk: `nodes` holds its first pages, the last perhaps with its first edges only. */
+  truncated: z.boolean(),
+});
+export type ProvenanceOutput = z.infer<typeof ProvenanceOutputSchema>;
+
 export const NOTICE = `${MARKER} ${DATA_SENTENCE}`;
 
 /** The search response as the tool returns it: every hit with its citation and snippet, the header as the summary. */
@@ -326,6 +465,8 @@ function projectProvenance(page: Page, now: Date): ProjectedProvenance {
         ? source
         : { ...source, effectiveWindow: typedField("effectiveWindow", effectiveWindow) },
     ),
+    verifiedTotal: rest.verified.length,
+    sourcesTotal: sources.length,
   };
   if (JSON.stringify(projected.frontmatter).length > FRONTMATTER_BUDGET) {
     projected.frontmatter = {
@@ -352,6 +493,57 @@ function projectProvenance(page: Page, now: Date): ProjectedProvenance {
 const bodyRoom = (budget: number, citation: string): number =>
   Math.max(1, budget - citation.length - NOTICE.length - 80);
 
+/**
+ * `get_page`'s provenance within its share of the budget (D82): whole when it fits, else `verified` then
+ * `sources` kept in their order until the share is spent, the totals saying how many there are.
+ */
+function fitProvenance(projected: ProjectedProvenance, share: number): ProjectedProvenance {
+  if (JSON.stringify(projected).length <= share) return projected;
+  const kept: ProjectedProvenance = { ...projected, verified: [], sources: [] };
+  let used = JSON.stringify(kept).length;
+  for (const verification of projected.verified) {
+    const cost = JSON.stringify(verification).length + 1;
+    if (used + cost > share) return kept;
+    kept.verified.push(verification);
+    used += cost;
+  }
+  for (const source of projected.sources) {
+    const cost = JSON.stringify(source).length + 1;
+    if (used + cost > share) return kept;
+    kept.sources.push(source);
+    used += cost;
+  }
+  return kept;
+}
+
+/**
+ * A body cut from `offset` to fit both channels: `textRoom` raw characters for the text block and `jsonRoom`
+ * characters once escaped for the structured output, which counts a quotation mark or a line break twice. When the
+ * rest of the structured result alone passes the budget (`jsonRoom` not positive), the text block decides.
+ */
+function cutBody(body: string, offset: number, textRoom: number, jsonRoom: number): Cut {
+  let room = Math.max(2, jsonRoom > 0 ? Math.min(textRoom, jsonRoom) : textRoom);
+  let cut = cutText(body, offset, room);
+  while (jsonRoom > 0 && room > 2) {
+    const excess = JSON.stringify(cut.slice).length - 2 - jsonRoom;
+    if (excess <= 0) break;
+    room = Math.max(2, room - excess);
+    cut = cutText(body, offset, room);
+  }
+  return cut;
+}
+
+/** The room a body has in the structured result: the budget less the result with an empty body. */
+const jsonRoomOf = (frame: PageOutput, budget: number): number =>
+  budget -
+  JSON.stringify({ ...frame, body: "", truncated: true, nextOffset: Number.MAX_SAFE_INTEGER })
+    .length;
+
+/**
+ * A page as `get_page` returns it, the whole result within the budget in both channels (D82): the provenance
+ * takes at most half, its `verified` then `sources` cut in order with their totals, and the header names the
+ * sources the provenance kept; the body takes the rest and says where to continue.
+ */
 export function projectPage(
   page: Page,
   now: Date,
@@ -359,17 +551,20 @@ export function projectPage(
   budget: number,
   options: LineOptions = {},
 ): PageOutput {
-  const citation = pageHeader(page, now, options);
-  const cut = cutText(page.body, offset, bodyRoom(budget, citation));
+  const provenance = fitProvenance(projectProvenance(page, now), Math.floor(budget / 2));
+  const citation = pageHeader(page, now, { ...options, sourcesShown: provenance.sources.length });
   const output: PageOutput = {
     path: page.path,
     kind: "page",
-    provenance: projectProvenance(page, now),
+    provenance,
     citation,
     notice: NOTICE,
-    body: cut.slice,
-    truncated: cut.truncated,
+    body: "",
+    truncated: false,
   };
+  const cut = cutBody(page.body, offset, bodyRoom(budget, citation), jsonRoomOf(output, budget));
+  output.body = cut.slice;
+  output.truncated = cut.truncated;
   if (cut.nextOffset !== undefined) output.nextOffset = cut.nextOffset;
   return PageOutputSchema.parse(output);
 }
@@ -381,16 +576,18 @@ export function projectReserved(
   budget: number,
 ): PageOutput {
   const citation = reservedHeader(file.kind, source, file.folder);
-  const cut = cutText(file.body, offset, bodyRoom(budget, citation));
   const output: PageOutput = {
     path: file.path,
     kind: file.kind,
     source,
     citation,
     notice: NOTICE,
-    body: cut.slice,
-    truncated: cut.truncated,
+    body: "",
+    truncated: false,
   };
+  const cut = cutBody(file.body, offset, bodyRoom(budget, citation), jsonRoomOf(output, budget));
+  output.body = cut.slice;
+  output.truncated = cut.truncated;
   if (cut.nextOffset !== undefined) output.nextOffset = cut.nextOffset;
   return PageOutputSchema.parse(output);
 }
@@ -592,4 +789,254 @@ export function statusSummary(out: StatusOutput): string {
   }
   if (out.refusing !== null) parts.push(`refusing: ${safe(out.refusing)}`);
   return parts.join("; ");
+}
+
+type WindowOut = z.infer<typeof EffectiveWindowSchema>;
+const windowOut = (window: EffectiveWindow | undefined): { window?: WindowOut } =>
+  window === undefined ? {} : { window: typedField("window", window) };
+
+type CitationList = Exclude<
+  keyof CitationsOutput,
+  "path" | "summary" | "notice" | "partial" | "truncated"
+>;
+/** The lists of `citations` in the order issue 5 gives them, which is the order the budget spends (D82). */
+const CITATION_LISTS: readonly CitationList[] = [
+  "mentions",
+  "inboundMentions",
+  "claims",
+  "bibliography",
+  "unjoined",
+  "inboundDerivations",
+];
+type Rows = { [K in CitationList]: CitationsOutput[K]["rows"] };
+
+/** Each list's line in the text block, the same function for the budget and for the text. */
+const CITATION_LINES: { [K in CitationList]: (row: Rows[K][number]) => string } = {
+  mentions: mentionLine,
+  inboundMentions: inboundMentionLine,
+  claims: claimLine,
+  bibliography: sourceLine,
+  unjoined: unjoinedLine,
+  inboundDerivations: derivationLine,
+};
+const CITATION_HEADINGS: Record<CitationList, string> = {
+  mentions: "mentions",
+  inboundMentions: "inbound mentions",
+  claims: "claims",
+  bibliography: "bibliography",
+  unjoined: "unjoined footnotes",
+  inboundDerivations: "inbound derivations",
+};
+
+/** The text block of `citations`: the header, the notice, then each list's heading and its rows. */
+export function citationsText(output: CitationsOutput): string {
+  const lines = [output.summary, output.notice];
+  for (const list of CITATION_LISTS) {
+    const { total, rows } = output[list];
+    lines.push(listHeading(CITATION_HEADINGS[list], total, rows.length));
+    const line = CITATION_LINES[list] as (row: unknown) => string;
+    for (const row of rows) lines.push(line(row));
+  }
+  return lines.join("\n");
+}
+
+/**
+ * The result of `citations` (issue 5): every list in its order, at most 50 rows beside its total, and the whole
+ * result, text and structured, within the budget (D82): rows are kept list by list in issue 5's order until the
+ * budget is spent, every cut list keeping its total, and the result says `truncated`.
+ */
+export function projectCitations(citations: Citations, budget: number): CitationsOutput {
+  const all: Rows = {
+    mentions: citations.mentions.map((m) => ({ ...m })),
+    inboundMentions: citations.inboundMentions.map((m) => ({ ...m })),
+    claims: citations.claims.map(({ sources, ...claim }) => ({
+      ...claim,
+      sources: sources.map(({ window, ...source }) => ({ ...source, ...windowOut(window) })),
+    })),
+    bibliography: citations.bibliography.map(({ window, ...source }) => ({
+      ...source,
+      ...windowOut(window),
+    })),
+    unjoined: citations.unjoined.map((u) => ({ ...u })),
+    inboundDerivations: citations.inboundDerivations.map(({ window, ...derivation }) => ({
+      ...derivation,
+      ...windowOut(window),
+    })),
+  };
+  const kept: Rows = {
+    mentions: [],
+    inboundMentions: [],
+    claims: [],
+    bibliography: [],
+    unjoined: [],
+    inboundDerivations: [],
+  };
+  const build = (truncated: boolean): CitationsOutput => {
+    const totals = {
+      mentions: all.mentions.length,
+      inboundMentions: all.inboundMentions.length,
+      claims: all.claims.length,
+      bibliography: all.bibliography.length,
+      unjoined: all.unjoined.length,
+      inboundDerivations: all.inboundDerivations.length,
+    };
+    return {
+      path: citations.path,
+      summary: citationsHeader({
+        path: citations.path,
+        partial: citations.partial,
+        truncated,
+        totals,
+        listCap: LIST_CAP,
+      }),
+      notice: NOTICE,
+      partial: citations.partial,
+      truncated,
+      mentions: { total: totals.mentions, rows: kept.mentions },
+      inboundMentions: { total: totals.inboundMentions, rows: kept.inboundMentions },
+      claims: { total: totals.claims, rows: kept.claims },
+      bibliography: { total: totals.bibliography, rows: kept.bibliography },
+      unjoined: { total: totals.unjoined, rows: kept.unjoined },
+      inboundDerivations: { total: totals.inboundDerivations, rows: kept.inboundDerivations },
+    };
+  };
+  const over = (output: CitationsOutput): boolean =>
+    JSON.stringify(output).length > budget || citationsText(output).length > budget;
+  // Rows are added while both channels stay within the budget, measured from the frame with no rows.
+  const frame = build(true);
+  let json = JSON.stringify(frame).length;
+  let text = citationsText(frame).length;
+  let truncated = false;
+  spend: for (const list of CITATION_LISTS) {
+    const line = CITATION_LINES[list] as (row: unknown) => string;
+    const target = kept[list] as unknown[];
+    for (const row of (all[list] as unknown[]).slice(0, LIST_CAP)) {
+      const jsonCost = JSON.stringify(row).length + 1;
+      const textCost = line(row).length + 1;
+      if (json + jsonCost > budget || text + textCost > budget) {
+        truncated = true;
+        break spend;
+      }
+      target.push(row);
+      json += jsonCost;
+      text += textCost;
+    }
+  }
+  // The measure above is close, not exact (a list heading's digits); the last rows go until the result fits.
+  let output = build(truncated);
+  while (over(output)) {
+    const last = [...CITATION_LISTS].reverse().find((list) => kept[list].length > 0);
+    if (last === undefined) break;
+    kept[last].pop();
+    output = build(true);
+  }
+  return CitationsOutputSchema.parse(output);
+}
+
+type NodeOut = ProvenanceOutput["nodes"][number];
+type EdgeOut = NodeOut["edges"][number];
+
+function edgeOut({ window, candidates, ...edge }: WalkEdge): EdgeOut {
+  return {
+    ...edge,
+    ...(candidates === undefined ? {} : { candidates: [...candidates] }),
+    ...windowOut(window),
+  };
+}
+
+function nodeOut({ edges, recheck, ...node }: WalkNode): NodeOut {
+  return {
+    ...node,
+    ...(recheck === undefined ? {} : { recheck: { ...recheck } }),
+    edges: edges.map(edgeOut),
+  };
+}
+
+/** The text block of `provenance`: the header, the notice, then each page and its edges. */
+export function walkText(output: ProvenanceOutput): string {
+  const lines = [output.summary, output.notice];
+  for (const node of output.nodes) {
+    lines.push(walkNodeLine(node, LIST_CAP));
+    for (const edge of node.edges) lines.push(walkEdgeLine(edge));
+  }
+  return lines.join("\n");
+}
+
+/**
+ * The result of `provenance` (issue 5): the walk's pages in walk order, the whole result, text and structured,
+ * within the budget (D82). Pages are kept in walk order until the budget is spent; the page the budget runs out in
+ * keeps as many of its edges, in order, as fit; the result says `truncated` and keeps the walk's total.
+ */
+export function projectWalk(walk: Walk, budget: number): ProvenanceOutput {
+  const all = walk.nodes.map(nodeOut);
+  const kept: NodeOut[] = [];
+  const build = (truncated: boolean): ProvenanceOutput => {
+    const last = kept.at(-1);
+    const lastCut =
+      last !== undefined && last.edges.length < (all[kept.length - 1]?.edges.length ?? 0);
+    return {
+      path: walk.path,
+      depth: walk.depth,
+      summary: provenanceHeader({
+        path: walk.path,
+        depth: walk.depth,
+        nodesTotal: all.length,
+        returned: kept.length,
+        lastCut,
+        capped: walk.capped,
+        branchesStopped: all.some((node) => node.truncated),
+        truncated,
+      }),
+      notice: NOTICE,
+      nodes: kept,
+      nodesTotal: all.length,
+      capped: walk.capped,
+      truncated,
+    };
+  };
+  const nodeText = (node: NodeOut): number =>
+    walkNodeLine(node, LIST_CAP).length +
+    1 +
+    node.edges.reduce((sum, edge) => sum + walkEdgeLine(edge).length + 1, 0);
+  const over = (output: ProvenanceOutput): boolean =>
+    JSON.stringify(output).length > budget || walkText(output).length > budget;
+  const frame = build(true);
+  let json = JSON.stringify(frame).length;
+  let text = walkText(frame).length;
+  let truncated = false;
+  for (const node of all) {
+    const jsonCost = JSON.stringify(node).length + 1;
+    const textCost = nodeText(node);
+    if (json + jsonCost <= budget && text + textCost <= budget) {
+      kept.push(node);
+      json += jsonCost;
+      text += textCost;
+      continue;
+    }
+    // The page the budget runs out in keeps the edges that fit, in order, when its own line fits.
+    truncated = true;
+    const shell: NodeOut = { ...node, edges: [] };
+    json += JSON.stringify(shell).length + 1;
+    text += nodeText(shell);
+    if (json > budget || text > budget) break;
+    for (const edge of node.edges) {
+      const edgeJson = JSON.stringify(edge).length + 1;
+      const edgeText = walkEdgeLine(edge).length + 1;
+      if (json + edgeJson > budget || text + edgeText > budget) break;
+      shell.edges.push(edge);
+      json += edgeJson;
+      text += edgeText;
+    }
+    kept.push(shell);
+    break;
+  }
+  let output = build(truncated);
+  while (over(output)) {
+    const last = kept.at(-1);
+    if (last === undefined) break;
+    if (last.edges.length > 0) kept[kept.length - 1] = { ...last, edges: last.edges.slice(0, -1) };
+    else kept.pop();
+    output = build(true);
+  }
+  return ProvenanceOutputSchema.parse(output);
 }
