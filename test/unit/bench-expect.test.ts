@@ -109,6 +109,8 @@ describe("the rank guard (D66)", { timeout: 120_000 }, () => {
     expect(text).toContain("terms/gamma.md");
     expect(text).toContain(TIE_SENTENCE);
     expect(TIE_SENTENCE).toMatch(/tie.*500.*not a product failure/);
+    // A moved top five may be a tie cut at the cap, or may not: the sentence claims no more (build review A-D7).
+    expect(TIE_SENTENCE).toMatch(/may be a tie cut at the 500 cap/);
 
     // The same, end to end through the harness on a fixture: pin, compare, then compare a pin with one rank moved.
     const args = fixtureArgs();

@@ -177,7 +177,7 @@ describe("search", () => {
   it("labels drafts under development mode and never shows them otherwise", async () => {
     const d = await session(fakeRuntime(dev), { ...options, dev: true });
     const r = await d.call("search", { question: "draft", freshness: "any" });
-    expect(text(r)).toContain("development mode: drafts admitted");
+    expect(text(r)).toContain("development mode: drafts and unknown statuses admitted");
     expect(text(r)).toMatch(/\[[^\]]*, draft, /);
     const s = await session(fakeRuntime(stable));
     expect(text(await s.call("search", { question: "draft", freshness: "any" }))).not.toMatch(
@@ -242,7 +242,11 @@ describe("search", () => {
       if (zeta === "error") {
         expect(r.isError, label).toBe(true);
         expect(r.structuredContent, label).toBeUndefined();
-        expect(text(r), label).toMatch(/^freshness and include_stale disagree/);
+        expect(text(r), label).toBe(
+          args.freshness === "any"
+            ? 'freshness and include_stale disagree: freshness "any" includes pages past their recheck date and include_stale false leaves them out; pass freshness alone'
+            : 'freshness and include_stale disagree: freshness "fresh" leaves out pages past their recheck date and include_stale true includes them; pass freshness alone',
+        );
         // Refused before search runs: a question of common words gets this error, not the common-word one.
         const common = await s.call("search", { question: "what is the", ...args });
         expect(text(common), label).toMatch(/^freshness and include_stale disagree/);
@@ -789,6 +793,17 @@ describe("get_page and the concept id (R7)", () => {
     expect(both.structuredContent).toBeUndefined();
     expect(text(both)).toBe(
       '"foo.md" names more than one page: foo.md (ask for "foo"), foo.md.md (ask for "foo.md.md")',
+    );
+    // In a chain of three the middle page has no name of its own; the error says so instead of offering a name
+    // that answers with the same error (build review I-E5, A-A7).
+    const chain = loadGeneration(
+      ["foo.md", "foo.md.md", "foo.md.md.md"].map((path) => ({ path, bytes: page(path) })),
+      { integrity: "none" },
+      NOW,
+    );
+    const c = await session(fakeRuntime(chain));
+    expect(text(await c.call("get_page", { path: "foo.md.md" }))).toBe(
+      '"foo.md.md" names more than one page: foo.md.md (no name reaches it alone), foo.md.md.md (ask for "foo.md.md.md")',
     );
     const miss = await s.call("get_page", { path: "guides/b" });
     expect(miss.isError).toBe(true);

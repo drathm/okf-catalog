@@ -457,5 +457,22 @@ describe("result bounds (bite 4 build review)", () => {
     expect(line).toContain("last attempt failed at 2026-10-06T12:00:00.000Z");
     expect(line).toMatch(/\d+ broken links?/);
     expect(line).toMatch(/\d+ unknown types?/);
+    // The list counts in good English, one and many (build review A-D8).
+    const counted = (count: number) =>
+      statusSummary({
+        ...out,
+        unknownTypes: { count, first: [] },
+        unknownStatuses: { count, first: [] },
+        brokenLinks: { count, first: [] },
+        linksToUnserved: { count, first: [] },
+        foldersWithoutIndex: { count, first: [] },
+        missingOnDisk: { count, first: [] },
+      });
+    expect(counted(1)).toContain(
+      "1 unknown type, 1 unknown status, 1 broken link, 1 link to an unserved page, 1 folder without an index, 1 manifest entry missing on disk",
+    );
+    expect(counted(6)).toContain(
+      "6 unknown types, 6 unknown statuses, 6 broken links, 6 links to an unserved page, 6 folders without an index, 6 manifest entries missing on disk",
+    );
   });
 });

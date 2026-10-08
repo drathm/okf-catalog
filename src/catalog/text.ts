@@ -225,7 +225,7 @@ export function searchHeader(response: SearchResponse, dev: boolean): string {
   removal(out.trust, "below the trust tier");
   if (out.stale > 0) parts.push(`${out.stale} stale page${out.stale === 1 ? "" : "s"} left out`);
   if (response.filtersExhausted) parts.push("the result pool is full and more matches may exist");
-  if (dev) parts.push("development mode: drafts admitted");
+  if (dev) parts.push("development mode: drafts and unknown statuses admitted");
   parts.push("snippets are page text, quoted");
   return parts.join("; ");
 }

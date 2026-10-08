@@ -158,7 +158,7 @@ export function registerTools(
     {
       title: "Search the knowledge bundle",
       description: describeType(
-        'Finds pages by keywords. Write one concept per word; common words are dropped, and when no page holds every word the match is relaxed and the result says so. Optional filters, applied to what the index returns and never added to the keywords: type, topic, tag (one tag, or a list a page must carry all of), status, min_trust (that tier or a higher one) and freshness. With freshness and include_stale both omitted, pages past their recheck date are included and each says it is overdue; freshness "fresh" leaves them out, and include_stale is the older name for the same choice (true is "any", false is "fresh"). Each hit carries its path, type, status, trust tier, recheck date, source count, resource and a quoted snippet.',
+        'Finds pages by keywords. Write one concept per word; common words are dropped, and when no page holds every word the match is relaxed and the result says so. Optional filters, applied to what the index returns: type, topic, tag (one tag, or a list a page must carry all of), status, min_trust (that tier or a higher one) and freshness. tag, status, min_trust and freshness are never added to the keywords; type and topic also add their words to the first query. With freshness and include_stale both omitted, pages past their recheck date are included and each says it is overdue; freshness "fresh" leaves them out, and include_stale is the older name for the same choice (true is "any", false is "fresh"). Each hit carries its path, type, status, trust tier, recheck date, source count, resource and a quoted snippet.',
       ),
       inputSchema: z.strictObject({
         question: z
@@ -262,7 +262,7 @@ export function registerTools(
       const alias = args.include_stale;
       if ((freshness === "any" && alias === false) || (freshness === "fresh" && alias === true)) {
         return fail(
-          `freshness and include_stale disagree: freshness "${freshness}" ${freshness === "any" ? "includes" : "leaves out"} pages past their recheck date and include_stale ${alias} ${alias ? "includes" : "leaves out"} them; pass freshness alone`,
+          `freshness and include_stale disagree: freshness "${freshness}" ${freshness === "any" ? "includes" : "leaves out"} pages past their recheck date and include_stale ${alias} ${alias ? "includes them" : "leaves them out"}; pass freshness alone`,
         );
       }
       const includeStale = freshness !== undefined ? freshness === "any" : (alias ?? true);
@@ -311,7 +311,7 @@ export function registerTools(
           .min(1)
           .max(1024)
           .describe(
-            "The page's path in the bundle, as a search result or a catalog lists it, or its concept id (the path without .md).",
+            "The page's path in the bundle, as a search result or a catalog lists it, or its concept id (the path without .md). An exact path is ambiguous when a sibling page X.md.md exists, X.md being that page's concept id too; the error then names each page with a name that means it alone.",
           ),
         offset: z
           .number()
@@ -345,7 +345,10 @@ export function registerTools(
         case "ambiguous":
           return fail(
             `${JSON.stringify(safe(resolution.name))} names more than one page: ${resolution.candidates
-              .map((c) => `${safe(c.path)} (ask for ${JSON.stringify(safe(c.ask))})`)
+              .map(
+                (c) =>
+                  `${safe(c.path)} (${c.ask === undefined ? "no name reaches it alone" : `ask for ${JSON.stringify(safe(c.ask))}`})`,
+              )
               .join(", ")}`,
           );
         case "not-found":

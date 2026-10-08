@@ -90,6 +90,47 @@ describe("resolvePageName (D60)", () => {
     expect(found("/foo").path).toBe("foo.md");
   });
 
+  it("says no name reaches the middle of a chain of three alone, rather than offering its own ambiguous path (build review I-E5, A-A7)", () => {
+    const chain: BundleView[] = [
+      {
+        bundle: "b",
+        catalog: loadBundle(
+          "b",
+          ["foo.md", "foo.md.md", "foo.md.md.md"].map((path) => ({ path, bytes: page(path) })),
+          {
+            admit: ["stable", "deprecated"],
+            dev: false,
+            integrity: "none",
+            specText: "2026-08-15",
+            caps: DEFAULT_CAPS,
+          },
+          NOW,
+        ).catalog,
+      },
+    ];
+    // foo.md.md is foo.md's .md path and foo.md.md.md's concept id: no name means it alone (D60's recorded limit).
+    expect(resolvePageName(chain, "foo.md.md")).toEqual({
+      ok: false,
+      reason: "ambiguous",
+      name: "foo.md.md",
+      candidates: [
+        { bundle: "b", path: "foo.md.md" },
+        { bundle: "b", path: "foo.md.md.md", ask: "foo.md.md.md" },
+      ],
+    });
+    expect(resolvePageName(chain, "foo.md")).toEqual({
+      ok: false,
+      reason: "ambiguous",
+      name: "foo.md",
+      candidates: [
+        { bundle: "b", path: "foo.md", ask: "foo" },
+        { bundle: "b", path: "foo.md.md" },
+      ],
+    });
+    expect(found("foo", chain).path).toBe("foo.md");
+    expect(found("foo.md.md.md", chain).path).toBe("foo.md.md.md");
+  });
+
   it("names the three nearest served paths when nothing resolves", () => {
     const r = resolvePageName(views, "terms/alpa.md");
     expect(r.ok).toBe(false);

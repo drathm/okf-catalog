@@ -28,8 +28,11 @@ export type Resolution =
       ok: false;
       reason: "ambiguous";
       name: string;
-      /** Each file the name means, with a name that means it alone (`ask`), in bundle order then name order. */
-      candidates: Array<{ bundle: string; path: string; ask: string }>;
+      /**
+       * Each file the name means, in bundle order then name order, with a name that means it alone (`ask`); `ask`
+       * is absent when no name does, as for the middle file of a chain of three (D60's recorded limit).
+       */
+      candidates: Array<{ bundle: string; path: string; ask?: string }>;
     }
   | { ok: false; reason: "unknown-bundle"; bundle: string; bundles: string[] }
   | { ok: false; reason: "refused-bundle"; bundle: string; fatal: Refusal };
@@ -73,15 +76,17 @@ function lookup(view: BundleView, path: string): Found | undefined {
 }
 
 /**
- * A name that means this path alone in its bundle: the concept id when nothing else answers to it, else the path.
- * For `foo.md` beside `foo.md.md` that is `foo` and `foo.md.md`. Only a chain of three such names (`foo.md`,
- * `foo.md.md`, `foo.md.md.md`) leaves the middle one with no name of its own; it is then offered by its path.
+ * A name that means this path alone in its bundle: the concept id when nothing else answers to it, else the path
+ * when nothing else answers to that. For `foo.md` beside `foo.md.md` that is `foo` and `foo.md.md`. Only a chain of
+ * three such names (`foo.md`, `foo.md.md`, `foo.md.md.md`) leaves the middle one with no name of its own: then
+ * there is none, and the caller says so rather than offer a name that answers with the same ambiguity.
  */
-export function uniqueName(view: BundleView, path: string): string {
+export function uniqueName(view: BundleView, path: string): string | undefined {
   const alone = (name: string): boolean =>
     conceptNames(name).filter((candidate) => lookup(view, candidate) !== undefined).length === 1;
   const id = path.endsWith(".md") ? path.slice(0, -".md".length) : path;
-  return id !== path && alone(id) ? id : path;
+  if (id !== path && alone(id)) return id;
+  return alone(path) ? path : undefined;
 }
 
 /**
@@ -126,11 +131,14 @@ export function resolvePageName(
       ok: false,
       reason: "ambiguous",
       name,
-      candidates: found.map(({ view, found: hit }) => ({
-        bundle: hit.bundle,
-        path: hit.path,
-        ask: uniqueName(view, hit.path),
-      })),
+      candidates: found.map(({ view, found: hit }) => {
+        const ask = uniqueName(view, hit.path);
+        return {
+          bundle: hit.bundle,
+          path: hit.path,
+          ...(ask === undefined ? {} : { ask }),
+        };
+      }),
     };
   }
   const served = views.flatMap((view) => servedPaths(view.catalog));

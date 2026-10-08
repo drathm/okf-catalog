@@ -30,8 +30,8 @@ options:
   --config <path>     the company configuration (admission, caps, types, spec text)
   --from <folder>     the bundle folder to pack (a checkout's bundle folder, never a repository root)
   --out <folder>      where to write; new or empty
-  --admit <status>    admit this status: stable, deprecated or a word of the company's own, never draft;
-                      may be repeated; default from the configuration
+  --admit <status>    a status to admit: stable, deprecated or a word of the company's own, never draft;
+                      may be repeated; given, the flags replace the configuration's serve.admit list
   --commit <sha>      the source commit to record in the manifest; the zero commit without it
   --allow-empty       write the bundle even when no page is admitted; without it that is refused, so a typo
                       in the statuses cannot publish a bundle with no page

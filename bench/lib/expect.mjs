@@ -12,7 +12,7 @@ export const EXIT_RANKS_MOVED = 6;
 
 /** What a moved top five carries, so nobody reads the tripwire as the guard failing. */
 export const TIE_SENTENCE =
-  "a top five that moved while every gold rank held is a tripwire, not a failure: qmd orders tied scores by insertion order and the pool cuts a tie group at the 500 cap in engine order, so a tie cut at the 500 cap is not a product failure";
+  "a top five that moved while every gold rank held is a tripwire, not a failure: qmd orders tied scores by insertion order and the pool cuts a tie group at the 500 cap in engine order, so the move may be a tie cut at the 500 cap, which is not a product failure; a move among scores that do not tie is worth a look";
 
 const ABOUT =
   "Written by `node bench/run.mjs --write-expect`; compared by `--expect` (decision D66). Per lexical configuration and question: the gold page's rank in the first five hits (null when absent), which must not move, and the five paths, which are a tripwire only.";

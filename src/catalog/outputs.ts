@@ -559,7 +559,9 @@ export function projectStatus(
 
 /** One line for the `status` text block: the counts, the engine, the lock, the last attempt, and the report's lists as counts. */
 export function statusSummary(out: StatusOutput): string {
-  const n = (count: number, word: string): string => `${count} ${word}${count === 1 ? "" : "s"}`;
+  // One and many, the irregular ones written out (build review A-D8).
+  const n = (count: number, one: string, many = `${one}s`): string =>
+    `${count} ${count === 1 ? one : many}`;
   const parts = [
     `${out.company}: ${out.admitted} pages admitted, ${out.excludedByStatus} excluded by status, ${n(out.overdue, "overdue page")}, ${n(out.refusals.count, "refusal")}, ${n(out.degradations.count, "degradation")}`,
     `integrity ${out.integrity}`,
@@ -581,7 +583,7 @@ export function statusSummary(out: StatusOutput): string {
     ...(out.engine.resetOnOpen === null
       ? []
       : [`engine store rebuilt at open: ${out.engine.resetOnOpen}`]),
-    `${n(out.unknownTypes.count, "unknown type")}, ${n(out.unknownStatuses.count, "unknown status")}, ${n(out.brokenLinks.count, "broken link")}, ${n(out.linksToUnserved.count, "link to an unserved page")}, ${n(out.foldersWithoutIndex.count, "folder without an index")}, ${n(out.missingOnDisk.count, "manifest entry missing on disk")}`,
+    `${n(out.unknownTypes.count, "unknown type")}, ${n(out.unknownStatuses.count, "unknown status", "unknown statuses")}, ${n(out.brokenLinks.count, "broken link")}, ${n(out.linksToUnserved.count, "link to an unserved page", "links to an unserved page")}, ${n(out.foldersWithoutIndex.count, "folder without an index", "folders without an index")}, ${n(out.missingOnDisk.count, "manifest entry missing on disk", "manifest entries missing on disk")}`,
   ];
   if (out.lastAttempt !== null)
     parts.push(`last attempt ${out.lastAttempt.outcome} at ${out.lastAttempt.at}`);

@@ -362,7 +362,7 @@ describe("reservedHeader, searchHeader and the fixed strings", () => {
       filtersExhausted: false,
     };
     expect(searchHeader(response, true)).toBe(
-      "2 hits (1 from relaxed matching); terms: alpha beta; dropped: the; ignored as too common: md; 1 stale page left out; development mode: drafts admitted; snippets are page text, quoted",
+      "2 hits (1 from relaxed matching); terms: alpha beta; dropped: the; ignored as too common: md; 1 stale page left out; development mode: drafts and unknown statuses admitted; snippets are page text, quoted",
     );
     expect(
       searchHeader(
@@ -411,7 +411,7 @@ describe("searchHeader: the filters (issue 4)", () => {
       filtersExhausted: true,
     };
     expect(searchHeader(response, true)).toBe(
-      "1 hit; terms: alpha; 1 page of another type left out; 2 pages outside the topic left out; 3 pages without the tag left out; 1 page of another status left out; 4 pages below the trust tier left out; 2 stale pages left out; the result pool is full and more matches may exist; development mode: drafts admitted; snippets are page text, quoted",
+      "1 hit; terms: alpha; 1 page of another type left out; 2 pages outside the topic left out; 3 pages without the tag left out; 1 page of another status left out; 4 pages below the trust tier left out; 2 stale pages left out; the result pool is full and more matches may exist; development mode: drafts and unknown statuses admitted; snippets are page text, quoted",
     );
     // Only the non-zero clauses appear; unknown rows stay in the structured output alone.
     expect(

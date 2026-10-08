@@ -20,7 +20,7 @@ The priority: serving is the problem. Publishing is the contract the server need
 
 | Tool | Takes | Returns |
 |---|---|---|
-| `search` | Keywords or a short question; optional `type`, `topic`, `tag`, `status`, `min_trust` and `freshness` (`include_stale` its alias until 0.5.0), applied after the engine answers. Common words are dropped, and when nothing matches every word the match is relaxed and the answer says so. Pages past their recheck date are included and flagged unless the caller asks for fresh ones (from 0.2.0). Caller-written sub-queries arrive with full mode in version 1 | Ranked pages with path, title, snippet, trust tier, status and recheck date |
+| `search` | Keywords or a short question; optional `type`, `topic`, `tag`, `status`, `min_trust` and `freshness` (`include_stale` its alias until 0.5.0), applied after the engine answers; `tag`, `status`, `min_trust` and `freshness` never reach the engine, while `type` and `topic` also add their words to the first query. Common words are dropped, and when nothing matches every word the match is relaxed and the answer says so. Pages past their recheck date are included and flagged unless the caller asks for fresh ones (from 0.2.0). Caller-written sub-queries arrive with full mode in version 1 | Ranked pages with path, title, snippet, trust tier, status and recheck date |
 | `get_page` | A page path, or its concept id (the path without `.md`) | The page body plus provenance: verifier and date, recheck date, sources with their ids, replacement if deprecated |
 | `catalog` | An optional folder | The index of the bundle or of one folder |
 | `status` | Nothing | What is loaded, from which commit, when it was last pulled, and the report of what was degraded or refused |
