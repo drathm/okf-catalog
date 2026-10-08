@@ -21,7 +21,7 @@ What 0.2.0 is judged by: the readiness fixes, the readiness ledger as tests, the
 
 ## The guards' results
 
-The corpus pin `bench/expected/lexical-ranks.json` was taken on 2026-10-07 from `95b635a` with a clean tree, on darwin arm64 with Node 24.15.0 and qmd 2.8.3, before any file under `src/` changed: 275 answers (25 questions in 11 configurations). Its summary equals every row of [../research/benchmark-lexical.md](../research/benchmark-lexical.md). `node bench/run.mjs --expect bench/expected/lexical-ranks.json` then held every gold rank and every top five after R1, after the seven readiness fixes and after the filters. The CI job ran it on Linux (Ubuntu, x64, Node 24.21.0) at the pin's commit and held every gold rank and every top five: Linux reproduces the ranks pinned on macOS.
+The corpus pin `bench/expected/lexical-ranks.json` was taken on 2026-10-07 from `95b635a` with a clean tree, on darwin arm64 with Node 24.15.0 and qmd 2.8.3, before any file under `src/` changed: 275 answers (25 questions in 11 configurations). Its summary equals every row of [../research/benchmark-lexical.md](../research/benchmark-lexical.md). `node bench/run.mjs --expect bench/expected/lexical-ranks.json` then held every gold rank and every top five after R1, after the seven readiness fixes and after the filters. The CI job ran it on Linux (Ubuntu, x64, Node 24.21.0) at the pin's commit and held every gold rank and every top five: Linux reproduces the ranks pinned on macOS. After the fix pass that folded the two build reviews, it held every gold rank and every top five again at `bd50420`, the pass's last change of code, and `test/integration/rank-guard.test.ts` passed unchanged; neither pin was rewritten.
 
 ## The scripted item: the overdue default
 
